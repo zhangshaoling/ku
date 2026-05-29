@@ -1,0 +1,80 @@
+thought make_token(type, value, line, col) { { "type": type, "value": value, "line": line, "col": col } }
+thought is_digit(ch) { and(>= (ord(ch), 48), <= (ord(ch), 57)) }
+thought is_letter(ch) { or(and(>= (ord(ch), 65), <= (ord(ch), 90)), and(>= (ord(ch), 97), <= (ord(ch), 122))) }
+thought is_id_start(ch) { or(is_letter(ch), ch == "_") }
+thought is_id_char(ch) { or(is_id_start(ch), is_digit(ch)) }
+thought is_keyword(w) {
+    _k = ["thought", "if", "else", "while", "for", "in", "return", "break", "continue", "import", "true", "false", "null", "and", "or", "not", "try", "catch", "throw"]
+    i = 0
+    while (< (i, len(_k))) { if (_k[i] == w) { return(true) } i = + (i, 1) }
+    false
+}
+thought lex_number(src, i, n, line) {
+    s = i
+    while (and(< (i, n), is_digit(src[i]))) { i = + (i, 1) }
+    if (and(< (i, n), src[i] == ".")) { i = + (i, 1) while (and(< (i, n), is_digit(src[i]))) { i = + (i, 1) } }
+    { "token": make_token("number", slice(src, s, i), line, 1), "i": i }
+}
+thought lex_string(src, i, n, line) {
+    i = + (i, 1)
+    buf = ""
+    while (< (i, n)) {
+        c = src[i]
+        if (c == chr(34)) { break }
+        if (c == chr(92)) { i = + (i, 1) e = src[i] buf = if (e == "n") { + (buf, chr(10)) } { if (e == "t") { + (buf, chr(9)) } { + (buf, e) } } } { buf = + (buf, c) }
+        i = + (i, 1)
+    }
+    { "token": make_token("string", buf, line, 1), "i": + (i, 1) }
+}
+thought lex_ident(src, i, n, line) {
+    s = i
+    while (and(< (i, n), is_id_char(src[i]))) { i = + (i, 1) }
+    w = slice(src, s, i)
+    { "token": make_token(if (is_keyword(w)) { "keyword" } { "name" }, w, line, 1), "i": i }
+}
+thought lex_op(src, i, n, line) {
+    ch = src[i]
+    next_i = + (i, 1)
+    combo = if (< (next_i, n)) { + (ch, src[next_i]) } { "" }
+    _dbl = or(or(or(or(or(or(or(or(combo == "==", combo == "!="), combo == "<="), combo == ">="), combo == "+="), combo == "-="), combo == ".."), combo == "->"), combo == "|>")
+    if (_dbl) { { "token": make_token("op", combo, line, 1), "i": + (next_i, 1) } } { { "token": make_token("op", ch, line, 1), "i": next_i } }
+}
+thought next_token(src, i, n, line) {
+    ch = src[i]
+    if (is_digit(ch)) { return(lex_number(src, i, n, line)) }
+    if (== (ch, chr(34))) { return(lex_string(src, i, n, line)) }
+    if (is_id_start(ch)) { return(lex_ident(src, i, n, line)) }
+    _is_op = or(or(or(or(or(or(or(or(or(or(or(or(ch == "+", ch == "-"), ch == "*"), ch == "/"), ch == "%"), ch == "="), ch == "!"), ch == "<"), ch == ">"), ch == "~"), ch == "&"), ch == "|"), ch == "^")
+    if (_is_op) { return(lex_op(src, i, n, line)) }
+    if (== (ch, ";")) {
+        if (and(< (+ (i, 1), n), src[+ (i, 1)] == ";")) {
+            j = i
+            while (and(< (j, n), src[j] != chr(10))) { j = + (j, 1) }
+            return({ "token": null, "i": j })
+        }
+        return({ "token": make_token("punct", ";", line, 1), "i": + (i, 1) })
+    }
+    _is_p = or(or(or(or(or(or(or(or(or(or(or(or(ch == "{", ch == "}"), ch == "("), ch == ")"), ch == "["), ch == "]"), ch == ":"), ch == ";"), ch == ","), ch == "."), ch == "@"), ch == "#"), ch == "?")
+    if (_is_p) { return({ "token": make_token("punct", ch, line, 1), "i": + (i, 1) }) }
+    { "token": null, "i": + (i, 1) }
+}
+thought process_char(src, i, n, line, tokens) {
+    ch = src[i]
+    if (== (ch, chr(10))) { return({ "tokens": push(tokens, make_token("newline", chr(10), line, 1)), "i": + (i, 1), "line": + (line, 1) }) }
+    if (or(or(ch == " ", ch == chr(9)), ch == chr(13))) { return({ "tokens": tokens, "i": + (i, 1), "line": line }) }
+    r = next_token(src, i, n, line)
+    { "tokens": if (r["token"]) { push(tokens, r["token"]) } { tokens }, "i": r["i"], "line": line }
+}
+thought lex(src) {
+    tokens = []
+    i = 0
+    line = 1
+    n = len(src)
+    while (< (i, n)) {
+        r = process_char(src, i, n, line, tokens)
+        tokens = r["tokens"]
+        i = r["i"]
+        line = r["line"]
+    }
+    push(tokens, make_token("eof", "", line, 1))
+}

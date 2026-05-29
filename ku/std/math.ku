@@ -1,0 +1,108 @@
+// std/math.ku — 数学标准库
+// 用法: import "std/math" as math
+
+// 求和
+thought sum(list) {
+  result = 0
+  for x in list {
+    result = result + x
+  }
+  result
+}
+
+// 连乘积
+thought product(list) {
+  result = 1
+  for x in list {
+    result = result * x
+  }
+  result
+}
+
+// 平均值
+thought avg(list) {
+  if len(list) == 0 {
+    0
+  } else {
+    sum(list) / len(list)
+  }
+}
+
+// 限制在 [min_val, max_val] 范围内
+thought clamp(val, min_val, max_val) {
+  if val < min_val {
+    min_val
+  } else if val > max_val {
+    max_val
+  } else {
+    val
+  }
+}
+
+// 线性插值: a + (b - a) * t
+thought lerp(a, b, t) {
+  a + (b - a) * t
+}
+
+// 最大公约数（欧几里得算法）
+thought gcd(a, b) {
+  x = abs(a)
+  y = abs(b)
+  while y != 0 {
+    temp = y
+    y = x - floor(x / y) * y
+    x = temp
+  }
+  x
+}
+
+// 最小公倍数
+thought lcm(a, b) {
+  if a == 0 or b == 0 {
+    0
+  } else {
+    abs(a * b) / gcd(a, b)
+  }
+}
+
+// 判断质数
+thought is_prime(n) {
+  if n <= 1 {
+    false
+  } else if n <= 3 {
+    true
+  } else if n - floor(n / 2) * 2 == 0 or n - floor(n / 3) * 3 == 0 {
+    false
+  } else {
+    i = 5
+    result = true
+    while i * i <= n {
+      if n - floor(n / i) * i == 0 or n - floor(n / (i + 2)) * (i + 2) == 0 {
+        result = false
+        break
+      }
+      i = i + 6
+    }
+    result
+  }
+}
+
+// 斐波那契数列第 n 项（从 0 开始）
+thought fibonacci(n) {
+  if n <= 0 {
+    0
+  } else if n == 1 {
+    1
+  } else {
+    a = 0
+    b = 1
+    i = 2
+    while i <= n {
+      temp = b
+      b = a + b
+      a = temp
+      i = i + 1
+    }
+    b
+  }
+}

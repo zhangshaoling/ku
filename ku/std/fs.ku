@@ -1,0 +1,87 @@
+// std/fs.ku — 文件系统标准库
+// 用法: import "std/fs" as fs
+
+thought exists(path) { path_exists(path) }
+
+thought is_file(path) {
+  if path_exists(path) {
+    not str_contains(str(list_dir(path)), path)
+  } else {
+    false
+  }
+}
+
+thought read_text(path) {
+  read_file(path)
+}
+
+thought write_text(path, content) {
+  write_file(path, content)
+}
+
+thought read_json(path) {
+  if path_exists(path) {
+    text = read_file(path)
+    json_parse(text)
+  } else {
+    null
+  }
+}
+
+thought write_json(path, obj) {
+  content = json_stringify(obj)
+  write_file(path, content)
+}
+
+thought list_files(path, ext) {
+  all = list_dir(path)
+  result = []
+  for f in all {
+    if ext == "" or str_ends_with(f, ext) {
+      result = result + [f]
+    }
+  }
+  result
+}
+
+thought list_ku_files(path) {
+  list_files(path, ".ku")
+}
+
+thought ensure_dir(path) {
+  if not path_exists(path) {
+    mkdir(path)
+  }
+  true
+}
+
+thought basename(path) {
+  parts = str_split(path, "/")
+  last = parts[len(parts) - 1]
+  parts2 = str_split(last, "\\")
+  parts2[len(parts2) - 1]
+}
+
+thought dirname(path) {
+  parts = str_split(path, "/")
+  if len(parts) > 1 {
+    result = parts[0]
+    i = 1
+    while i < len(parts) - 1 {
+      result = result + "/" + parts[i]
+      i = i + 1
+    }
+    result
+  } else {
+    "."
+  }
+}
+
+thought file_size(path) {
+  if path_exists(path) {
+    content = read_file(path)
+    len(content)
+  } else {
+    0
+  }
+}

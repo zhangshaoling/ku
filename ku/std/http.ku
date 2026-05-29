@@ -1,0 +1,90 @@
+// std/http.ku — HTTP 客户端标准库
+// 用法: import "std/http" as http
+
+// 请求头辅助
+thought json_headers {
+  {"Content-Type": "application/json", "Accept": "application/json"}
+}
+
+thought auth_header(token) {
+  {"Authorization": "Bearer " + token}
+}
+
+// GET 请求
+thought get(url) {
+  http_get(url, {})
+}
+
+thought get_json(url) {
+  resp = http_get(url, {"Accept": "application/json"})
+  if resp.ok {
+    json_parse(resp.body)
+  } else {
+    {"ok": false, "error": resp.error}
+  }
+}
+
+// POST 请求
+thought post(url, body, headers) {
+  http_post(url, body, headers)
+}
+
+thought post_json(url, data) {
+  body = json_stringify(data)
+  hdrs = json_headers()
+  resp = http_post(url, body, hdrs)
+  if resp.ok {
+    {"ok": true, "data": json_parse(resp.body), "status": resp.status}
+  } else {
+    {"ok": false, "error": resp.error, "status": resp.status}
+  }
+}
+
+// DeepSeek API 调用
+thought deepseek_chat(model, messages, api_key) {
+  url = "https://api.deepseek.com/chat/completions"
+  body = json_stringify({
+    "model": model,
+    "messages": messages,
+    "max_tokens": 2048
+  })
+  hdrs = {"Content-Type": "application/json", "Authorization": "Bearer " + api_key}
+  resp = http_post(url, body, hdrs)
+  if resp.ok {
+    json_parse(resp.body)
+  } else {
+    {"ok": false, "error": resp.error}
+  }
+}
+
+// LongCat API 调用（免费优先）
+thought longcat_chat(model, messages, api_key) {
+  url = "https://api.longcat.com/v1/chat/completions"
+  body = json_stringify({
+    "model": model,
+    "messages": messages,
+    "max_tokens": 1024
+  })
+  hdrs = {"Content-Type": "application/json", "Authorization": "Bearer " + api_key}
+  resp = http_post(url, body, hdrs)
+  if resp.ok {
+    json_parse(resp.body)
+  } else {
+    {"ok": false, "error": resp.error}
+  }
+}
+
+// 简单文本请求 LLM（进化系统核心）
+thought llm_ask(prompt, api_key) {
+  messages = [{"role": "user", "content": prompt}]
+  result = deepseek_chat("deepseek-chat", messages, api_key)
+  if result.ok and result.choices {
+    result.choices[0].message.content
+  } else {
+    "错误: LLM 请求失败"
+  }
+}
+
+// HTTP 状态码检查
+thought is_ok(resp) { resp.ok }
+thought is_error(resp) { not resp.ok }

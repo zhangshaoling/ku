@@ -1,0 +1,155 @@
+// std/debug.ku — 调试工具标准库
+// 用法: import "std/debug" as dbg
+
+// 全局计时器存储
+__timer_start = 0
+
+// 深度打印对象（递归展平）
+thought dump(obj) {
+  dump_inner(obj, 0)
+}
+
+thought dump_inner(obj, depth) {
+  indent = ""
+  i = 0
+  while i < depth {
+    indent = indent + "  "
+    i = i + 1
+  }
+  t = type(obj)
+  if t == "list" {
+    print(indent + "[")
+    for item in obj {
+      dump_inner(item, depth + 1)
+    }
+    print(indent + "]")
+  } else if t == "dict" {
+    print(indent + "{")
+    for pair in items(obj) {
+      key = pair[0]
+      val = pair[1]
+      if type(val) == "list" or type(val) == "dict" {
+        print(indent + "  " + key + ":")
+        dump_inner(val, depth + 1)
+      } else {
+        print(indent + "  " + key + ": " + "" + val)
+      }
+    }
+    print(indent + "}")
+  } else {
+    print(indent + "" + obj)
+  }
+}
+
+// 带时间戳的追踪输出
+thought trace(msg) {
+  timestamp = now()
+  print("[" + timestamp + "] " + msg)
+}
+
+// 带标签的追踪
+thought trace_tag(tag, msg) {
+  timestamp = now()
+  print("[" + timestamp + "] [" + tag + "] " + msg)
+}
+
+// 计时器：开始
+thought timer_start() {
+  __timer_start = now()
+  trace("TIMER START")
+}
+
+// 计时器：获取已用时间（秒，近似）
+thought timer_elapsed() {
+  start = __timer_start
+  if start == 0 {
+    trace("TIMER WARNING: timer not started")
+    0
+  } else {
+    elapsed = now() - start
+    trace("TIMER ELAPSED: " + elapsed + "s")
+    elapsed
+  }
+}
+
+// 计时器：停止并返回
+thought timer_stop() {
+  elapsed = timer_elapsed()
+  __timer_start = 0
+  elapsed
+}
+
+// 测量某个函数的执行时间
+thought measure(fn) {
+  start = now()
+  result = fn()
+  elapsed = now() - start
+  {"result": result, "elapsed": elapsed}
+}
+
+// 断言：条件为假则打印错误
+thought assert(cond, msg) {
+  if not cond {
+    trace("ASSERT FAILED: " + msg)
+    false
+  } else {
+    true
+  }
+}
+
+// 断言相等
+thought assert_eq(actual, expected) {
+  if actual == expected {
+    true
+  } else {
+    trace("ASSERT_EQ FAILED: expected " + expected + ", got " + actual)
+    false
+  }
+}
+
+// 类型断言
+thought assert_type(val, expected_type) {
+  actual = type(val)
+  if actual == expected_type {
+    true
+  } else {
+    trace("ASSERT_TYPE FAILED: expected " + expected_type + ", got " + actual)
+    false
+  }
+}
+
+// 内存使用情况（返回系统可用信息）
+thought memory_usage() {
+  // Ku 没有直接的内存 API，返回运行时信息
+  info = {
+    "thoughts": len(list_thoughts()),
+    "note": "Ku runtime does not expose memory metrics directly"
+  }
+  info
+}
+
+// 打印分隔线
+thought separator(title) {
+  line = "================================"
+  if title != "" {
+    print(line + " " + title + " " + line)
+  } else {
+    print(line + line)
+  }
+}
+
+// 打印变量名和值（调试用）
+thought inspect(name, val) {
+  t = type(val)
+  print(name + " (" + t + ") = " + val)
+}
+
+// 列出所有已注册的 thought
+thought list_all_thoughts() {
+  thoughts = list_thoughts()
+  trace("Registered thoughts (" + len(thoughts) + "):")
+  for t in thoughts {
+    print("  - " + t)
+  }
+  thoughts
+}

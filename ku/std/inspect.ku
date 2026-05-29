@@ -1,0 +1,153 @@
+// std/inspect.ku — Ku 元编程工具：代码自省
+// 输入任意 Ku 表达式，输出它的 AST 结构。
+// 用 Ku 理解 Ku —— 自我认知的第一步。
+
+// 格式化 AST 为可读字符串
+thought inspect(code) {
+  ast = parse(code)
+  format_node(ast, 0)
+}
+
+// 递归格式化单个 AST 节点
+thought format_node(node, indent) {
+  pad = repeat("  ", indent)
+  t = node.type
+  v = node.value
+  kids = node.children
+
+  // 叶节点：直接显示类型和值
+  if len(kids) == 0 {
+    if v == "" or v == null {
+      pad + "(" + t + ")"
+    } {
+      pad + "(" + t + " " + str(v) + ")"
+    }
+  } {
+    // 有子节点：递归展开
+    result = pad + "(" + t
+    if v != "" and v != null {
+      result = result + " " + str(v)
+    }
+    result = result + "\n"
+    i = 0
+    while i < len(kids) {
+      child_str = format_node(kids[i], indent + 1)
+      result = result + child_str
+      if i < len(kids) - 1 {
+        result = result + "\n"
+      }
+      i = i + 1
+    }
+    result = result + ")"
+    result
+  }
+}
+
+// 重复字符串 n 次
+thought repeat(s, n) {
+  result = ""
+  i = 0
+  while i < n {
+    result = result + s
+    i = i + 1
+  }
+  result
+}
+
+// 快速查看：只显示节点类型和子节点数
+thought brief(code) {
+  ast = parse(code)
+  brief_node(ast, 0)
+}
+
+thought brief_node(node, indent) {
+  pad = repeat("  ", indent)
+  t = node.type
+  v = node.value
+  n = len(node.children)
+
+  label = t
+  if v != "" and v != null {
+    label = label + ":" + str(v)
+  }
+  label = label + " [" + str(n) + "]"
+
+  result = pad + label
+  i = 0
+  while i < n {
+    result = result + "\n" + brief_node(node.children[i], indent + 1)
+    i = i + 1
+  }
+  result
+}
+
+// 统计 AST 节点数
+thought count_nodes(code) {
+  ast = parse(code)
+  count_node(ast)
+}
+
+thought count_node(node) {
+  total = 1
+  i = 0
+  while i < len(node.children) {
+    total = total + count_node(node.children[i])
+    i = i + 1
+  }
+  total
+}
+
+// 列出 AST 中所有引用的名字
+thought refs(code) {
+  ast = parse(code)
+  collect_refs(ast, [])
+}
+
+thought collect_refs(node, acc) {
+  if node.type == "ref" {
+    acc = push(acc, node.value)
+  }
+  i = 0
+  while i < len(node.children) {
+    acc = collect_refs(node.children[i], acc)
+    i = i + 1
+  }
+  acc
+}
+
+// 列出 AST 中所有字面量
+thought literals(code) {
+  ast = parse(code)
+  collect_lits(ast, [])
+}
+
+thought collect_lits(node, acc) {
+  if node.type == "literal" {
+    acc = push(acc, node.value)
+  }
+  i = 0
+  while i < len(node.children) {
+    acc = collect_lits(node.children[i], acc)
+    i = i + 1
+  }
+  acc
+}
+
+// 深度：AST 最大嵌套层数
+thought depth(code) {
+  ast = parse(code)
+  node_depth(ast, 0)
+}
+
+thought node_depth(node, d) {
+  max_d = d
+  i = 0
+  while i < len(node.children) {
+    child_d = node_depth(node.children[i], d + 1)
+    if child_d > max_d {
+      max_d = child_d
+    }
+    i = i + 1
+  }
+  max_d
+}

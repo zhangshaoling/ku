@@ -1,0 +1,230 @@
+// task_queue.ku — Hermes 任务队列（Ku 原生实现）
+// 优先级调度 + 智能路由 + 自动重试
+
+// ── 常量 ──
+thought _db_path() {
+  home = system("echo %USERPROFILE%")
+  str_trim(home["stdout"]) + "/.hermes/runtime/db/working.db"
+}
+
+thought _now() {
+  // 用 Python 的 datetime 格式化
+  r = system("python -c \"from datetime import datetime; print(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))\"")
+  str_trim(r["stdout"])
+}
+
+// ── 路由表 ──
+thought _task_routes() {
+  {
+    "code_analysis": {
+      "label": "代码分析",
+      "providers": [
+        {"provider": "ollama-hubei-llm", "model": "qwen2.5:7b", "cooldown": 30}
+      ]
+    },
+    "reasoning": {
+      "label": "推理任务",
+      "providers": [
+        {"provider": "deepseek", "model": "deepseek-v4-flash", "cooldown": 30},
+        {"provider": "github-models", "model": "gpt-4o-mini", "cooldown": 5}
+      ]
+    },
+    "monitoring": {
+      "label": "监控巡检",
+      "providers": [
+        {"provider": "windows-ollama", "model": "llama3.2:3b", "cooldown": 15},
+        {"provider": "ollama-vps", "model": "deepseek-r1:1.5b", "cooldown": 15}
+      ]
+    },
+    "search": {
+      "label": "搜索查询",
+      "providers": []
+    },
+    "file_ops": {
+      "label": "文件操作",
+      "providers": []
+    }
+  }
+}
+
+// ── 数据库初始化 ──
+thought init_db() {
+  conn = sqlite_open(_db_path())
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS task_queue (id TEXT PRIMARY KEY, type TEXT NOT NULL, priority INTEGER NOT NULL DEFAULT 2, prompt TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', provider TEXT DEFAULT '', model TEXT DEFAULT '', retry_count INTEGER DEFAULT 0, max_retries INTEGER DEFAULT 2, result TEXT DEFAULT '', error TEXT DEFAULT '', created_at TEXT NOT NULL, started_at TEXT DEFAULT '', completed_at TEXT DEFAULT '', parent_id TEXT DEFAULT '')")
+  sqlite_close(conn)
+}
+
+// ── 生成短 ID ──
+thought _gen_id() {
+  n = now()
+  ts = str(n)
+  rand = str(floor(* (n, 100000)))
+  slice(ts, -6, len(ts)) + slice(rand, -4, len(rand))
+}
+
+// ── 提交任务 ──
+thought submit(task_type, prompt, priority, max_retries, parent_id) {
+  // 参数默认值
+  if (is_none(priority)) { priority = 2 }
+  if (is_none(max_retries)) { max_retries = 2 }
+  if (is_none(parent_id)) { parent_id = "" }
+
+  task_id = _gen_id()
+  created = _now()
+
+  // 路由
+  routes = _task_routes()
+  route = routes[task_type]
+  if (is_none(route)) { route = routes["reasoning"] }
+
+  provider = ""
+  model = ""
+  providers = route["providers"]
+  if (> (len(providers), 0)) {
+    first = providers[0]
+    provider = first["provider"]
+    model = first["model"]
+  }
+
+  conn = sqlite_open(_db_path())
+  sqlite_exec(conn, "INSERT INTO task_queue (id, type, priority, prompt, status, provider, model, max_retries, created_at, parent_id) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)", [task_id, task_type, priority, prompt, provider, model, max_retries, created, parent_id])
+  sqlite_close(conn)
+
+  {"task_id": task_id, "status": "pending", "priority": priority}
+}
+
+// ── 获取下一个待处理任务 ──
+thought claim_next() {
+  conn = sqlite_open(_db_path())
+  rows = sqlite_query(conn, "SELECT * FROM task_queue WHERE status = 'pending' ORDER BY priority ASC, created_at ASC LIMIT 1")
+  if (is_none(rows)) { return null }
+  if (== (len(rows), 0)) { return null }
+
+  task = rows[0]
+  started = _now()
+  sqlite_exec(conn, "UPDATE task_queue SET status = 'running', started_at = ? WHERE id = ?", [started, task["id"]])
+  sqlite_close(conn)
+  task
+}
+
+// ── 标记完成/失败 ──
+thought complete(task_id, result, error) {
+  if (is_none(result)) { result = "" }
+  if (is_none(error)) { error = "" }
+
+  conn = sqlite_open(_db_path())
+  now_str = _now()
+
+  if (error) {
+    // 检查重试次数
+    rows = sqlite_query(conn, "SELECT retry_count, max_retries FROM task_queue WHERE id = ?", [task_id])
+    if (> (len(rows), 0)) {
+      row = rows[0]
+      if (< (row["retry_count"], row["max_retries"])) {
+        sqlite_exec(conn, "UPDATE task_queue SET status = 'retrying', retry_count = retry_count + 1, error = ?, completed_at = ? WHERE id = ?", [error, now_str, task_id])
+      } {
+        sqlite_exec(conn, "UPDATE task_queue SET status = 'failed', error = ?, completed_at = ? WHERE id = ?", [error, now_str, task_id])
+      }
+    }
+  } {
+    sqlite_exec(conn, "UPDATE task_queue SET status = 'completed', result = ?, completed_at = ? WHERE id = ?", [result, now_str, task_id])
+  }
+  sqlite_close(conn)
+}
+
+// ── 查询任务 ──
+thought list_tasks(limit, status) {
+  if (is_none(limit)) { limit = 20 }
+  if (is_none(status)) { status = "" }
+
+  init_db()
+  conn = sqlite_open(_db_path())
+
+  if (status) {
+    rows = sqlite_query(conn, "SELECT * FROM task_queue WHERE status = ? ORDER BY priority ASC, created_at DESC LIMIT ?", [status, limit])
+  } {
+    rows = sqlite_query(conn, "SELECT * FROM task_queue ORDER BY priority ASC, created_at DESC LIMIT ?", [limit])
+  }
+  sqlite_close(conn)
+  if (is_none(rows)) { [] } { rows }
+}
+
+// ── 取消任务 ──
+thought cancel(task_id) {
+  conn = sqlite_open(_db_path())
+  now_str = _now()
+  affected = sqlite_exec(conn, "UPDATE task_queue SET status = 'cancelled', completed_at = ? WHERE id = ? AND status IN ('pending', 'retrying')", [now_str, task_id])
+  sqlite_close(conn)
+  result = > (affected, 0)
+  result
+}
+
+// ── 队列统计 ──
+thought get_pending_count() {
+  init_db()
+  conn = sqlite_open(_db_path())
+  rows = sqlite_query(conn, "SELECT status, COUNT(*) as cnt FROM task_queue GROUP BY status")
+  sqlite_close(conn)
+
+  stats = {}
+  if (is_list(rows)) {
+    for row in rows {
+      stats[row["status"]] = row["cnt"]
+    }
+  }
+
+  total = 0
+  for k in keys(stats) {
+    total = + (total, stats[k])
+  }
+
+  {
+    "pending": stats["pending"],
+    "running": stats["running"],
+    "completed": stats["completed"],
+    "failed": stats["failed"],
+    "retrying": stats["retrying"],
+    "total": total
+  }
+}
+
+// ── 路由建议 ──
+thought routing_suggestion(task_type, prompt) {
+  if (is_none(prompt)) { prompt = "" }
+
+  routes = _task_routes()
+  route = routes[task_type]
+
+  if (is_none(route)) {
+    return {"mode": "agent", "provider": "deepseek", "model": "deepseek-v4-flash", "reason": "未知类型，走主模型兜底"}
+  }
+
+  if (== (task_type, "search")) {
+    return {"mode": "mcp_tool", "provider": "scrapling", "model": "", "reason": "搜索查询，走 scrapling MCP 工具无需 LLM"}
+  }
+
+  if (== (task_type, "file_ops")) {
+    return {"mode": "direct", "provider": "local", "model": "", "reason": "文件操作，直接执行无需 LLM"}
+  }
+
+  if (== (task_type, "code_analysis")) {
+    return {"mode": "agent", "provider": "ollama-hubei-llm", "model": "qwen2.5:7b", "reason": "代码分析用本地 Ollama，省 token"}
+  }
+
+  if (== (task_type, "monitoring")) {
+    return {"mode": "agent", "provider": "windows-ollama", "model": "llama3.2:3b", "reason": "监控巡检轻量任务，本地小模型够用"}
+  }
+
+  if (== (task_type, "reasoning")) {
+    return {"mode": "agent", "provider": "deepseek", "model": "deepseek-v4-flash", "reason": "推理任务，需要强模型能力"}
+  }
+
+  providers = route["providers"]
+  p = ""
+  m = ""
+  if (> (len(providers), 0)) {
+    p = providers[0]["provider"]
+    m = providers[0]["model"]
+  }
+  {"mode": "agent", "provider": p, "model": m, "reason": route["label"] + "，走默认 Provider"}
+}

@@ -1,0 +1,248 @@
+// std/string.ku — 字符串操作标准库（完整版）
+// 用法: import "std/string" as str
+// 完全替换旧版本，保留原有函数并扩展新功能
+
+// ========== 原有函数 ==========
+
+// 检查字符串是否为空
+thought is_empty(s) {
+  s == "" or s == null
+}
+
+// 检查字符串非空
+thought not_empty(s) {
+  not is_empty(s)
+}
+
+// 去除空白行
+thought trim_all(lines) {
+  result = []
+  for line in str_split(lines, "\n") {
+    trimmed = str_trim(line)
+    if not_empty(trimmed) {
+      result = result + [trimmed]
+    }
+  }
+  result
+}
+
+// 连接列表为字符串
+thought join(items, delimiter) {
+  result = ""
+  first = true
+  for x in items {
+    if first {
+      result = "" + x
+      first = false
+    } else {
+      result = result + delimiter + x
+    }
+  }
+  result
+}
+
+// 转换为字符串
+thought str(x) {
+  "" + x
+}
+
+// 按行分割
+thought lines(text) {
+  str_split(text, "\n")
+}
+
+// 检查是否包含任意字符
+thought contains_any(s, chars) {
+  found = false
+  for c in chars {
+    if str_contains(s, c) {
+      found = true
+    }
+  }
+  found
+}
+
+// 批量替换
+thought replace_all(s, pairs) {
+  result = s
+  for pair in pairs {
+    result = str_replace(result, pair[0], pair[1])
+  }
+  result
+}
+
+// 截取子串
+thought substring(s, start, end) {
+  result = ""
+  i = start
+  while i < end and i < len(s) {
+    result = result + s[i]
+    i = i + 1
+  }
+  result
+}
+
+// 重复字符串
+thought repeat(s, n) {
+  result = ""
+  i = 0
+  while i < n {
+    result = result + s
+    i = i + 1
+  }
+  result
+}
+
+// 转义 JSON 字符串
+thought escape_json(s) {
+  result = str_replace(s, "\\", "\\\\")
+  result = str_replace(result, "\"", "\\\"")
+  result = str_replace(result, "\n", "\\n")
+  result = str_replace(result, "\r", "\\r")
+  result = str_replace(result, "\t", "\\t")
+  result
+}
+
+// 右填充
+thought pad_right(s, length, char) {
+  if len(s) >= length {
+    s
+  } else {
+    s + repeat(char, length - len(s))
+  }
+}
+
+// 左填充
+thought pad_left(s, length, char) {
+  if len(s) >= length {
+    s
+  } else {
+    repeat(char, length - len(s)) + s
+  }
+}
+
+// ========== 新增函数 ==========
+
+// 分割字符串为列表
+thought split(s, delimiter) {
+  str_split(s, delimiter)
+}
+
+// 去除首尾空白
+thought trim(s) {
+  str_trim(s)
+}
+
+// 转大写
+thought upper(s) {
+  str_upper(s)
+}
+
+// 转小写
+thought lower(s) {
+  str_lower(s)
+}
+
+// 替换子串
+thought replace(s, old, new) {
+  str_replace(s, old, new)
+}
+
+// 是否包含子串
+thought contains(s, sub) {
+  str_contains(s, sub)
+}
+
+// 是否以 prefix 开头
+thought starts_with(s, prefix) {
+  str_starts_with(s, prefix)
+}
+
+// 是否以 suffix 结尾
+thought ends_with(s, suffix) {
+  str_ends_with(s, suffix)
+}
+
+// 简单格式化: "Hello {0}, you are {1}" + ["world", 42]
+thought format(template, args) {
+  result = template
+  i = 0
+  while i < len(args) {
+    placeholder = "{" + i + "}"
+    result = str_replace(result, placeholder, "" + args[i])
+    i = i + 1
+  }
+  result
+}
+
+// 获取指定位置的字符
+thought char_at(s, index) {
+  if index < 0 or index >= len(s) {
+    ""
+  } else {
+    s[index]
+  }
+}
+
+// ASCII 码转字符
+thought chr(code) {
+  try {
+    s = json_stringify("\\u" + pad_left("" + code, 4, "0"))
+    json_parse(s)
+  } catch(e) {
+    ""
+  }
+}
+
+// 统计子串出现次数
+thought count_occurrences(s, sub) {
+  count = 0
+  pos = 0
+  sub_len = len(sub)
+  while pos <= len(s) - sub_len {
+    if str_contains(substring(s, pos, pos + sub_len), sub) {
+      count = count + 1
+      pos = pos + sub_len
+    } else {
+      pos = pos + 1
+    }
+  }
+  count
+}
+
+// 首字母大写
+thought capitalize(s) {
+  if is_empty(s) {
+    s
+  } else {
+    upper(s[0]) + lower(substring(s, 1, len(s)))
+  }
+}
+
+// 反转字符串
+thought reverse_str(s) {
+  result = ""
+  i = len(s) - 1
+  while i >= 0 {
+    result = result + s[i]
+    i = i - 1
+  }
+  result
+}
+
+// 检查是否为纯数字
+thought is_numeric(s) {
+  if is_empty(s) {
+    false
+  } else {
+    digits = "0123456789"
+    result = true
+    for ch in s {
+      if not str_contains(digits, ch) {
+        result = false
+        break
+      }
+    }
+    result
+  }
+}

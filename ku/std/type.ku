@@ -1,0 +1,109 @@
+// std/type.ku — 类型检查与转换标准库
+// 用法: import "std/type" as typ
+
+// 类型检查
+thought is_int(x) {
+  type(x) == "int"
+}
+
+thought is_float(x) {
+  type(x) == "float"
+}
+
+thought is_str(x) {
+  type(x) == "str"
+}
+
+thought is_list(x) {
+  type(x) == "list"
+}
+
+thought is_dict(x) {
+  type(x) == "dict"
+}
+
+thought is_null(x) {
+  x == null
+}
+
+thought is_num(x) {
+  is_int(x) or is_float(x)
+}
+
+// 类型转换
+thought to_int(x) {
+  if is_int(x) {
+    x
+  } else if is_float(x) {
+    floor(x)
+  } else if is_str(x) {
+    int(x)
+  } else {
+    0
+  }
+}
+
+thought to_float(x) {
+  if is_float(x) {
+    x
+  } else if is_int(x) {
+    x + 0.0
+  } else if is_str(x) {
+    float(x)
+  } else {
+    0.0
+  }
+}
+
+thought to_str(x) {
+  "" + x
+}
+
+// 字典操作：获取所有键
+thought keys(dict) {
+  result = []
+  for pair in items(dict) {
+    result = result + [pair[0]]
+  }
+  result
+}
+
+// 字典操作：获取所有值
+thought values(dict) {
+  result = []
+  for pair in items(dict) {
+    result = result + [pair[1]]
+  }
+  result
+}
+
+// 合并两个字典，dict2 覆盖 dict1
+thought merge(dict1, dict2) {
+  result = {}
+  for pair in items(dict1) {
+    result[pair[0]] = pair[1]
+  }
+  for pair in items(dict2) {
+    result[pair[0]] = pair[1]
+  }
+  result
+}
+
+// 深拷贝
+thought copy(x) {
+  if is_list(x) {
+    result = []
+    for item in x {
+      result = result + [copy(item)]
+    }
+    result
+  } else if is_dict(x) {
+    result = {}
+    for pair in items(x) {
+      result[pair[0]] = copy(pair[1])
+    }
+    result
+  } else {
+    x
+  }
+}

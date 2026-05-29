@@ -1,0 +1,670 @@
+;; parser.ku — 简化 Ku parser
+;; 生成嵌套字典 AST
+
+thought node(type, value, children) {
+    { "type": type, "value": value, "children": children }
+}
+thought node_lit(val) { node("literal", val, []) }
+thought node_ref(name) { node("ref", name, []) }
+thought node_op(op, l, r) { node("op", op, [l, r]) }
+
+thought parse_tokens(tokens) {
+    pos = 0
+    end = len(tokens)
+    stmts = []
+    while (< (pos, end)) {
+        t = tokens[pos]
+        if (t["type"] == "newline") {
+            pos = + (pos, 1)
+        } {
+            if (t["type"] == "eof") { break }
+            result = _stmt(tokens, pos, end)
+            stmts = push(stmts, result["n"])
+            pos = result["p"]
+        }
+    }
+    desugar_pipe(node("block", "", stmts))
+}
+
+thought _res(n, p) { { "n": n, "p": p } }
+
+;; ── 语句 ──
+thought _stmt(tokens, pos, end) {
+    t = tokens[pos]
+
+    ;; EOF
+    if (t["type"] == "eof") {
+        _res(node_lit(""), pos)
+    } {
+    ;; thought 定义
+    if (and(t["type"] == "keyword", t["value"] == "thought")) {
+        _parse_thought(tokens, + (pos, 1), end)
+    } {
+    ;; if
+    if (and(t["type"] == "keyword", t["value"] == "if")) {
+        _parse_if(tokens, + (pos, 1), end)
+    } {
+    ;; while
+    if (and(t["type"] == "keyword", t["value"] == "while")) {
+        _parse_while(tokens, + (pos, 1), end)
+    } {
+    ;; for
+    if (and(t["type"] == "keyword", t["value"] == "for")) {
+        _parse_for(tokens, + (pos, 1), end)
+    } {
+    ;; return
+    if (and(t["type"] == "keyword", t["value"] == "return")) {
+        _parse_return(tokens, + (pos, 1), end)
+    } {
+    ;; break
+    if (and(t["type"] == "keyword", t["value"] == "break")) {
+        _res(node("break", "", []), + (pos, 1))
+    } {
+    ;; continue
+    if (and(t["type"] == "keyword", t["value"] == "continue")) {
+        _res(node("continue", "", []), + (pos, 1))
+    } {
+    ;; try/catch
+    if (and(t["type"] == "keyword", t["value"] == "try")) {
+        _parse_try(tokens, + (pos, 1), end)
+    } {
+    ;; throw
+    if (and(t["type"] == "keyword", t["value"] == "throw")) {
+        val = _expr(tokens, + (pos, 1), end)
+        _res(node("throw", "", [val["n"]]), val["p"])
+    } {
+    ;; 赋值: name = expr
+    if (and(t["type"] == "name",
+         and(< (+ (pos, 2), end),
+              and(tokens[+ (pos, 1)]["type"] == "op",
+                  tokens[+ (pos, 1)]["value"] == "=")))) {
+        name = t["value"]
+        val = _expr(tokens, + (pos, 2), end)
+        _res(node("assign", name, [val["n"]]), val["p"])
+    } {
+    ;; 索引赋值: name[idx] = expr
+    if (and(t["type"] == "name",
+         and(< (+ (pos, 2), end),
+              tokens[+ (pos, 1)]["value"] == "[")) {
+        idx_end = _find_close(tokens, + (pos, 2), end, "[", "]")
+        if (and(< (+ (idx_end, 1), end),
+                tokens[+ (idx_end, 1)]["value"] == "=")) {
+            obj = node_ref(t["value"])
+            idx = _expr(tokens, + (pos, 2), idx_end)
+            val = _expr(tokens, + (idx_end, 2), end)
+            _res(node("index_assign", "", [node("index", "", [obj, idx["n"]]), val["n"]]), val["p"])
+        } {
+            ;; 不是索引赋值，当普通表达式处理
+            expr_result = _expr(tokens, pos, end)
+            _res(expr_result["n"], expr_result["p"])
+        }
+    } {
+        ;; 表达式语句
+        expr_result = _expr(tokens, pos, end)
+        _res(expr_result["n"], expr_result["p"])
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+}
+
+;; ── thought 定义 ──
+thought _parse_thought(tokens, pos, end) {
+    name = tokens[pos]["value"]
+    pos = + (pos, 1)
+    ;; 跳过 (
+    pos = _skip(tokens, pos, "punct", "(")
+    params = []
+    while (< (pos, end)) {
+        t = tokens[pos]
+        if (t["value"] == ")") { break }
+        if (t["type"] == "name") {
+            params = push(params, t["value"])
+            pos = + (pos, 1)
+            if (tokens[pos]["value"] == ",") { pos = + (pos, 1) }
+        } { break }
+    }
+    pos = _skip(tokens, pos, "punct", ")")
+    body = _parse_brace(tokens, pos, end)
+    _res(node("thought", name, _push(params, body["n"])), body["p"])
+}
+
+;; ── if ──
+thought _parse_if(tokens, pos, end) {
+    brace_pos = _find_brace(tokens, pos, end)
+    cond = _expr(tokens, pos, brace_pos)
+    then_body = _parse_brace(tokens, brace_pos, end)
+    pos = then_body["p"]
+    ;; 隐式 else: } {
+    else_body = ""
+    if (and(< (pos, end), tokens[pos]["value"] == "{")) {
+        eb = _parse_brace(tokens, pos, end)
+        else_body = eb["n"]
+        pos = eb["p"]
+    }
+    kids = [cond["n"], then_body["n"]]
+    if (else_body) { kids = push(kids, else_body) }
+    _res(node("if", "", kids), pos)
+}
+
+;; ── while ──
+thought _parse_while(tokens, pos, end) {
+    brace_pos = _find_brace(tokens, pos, end)
+    cond = _expr(tokens, pos, brace_pos)
+    body = _parse_brace(tokens, brace_pos, end)
+    _res(node("while", "", [cond["n"], body["n"]]), body["p"])
+}
+
+;; ── for ──
+thought _parse_for(tokens, pos, end) {
+    var = tokens[pos]["value"]
+    pos = + (pos, 1)
+    pos = _skip(tokens, pos, "keyword", "in")
+    brace_pos = _find_brace(tokens, pos, end)
+    iterable = _expr(tokens, pos, brace_pos)
+    body = _parse_brace(tokens, brace_pos, end)
+    _res(node("for", var, [iterable["n"], body["n"]]), body["p"])
+}
+
+;; ── return ──
+thought _parse_return(tokens, pos, end) {
+    t = tokens[pos]
+    if (or(t["type"] == "newline", t["type"] == "eof")) {
+        _res(node("return", "", [node_lit("")]), pos)
+    } {
+        val = _expr(tokens, pos, end)
+        _res(node("return", "", [val["n"]]), val["p"])
+    }
+}
+
+;; ── try/catch ──
+thought _parse_try(tokens, pos, end) {
+    try_body = _parse_brace(tokens, pos, end)
+    pos = try_body["p"]
+    catch_var = ""
+    catch_body = ""
+    if (and(< (pos, end), and(tokens[pos]["type"] == "keyword", tokens[pos]["value"] == "catch"))) {
+        pos = + (pos, 1)
+        if (tokens[pos]["type"] == "name") {
+            catch_var = tokens[pos]["value"]
+            pos = + (pos, 1)
+        }
+        cb = _parse_brace(tokens, pos, end)
+        catch_body = cb["n"]
+        pos = cb["p"]
+    }
+    kids = [try_body["n"]]
+    if (catch_body) {
+        kids = push(kids, node_ref(catch_var))
+        kids = push(kids, catch_body)
+    }
+    _res(node("try", "", kids), pos)
+}
+
+;; ── { } 块 ──
+thought _parse_brace(tokens, pos, end) {
+    pos = _skip(tokens, pos, "punct", "{")
+    stmts = []
+    while (< (pos, end)) {
+        t = tokens[pos]
+        if (or(t["value"] == "}", t["type"] == "eof")) {
+            return(_res(node("block", "", stmts), + (pos, 1)))
+        }
+        if (t["type"] == "newline") {
+            pos = + (pos, 1)
+        } {
+            result = _stmt(tokens, pos, end)
+            stmts = push(stmts, result["n"])
+            pos = result["p"]
+        }
+    }
+    _res(node("block", "", stmts), pos)
+}
+
+;; ── 辅助 ──
+thought _skip(tokens, pos, typ, val) {
+    if (and(< (pos, len(tokens)),
+            and(tokens[pos]["type"] == typ, tokens[pos]["value"] == val))) {
+        + (pos, 1)
+    } { pos }
+}
+
+thought _find_brace(tokens, pos, end) {
+    while (< (pos, end)) {
+        if (tokens[pos]["value"] == "{") { return(pos) }
+        pos = + (pos, 1)
+    }
+    pos
+}
+
+thought _push(arr, item) {
+    ;; 追加元素（Ku 没有 push 用于已有变量的语法糖）
+    result = arr
+    result = push(result, item)
+    result
+}
+
+thought _line_end(tokens, pos, end) {
+    while (< (pos, end)) {
+        t = tokens[pos]
+        if (t["type"] == "newline") { return(pos) }
+        if (t["type"] == "eof") { return(pos) }
+        pos = + (pos, 1)
+    }
+    pos
+}
+
+;; ── 表达式（优先级爬升） ──
+thought _expr(tokens, pos, end) {
+    _expr_bp(tokens, pos, end, 0)
+}
+
+thought _expr_bp(tokens, pos, end, min_bp) {
+    left = _atom(tokens, pos, end)
+    pos = left["p"]
+    left = left["n"]
+
+    while (< (pos, end)) {
+        t = tokens[pos]
+        ;; 函数调用 (args)
+        if (t["value"] == "(") {
+            call = _call_args(tokens, pos, end)
+            if (left["type"] == "ref") {
+                left = node("call", left["value"], call["args"])
+            } {
+                all_args = [left]
+                ai = 0
+                while (< (ai, len(call["args"]))) {
+                    all_args = push(all_args, call["args"][ai])
+                    ai = + (ai, 1)
+                }
+                left = node("call", "", all_args)
+            }
+            pos = call["p"]
+        } {
+        ;; 索引 [expr]
+        if (t["value"] == "[") {
+            pos = + (pos, 1)
+            idx_end = _find_close(tokens, pos, end, "[", "]")
+            idx = _expr(tokens, pos, idx_end)
+            left = node("index", "", [left, idx["n"]])
+            pos = + (idx_end, 1)
+        } {
+        ;; 属性访问 .attr
+        if (t["value"] == ".") {
+            pos = + (pos, 1)
+            attr_name = tokens[pos]["value"]
+            pos = + (pos, 1)
+            left = node("attr", attr_name, [left])
+        } {
+        ;; lambda ->
+        if (and(t["type"] == "op", t["value"] == "->")) {
+            params = []
+            if (left["type"] == "ref") {
+                params = push(params, left["value"])
+            } {
+                if (left["type"] == "list") {
+                    ci = 0
+                    while (< (ci, len(left["children"]))) {
+                        params = push(params, left["children"][ci]["value"])
+                        ci = + (ci, 1)
+                    }
+                } {
+                    params = push(params, "_")
+                }
+            }
+            body = _expr_bp(tokens, + (pos, 1), end, 0)
+            ret_node = node("return", "", [body["n"]])
+            body_block = node("block", "", [ret_node])
+            kids = [body_block]
+            pi = 0
+            while (< (pi, len(params))) {
+                kids = push(kids, node_lit(params[pi]))
+                pi = + (pi, 1)
+            }
+            left = node("lambda", "", kids)
+            pos = body["p"]
+        } {
+        ;; 二元操作符
+        if (t["type"] == "op") {
+            bp = _bp(t["value"])
+            if (< (bp, min_bp)) { break }
+            right = _expr_bp(tokens, + (pos, 1), end, + (bp, 1))
+            left = node_op(t["value"], left, right["n"])
+            pos = right["p"]
+        } {
+            break
+        }
+        }
+        }
+        }
+        }
+    }
+    _res(left, pos)
+}
+
+thought _bp(op) {
+    if (op == "|>") { 0 } {
+        if (op == "or") { 1 } {
+            if (op == "and") { 2 } {
+                if (or(op == "==", op == "!=")) { 3 } {
+                    if (or(or(op == "<", op == ">"), or(op == "<=", op == ">="))) { 4 } {
+                        if (or(op == "+", op == "-")) { 5 } {
+                            if (or(or(op == "*", op == "/"), op == "%")) { 6 } { 0 }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+;; ── pipe 脱糖 ──
+thought _has_placeholder(node) {
+    if (node["type"] == "ref") {
+        node["value"] == "_"
+    } {
+        i = 0
+        found = false
+        while (and(< (i, len(node["children"])), not(found))) {
+            c = node["children"][i]
+            if (type(c) == "dict") {
+                found = _has_placeholder(c)
+            } {}
+            i = + (i, 1)
+        }
+        found
+    }
+}
+
+thought _replace_placeholder(nd, replacement) {
+    if (nd["type"] == "ref") {
+        if (nd["value"] == "_") { replacement } { nd }
+    } {
+        new_kids = []
+        i = 0
+        while (< (i, len(nd["children"]))) {
+            c = nd["children"][i]
+            new_kids = if (type(c) == "dict") {
+                push(new_kids, _replace_placeholder(c, replacement))
+            } {
+                push(new_kids, c)
+            }
+            i = + (i, 1)
+        }
+        { "type": nd["type"], "value": nd["value"], "children": new_kids }
+    }
+}
+
+thought desugar_pipe(nd) {
+    new_kids = []
+    i = 0
+    while (< (i, len(nd["children"]))) {
+        c = nd["children"][i]
+        new_kids = if (type(c) == "dict") {
+            push(new_kids, desugar_pipe(c))
+        } {
+            push(new_kids, c)
+        }
+        i = + (i, 1)
+    }
+    nd = { "type": nd["type"], "value": nd["value"], "children": new_kids }
+    if (and(nd["type"] == "op", and(nd["value"] == "|>", == (len(nd["children"]), 2)))) {
+        left = nd["children"][0]
+        right = nd["children"][1]
+        if (_has_placeholder(right)) {
+            _replace_placeholder(right, left)
+        } {
+            if (and(right["type"] == "call", right["value"] != "")) {
+                node("call", right["value"], _prepend(left, right["children"]))
+            } {
+                if (and(right["type"] == "call", right["value"] == "")) {
+                    node("call", "", _prepend(right["children"][0], _prepend(left, _tail(right["children"]))))
+                } {
+                    if (right["type"] == "ref") {
+                        node("call", right["value"], [left])
+                    } {
+                        node("call", "", [right, left])
+                    }
+                }
+            }
+        }
+    } {
+        nd
+    }
+}
+
+thought _prepend(item, arr) {
+    result = [item]
+    i = 0
+    while (< (i, len(arr))) {
+        result = push(result, arr[i])
+        i = + (i, 1)
+    }
+    result
+}
+
+thought _tail(arr) {
+    result = []
+    i = 1
+    while (< (i, len(arr))) {
+        result = push(result, arr[i])
+        i = + (i, 1)
+    }
+    result
+}
+
+;; ── 原子（字面量、标识符、分组） ──
+thought _atom(tokens, pos, end) {
+    t = tokens[pos]
+    if (t["type"] == "number") {
+        num_val = if (str_contains(t["value"], ".")) { float(t["value"]) } { int(t["value"]) }
+        _res(node_lit(num_val), + (pos, 1))
+    } {
+    if (t["type"] == "string") {
+        _res(node_lit(t["value"]), + (pos, 1))
+    } {
+    if (and(t["type"] == "keyword", t["value"] == "true")) {
+        _res(node_lit(true), + (pos, 1))
+    } {
+    if (and(t["type"] == "keyword", t["value"] == "false")) {
+        _res(node_lit(false), + (pos, 1))
+    } {
+    if (and(t["type"] == "keyword", t["value"] == "null")) {
+        _res(node_lit(""), + (pos, 1))
+    } {
+    if (and(t["type"] == "keyword",
+         and(or(t["value"] == "and", or(t["value"] == "or", t["value"] == "not")),
+             and(< (+ (pos, 1), end), tokens[+ (pos, 1)]["value"] == "(")))) {
+        call = _call_args(tokens, + (pos, 1), end)
+        _res(node("call", t["value"], call["args"]), call["p"])
+    } {
+    if (t["type"] == "name") {
+        _res(node_ref(t["value"]), + (pos, 1))
+    } {
+    if (and(t["type"] == "op", < (+ (pos, 1), end))) {
+        if (tokens[+ (pos, 1)]["value"] == "(") {
+            call = _call_args(tokens, + (pos, 1), end)
+            _res(node("call", t["value"], call["args"]), call["p"])
+        } {
+            _res(node_lit(""), + (pos, 1))
+        }
+    } {
+    if (t["value"] == "(") {
+        pos = + (pos, 1)
+        close = _find_close(tokens, pos, end, "(", ")")
+        if (and(< (+ (close, 1), end),
+                and(tokens[+ (close, 1)]["type"] == "op",
+                    tokens[+ (close, 1)]["value"] == "->"))) {
+            items = []
+            p = pos
+            while (< (p, close)) {
+                tk = tokens[p]
+                if (tk["type"] == "name") {
+                    items = push(items, node_lit(tk["value"]))
+                    p = + (p, 1)
+                } {
+                    if (tk["value"] == ",") { p = + (p, 1) } { p = + (p, 1) }
+                }
+            }
+            _res(node("list", "", items), + (close, 1))
+        } {
+            inner = _expr(tokens, pos, close)
+            _res(inner["n"], + (close, 1))
+        }
+    } {
+    if (t["value"] == "[") {
+        _list(tokens, pos, end)
+    } {
+    if (t["value"] == "{") {
+        _dict(tokens, pos, end)
+    } {
+    if (t["value"] == "-") {
+        right = _atom(tokens, + (pos, 1), end)
+        _res(node_op("-", node_lit(0), right["n"]), right["p"])
+    } {
+    if (t["value"] == "not") {
+        right = _atom(tokens, + (pos, 1), end)
+        _res(node_op("not", right["n"], node_lit("")), right["p"])
+    } {
+        _res(node_lit(""), + (pos, 1))
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+}
+
+;; ── 函数调用参数 ──
+thought _call_args(tokens, pos, end) {
+    pos = + (pos, 1) ;; skip (
+    args = []
+    arg_start = pos
+    depth = 1
+    while (and(< (pos, end), > (depth, 0))) {
+        t = tokens[pos]
+        if (t["value"] == "(") { depth = + (depth, 1) }
+        if (t["value"] == ")") {
+            depth = - (depth, 1)
+            if (== (depth, 0)) {
+                if (> (pos, arg_start)) {
+                    arg = _expr(tokens, arg_start, pos)
+                    args = push(args, arg["n"])
+                }
+                break
+            }
+        }
+        if (and(t["value"] == ",", depth == 1)) {
+            arg = _expr(tokens, arg_start, pos)
+            args = push(args, arg["n"])
+            arg_start = + (pos, 1)
+        }
+        pos = + (pos, 1)
+    }
+    { "args": args, "p": + (pos, 1) }
+}
+
+;; ── 找匹配括号 ──
+thought _find_close(tokens, pos, end, open, close) {
+    depth = 1
+    while (and(< (pos, end), > (depth, 0))) {
+        t = tokens[pos]
+        if (t["value"] == open) { depth = + (depth, 1) }
+        if (t["value"] == close) { depth = - (depth, 1) }
+        if (> (depth, 0)) { pos = + (pos, 1) }
+    }
+    pos
+}
+
+;; ── 列表 ──
+thought _list(tokens, pos, end) {
+    pos = + (pos, 1)
+    items = []
+    item_start = pos
+    depth = 1
+    while (and(< (pos, end), > (depth, 0))) {
+        t = tokens[pos]
+        if (t["value"] == "[") { depth = + (depth, 1) }
+        if (t["value"] == "]") {
+            depth = - (depth, 1)
+            if (== (depth, 0)) {
+                if (> (pos, item_start)) {
+                    item = _expr(tokens, item_start, pos)
+                    items = push(items, item["n"])
+                }
+                break
+            }
+        }
+        if (and(t["value"] == ",", depth == 1)) {
+            item = _expr(tokens, item_start, pos)
+            items = push(items, item["n"])
+            item_start = + (pos, 1)
+        }
+        pos = + (pos, 1)
+    }
+    _res(node("list", "", items), + (pos, 1))
+}
+
+;; ── 字典 ──
+thought _dict(tokens, pos, end) {
+    pos = + (pos, 1)
+    pairs = []
+    depth = 1
+    key_start = pos
+    state = "key"
+    cur_key = ""
+    while (and(< (pos, end), > (depth, 0))) {
+        t = tokens[pos]
+        if (t["value"] == "{") { depth = + (depth, 1) }
+        if (t["value"] == "}") {
+            depth = - (depth, 1)
+            if (== (depth, 0)) {
+                if (and(state == "val", > (pos, key_start))) {
+                    val = _expr(tokens, key_start, pos)
+                    pairs = push(pairs, node("pair", cur_key, [val["n"]]))
+                }
+                break
+            }
+        }
+        if (and(t["value"] == ":", depth == 1, state == "key")) {
+            cur_key = _get_key(tokens, key_start, pos)
+            key_start = + (pos, 1)
+            state = "val"
+        }
+        if (and(t["value"] == ",", depth == 1, state == "val")) {
+            val = _expr(tokens, key_start, pos)
+            pairs = push(pairs, node("pair", cur_key, [val["n"]]))
+            key_start = + (pos, 1)
+            state = "key"
+        }
+        pos = + (pos, 1)
+    }
+    _res(node("dict", "", pairs), + (pos, 1))
+}
+
+thought _get_key(tokens, from, to) {
+    if (< (from, to)) {
+        t = tokens[from]
+        if (t["type"] == "string") {
+            t["value"]
+        } {
+            if (t["type"] == "name") { t["value"] } { "" }
+        }
+    } { "" }
+}
