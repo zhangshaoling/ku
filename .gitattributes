@@ -1,0 +1,5 @@
+# GitHub 语言检测
+# Ku 是自举语言，核心标准库用 .ku 编写
+# Python 是引导编译器/运行时的实现
+
+*.ku linguist-language=Ku linguist-detectable=true
