@@ -2,7 +2,18 @@
 
 **Ku** is an AI-native, self-modifying programming language where `thought = code = memory`.
 
-Born as the native tongue of the [Xuanli](https://github.com/anthropics/claude-code) AGI system, Ku treats code as executable memory -- every expression is a thought that can be inspected, rewritten, and composed at runtime.
+<p align="center">
+  <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-blue" alt="Python">
+  <img src="https://img.shields.io/badge/topic-programming--language-7c6cf0" alt="programming-language">
+  <img src="https://img.shields.io/badge/topic-ai-5ba4e8" alt="ai">
+  <img src="https://img.shields.io/badge/topic-self--modifying-3ddc84" alt="self-modifying">
+  <img src="https://img.shields.io/badge/topic-compiler-fab387" alt="compiler">
+  <img src="https://img.shields.io/badge/topic-metaprogramming-f5a97f" alt="metaprogramming">
+  <img src="https://img.shields.io/badge/topic-thought--as--code-cba6f7" alt="thought-as-code">
+</p>
+
+Born as the native tongue of the **Xuanli (玄璃)** AGI system, Ku treats code as executable memory — every expression is a thought that can be inspected, rewritten, and composed at runtime.
 
 ## Key Features
 
