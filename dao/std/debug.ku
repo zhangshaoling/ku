@@ -1,0 +1,156 @@
+// std/debug.道 — 调试工具标准库
+// 用法: 引 "std/debug" 别 dbg
+
+// 全局计时器存储
+__timer_start = 0
+
+// 深度打印对象（递归展平）
+思 dump(obj) {
+  dump_inner(obj, 0)
+}
+
+思 dump_inner(obj, depth) {
+  indent = ""
+  i = 0
+  当 i < depth {
+    indent = indent + "  "
+    i = i + 1
+  }
+  t = type(obj)
+  若 t == "list" {
+    print(indent + "[")
+    遍 item 于 obj {
+      dump_inner(item, depth + 1)
+    }
+    print(indent + "]")
+  } 否 若 t == "dict" {
+    print(indent + "{")
+    遍 pair 于 items(obj) {
+      key = pair[0]
+      val = pair[1]
+      若 type(val) == "list" 或 type(val) == "dict" {
+        print(indent + "  " + key + ":")
+        dump_inner(val, depth + 1)
+      } 否 {
+        print(indent + "  " + key + ": " + "" + val)
+      }
+    }
+    print(indent + "}")
+  } 否 {
+    print(indent + "" + obj)
+  }
+}
+
+// 带时间戳的追踪输出
+思 trace(msg) {
+  timestamp = now()
+  print("[" + timestamp + "] " + msg)
+}
+
+// 带标签的追踪
+思 trace_tag(tag, msg) {
+  timestamp = now()
+  print("[" + timestamp + "] [" + tag + "] " + msg)
+}
+
+// 计时器：开始
+思 timer_start() {
+  __timer_start = now()
+  trace("TIMER START")
+}
+
+// 计时器：获取已用时间（秒，近似）
+思 timer_elapsed() {
+  start = __timer_start
+  若 start == 0 {
+    trace("TIMER WARNING: timer 非 started")
+    0
+  } 否 {
+    elapsed = now() - start
+    trace("TIMER ELAPSED: " + elapsed + "s")
+    elapsed
+  }
+}
+
+// 计时器：停止并返回
+思 timer_stop() {
+  elapsed = timer_elapsed()
+  __timer_start = 0
+  elapsed
+}
+
+// 测量某个函数的执行时间
+思 measure(fn) {
+  start = now()
+  result = fn()
+  elapsed = now() - start
+  {"result": result, "elapsed": elapsed}
+}
+
+// 断言：条件为假则打印错误
+思 assert(cond, msg) {
+  若 非 cond {
+    trace("ASSERT FAILED: " + msg)
+    假
+  } 否 {
+    真
+  }
+}
+
+// 断言相等
+思 assert_eq(actual, expected) {
+  若 actual == expected {
+    真
+  } 否 {
+    trace("ASSERT_EQ FAILED: expected " + expected + ", got " + actual)
+    假
+  }
+}
+
+// 类型断言
+思 assert_type(val, expected_type) {
+  actual = type(val)
+  若 actual == expected_type {
+    真
+  } 否 {
+    trace("ASSERT_TYPE FAILED: expected " + expected_type + ", got " + actual)
+    假
+  }
+}
+
+// 内存使用情况（返回系统可用信息）
+思 memory_usage() {
+  // 道 没有直接的内存 API，返回运行时信息
+  info = {
+    "thoughts": len(list_thoughts()),
+    "note": "道 runtime does 非 expose memory metrics directly"
+  }
+  info
+}
+
+// 打印分隔线
+思 separator(title) {
+  line = "================================"
+  若 title != "" {
+    print(line + " " + title + " " + line)
+  } 否 {
+    print(line + line)
+  }
+}
+
+// 打印变量名和值（调试用）
+思 inspect(name, val) {
+  t = type(val)
+  print(name + " (" + t + ") = " + val)
+}
+
+// 列出所有已注册的 思
+思 list_all_thoughts() {
+  thoughts = list_thoughts()
+  trace("Registered thoughts (" + len(thoughts) + "):")
+  遍 t 于 thoughts {
+    print("  - " + t)
+  }
+  thoughts
+}
+

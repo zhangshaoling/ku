@@ -1,0 +1,47 @@
+// agent_core.ku - Agent ReAct main loop
+// Syntax: 若 cond { body } 否 { else-body }
+// NO tokens between condition and {
+
+思 __decompose(goal) {
+    g = str_lower(goal)
+    若 str_contains(g, "refactor") {
+        [{"type":"analyze","name":"analyze code"},
+         {"type":"plan","name":"plan changes"},
+         {"type":"code","name":"write code"},
+         {"type":"test","name":"run tests"}]
+    } 否 {
+        若 str_contains(g, "test") {
+            [{"type":"find","name":"find tests"},
+             {"type":"run","name":"run tests"},
+             {"type":"fix","name":"fix failures"}]
+        } 否 {
+            [{"type":"analyze","name":"analyze"},
+             {"type":"execute","name":"execute"}]
+        }
+    }
+}
+
+// -- Task execution dispatch --
+思 __execute(task) {
+    t = task["type"]
+    匹 t 为
+        "analyze" 则 __exec_analyze(task)
+        "plan" 则 __exec_plan(task)
+        "code" 则 __exec_code(task)
+        "test" 则 __exec_test(task)
+        "find" 则 __exec_find(task)
+        "run" 则 __exec_run(task)
+        "fix" 则 __exec_fix(task)
+        "execute" 则 __exec_generic(task)
+        否则 "unknown: " + t
+    终匹
+}
+
+思 __exec_analyze(task) { print("[ANALYZE] " + task["name"]); "ok" }
+思 __exec_plan(task) { print("[PLAN] " + task["name"]); "ok" }
+思 __exec_code(task) { print("[CODE] " + task["name"]); "ok" }
+思 __exec_test(task) { print("[TEST] " + task["name"]); "ok" }
+思 __exec_find(task) { print("[FIND] " + task["name"]); "ok" }
+思 __exec_run(task) { print("[RUN] " + task["name"]); "ok" }
+思 __exec_fix(task) { print("[FIX] " + task["name"]); "ok" }
+思 __exec_generic(task) { print("[EXEC] " + task["name"]); "ok" }

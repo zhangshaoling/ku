@@ -14,5 +14,46 @@ venv/
 *.sqlite
 .mypy_cache/
 .pytest_cache/
+pytest-cache-files-*/
 .ruff_cache/
 ku_search.db
+
+# Local backups and scratch files
+backups/
+scratch/
+
+# One-off generation / patch / diagnostic scripts
+_gen_*.py
+_fix_*.py
+_test_*.py
+_v*_test.py
+_write_*.py
+_add_opcodes.py
+_diag.py
+find_thought.py
+patchparser.py
+_patch*.txt
+_patch*.js
+_rt_b64.txt
+_cn_ops.json
+_run.ps1
+_run_patch.bat
+
+# Temporary Dao runtime scratch files
+dao/dao_core
+dao/dao_core.exe
+dao/_*.py
+dao/_patch.txt
+dao/*.bak
+dao/test_if*.ku
+dao/test_parse.ku
+dao/test_dict.ku
+dao/test_add.txt
+dao/test_input.txt
+dao/think.py
+
+
+# One-off root experiments
+test_ai_core.ku
+test_real_ai.ku
+test_write.txt

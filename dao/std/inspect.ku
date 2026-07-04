@@ -1,0 +1,154 @@
+// std/inspect.道 — 道 元编程工具：代码自省
+// 输入任意 道 表达式，输出它的 AST 结构。
+// 用 道 理解 道 —— 自我认知的第一步。
+
+// 格式化 AST 为可读字符串
+思 inspect(code) {
+  ast = parse(code)
+  format_node(ast, 0)
+}
+
+// 递归格式化单个 AST 节点
+思 format_node(node, indent) {
+  pad = repeat("  ", indent)
+  t = node.type
+  v = node.value
+  kids = node.children
+
+  // 叶节点：直接显示类型和值
+  若 len(kids) == 0 {
+    若 v == "" 或 v == 空 {
+      pad + "(" + t + ")"
+    } {
+      pad + "(" + t + " " + str(v) + ")"
+    }
+  } {
+    // 有子节点：递归展开
+    result = pad + "(" + t
+    若 v != "" 且 v != 空 {
+      result = result + " " + str(v)
+    }
+    result = result + "\n"
+    i = 0
+    当 i < len(kids) {
+      child_str = format_node(kids[i], indent + 1)
+      result = result + child_str
+      若 i < len(kids) - 1 {
+        result = result + "\n"
+      }
+      i = i + 1
+    }
+    result = result + ")"
+    result
+  }
+}
+
+// 重复字符串 n 次
+思 repeat(s, n) {
+  result = ""
+  i = 0
+  当 i < n {
+    result = result + s
+    i = i + 1
+  }
+  result
+}
+
+// 快速查看：只显示节点类型和子节点数
+思 brief(code) {
+  ast = parse(code)
+  brief_node(ast, 0)
+}
+
+思 brief_node(node, indent) {
+  pad = repeat("  ", indent)
+  t = node.type
+  v = node.value
+  n = len(node.children)
+
+  label = t
+  若 v != "" 且 v != 空 {
+    label = label + ":" + str(v)
+  }
+  label = label + " [" + str(n) + "]"
+
+  result = pad + label
+  i = 0
+  当 i < n {
+    result = result + "\n" + brief_node(node.children[i], indent + 1)
+    i = i + 1
+  }
+  result
+}
+
+// 统计 AST 节点数
+思 count_nodes(code) {
+  ast = parse(code)
+  count_node(ast)
+}
+
+思 count_node(node) {
+  total = 1
+  i = 0
+  当 i < len(node.children) {
+    total = total + count_node(node.children[i])
+    i = i + 1
+  }
+  total
+}
+
+// 列出 AST 中所有引用的名字
+思 refs(code) {
+  ast = parse(code)
+  collect_refs(ast, [])
+}
+
+思 collect_refs(node, acc) {
+  若 node.type == "ref" {
+    acc = push(acc, node.value)
+  }
+  i = 0
+  当 i < len(node.children) {
+    acc = collect_refs(node.children[i], acc)
+    i = i + 1
+  }
+  acc
+}
+
+// 列出 AST 中所有字面量
+思 literals(code) {
+  ast = parse(code)
+  collect_lits(ast, [])
+}
+
+思 collect_lits(node, acc) {
+  若 node.type == "literal" {
+    acc = push(acc, node.value)
+  }
+  i = 0
+  当 i < len(node.children) {
+    acc = collect_lits(node.children[i], acc)
+    i = i + 1
+  }
+  acc
+}
+
+// 深度：AST 最大嵌套层数
+思 depth(code) {
+  ast = parse(code)
+  node_depth(ast, 0)
+}
+
+思 node_depth(node, d) {
+  max_d = d
+  i = 0
+  当 i < len(node.children) {
+    child_d = node_depth(node.children[i], d + 1)
+    若 child_d > max_d {
+      max_d = child_d
+    }
+    i = i + 1
+  }
+  max_d
+}
+

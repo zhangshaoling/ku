@@ -1,0 +1,91 @@
+// std/http.道 — HTTP 客户端标准库
+// 用法: 引 "std/http" 别 http
+
+// 请求头辅助
+思 json_headers {
+  {"Content-Type": "application/json", "Accept": "application/json"}
+}
+
+思 auth_header(token) {
+  {"Authorization": "Bearer " + token}
+}
+
+// GET 请求
+思 get(url) {
+  http_get(url, {})
+}
+
+思 get_json(url) {
+  resp = http_get(url, {"Accept": "application/json"})
+  若 resp.ok {
+    json_parse(resp.body)
+  } 否 {
+    {"ok": 假, "error": resp.error}
+  }
+}
+
+// POST 请求
+思 post(url, body, headers) {
+  http_post(url, body, headers)
+}
+
+思 post_json(url, data) {
+  body = json_stringify(data)
+  hdrs = json_headers()
+  resp = http_post(url, body, hdrs)
+  若 resp.ok {
+    {"ok": 真, "data": json_parse(resp.body), "status": resp.status}
+  } 否 {
+    {"ok": 假, "error": resp.error, "status": resp.status}
+  }
+}
+
+// DeepSeek API 调用
+思 deepseek_chat(model, messages, api_key) {
+  url = "https://api.deepseek.com/chat/completions"
+  body = json_stringify({
+    "model": model,
+    "messages": messages,
+    "max_tokens": 2048
+  })
+  hdrs = {"Content-Type": "application/json", "Authorization": "Bearer " + api_key}
+  resp = http_post(url, body, hdrs)
+  若 resp.ok {
+    json_parse(resp.body)
+  } 否 {
+    {"ok": 假, "error": resp.error}
+  }
+}
+
+// LongCat API 调用（免费优先）
+思 longcat_chat(model, messages, api_key) {
+  url = "https://api.longcat.com/v1/chat/completions"
+  body = json_stringify({
+    "model": model,
+    "messages": messages,
+    "max_tokens": 1024
+  })
+  hdrs = {"Content-Type": "application/json", "Authorization": "Bearer " + api_key}
+  resp = http_post(url, body, hdrs)
+  若 resp.ok {
+    json_parse(resp.body)
+  } 否 {
+    {"ok": 假, "error": resp.error}
+  }
+}
+
+// 简单文本请求 LLM（进化系统核心）
+思 llm_ask(prompt, api_key) {
+  messages = [{"role": "user", "content": prompt}]
+  result = deepseek_chat("deepseek-chat", messages, api_key)
+  若 result.ok 且 result.choices {
+    result.choices[0].message.content
+  } 否 {
+    "错误: LLM 请求失败"
+  }
+}
+
+// HTTP 状态码检查
+思 is_ok(resp) { resp.ok }
+思 is_error(resp) { 非 resp.ok }
+

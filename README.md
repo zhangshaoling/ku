@@ -1,17 +1,10 @@
 # Ku Language
 
-> An AI-native programming language where thought, code, and memory are the same thing.
-
-**Ku** is a self-modifying language for building systems that can inspect, remember, and rewrite themselves at runtime.
-It started as the native tongue of the **Xuanli (玄璃)** AGI system and now serves as an experiment in three ideas:
-
-- **programs as living memory**
-- **AST as a first-class runtime object**
-- **self-hosting as the path to autonomy**
+**Ku** is an AI-native, self-modifying programming language where `thought = code = memory`.
 
 <p align="center">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT">
-  <img src="https://img.shields.io/badge/Python-3.9%2B-blue" alt="Python">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-blue" alt="Python">
   <img src="https://img.shields.io/badge/topic-programming--language-7c6cf0" alt="programming-language">
   <img src="https://img.shields.io/badge/topic-ai-5ba4e8" alt="ai">
   <img src="https://img.shields.io/badge/topic-self--modifying-3ddc84" alt="self-modifying">
@@ -20,58 +13,19 @@ It started as the native tongue of the **Xuanli (玄璃)** AGI system and now se
   <img src="https://img.shields.io/badge/topic-thought--as--code-cba6f7" alt="thought-as-code">
 </p>
 
-## Why Ku
+Born as the native tongue of the **Xuanli (玄璃)** AGI system, Ku treats code as executable memory — every expression is a thought that can be inspected, rewritten, and composed at runtime.
 
-Most programming languages assume a boundary between:
+## Key Features
 
-- source code and runtime state
-- program and memory
-- tool and thought
+- **Everything-is-Node** -- AST nodes are first-class values, inspectable and rewritable
+- **Self-bootstrapping** -- Lexer and parser written in Ku itself (dual Python/Ku implementation)
+- **Thought system** -- Named code blocks that persist as memory, callable by name
+- **Self-rewriting** -- The `self` keyword lets code modify its own AST at runtime
+- **Pipe operator** -- `|` chains for readable data transformation
+- **Bytecode compiler** -- Stack-based VM, targeting self-compilation
+- **MCP integration** -- Expose Ku thoughts as MCP tools for Claude Code
 
-Ku tries to collapse that boundary.
-
-In Ku, a `thought` is not just a function. It is a named, inspectable, executable memory unit. That means code can:
-
-- read its own structure
-- rewrite itself while running
-- persist behavior as memory
-- expose thoughts as tools for agent systems
-
-This makes Ku less like a traditional language runtime and more like a programmable cognitive substrate.
-
-## What makes it interesting
-
-- **Everything-is-Node** — AST nodes are first-class values
-- **Thought system** — named executable memory blocks
-- **Self-rewriting** — code can modify its own AST through `self`
-- **Pipe operator** — readable data transformation chains
-- **Self-bootstrapping** — lexer and parser are being rewritten in Ku itself
-- **Bytecode VM path** — stack VM and compiler toward self-compilation
-- **MCP integration** — expose Ku thoughts as callable tools for agent workflows
-
-## Current status
-
-Ku is already usable as an experimental runtime and is no longer just a language sketch.
-
-### Working pieces
-
-- Python runtime and evaluator
-- Python lexer and parser bootstrap
-- Ku standard library modules
-- Ku-written lexer and parser prototypes
-- Bytecode compiler groundwork
-- MCP server entrypoint
-- Parser bootstrap verification tests
-
-### What is still evolving
-
-- language surface syntax
-- self-hosted parser completeness
-- compiler coverage
-- runtime migration away from Python
-- broader examples and documentation
-
-## Quick start
+## Quick Start
 
 ```bash
 pip install -e .
@@ -81,21 +35,18 @@ pip install -e .
 from ku import KuEnv, parse_ku
 
 env = KuEnv()
-result = env.exec(parse_ku('''
+env.exec(parse_ku('''
   thought greet(name) {
     return "Hello, " + name + "!"
   }
-
   greet("World")
 '''))
-
-print(result)
-# => Hello, World!
+# => "Hello, World!"
 ```
 
-## A small taste of the language
+## Language Overview
 
-### Thoughts: named executable memory
+### Thoughts (named code blocks)
 
 ```ku
 thought fibonacci(n) {
@@ -112,7 +63,7 @@ thought result = fibonacci(10)
 ```ku
 thought counter {
   let count = 0
-  self.count = count + 1
+  self.count = count + 1  // rewrites own AST
   return count
 }
 
@@ -131,121 +82,76 @@ counter()  // 2
 // => 50
 ```
 
-## The Chinese mother-tongue direction
+## Project Structure
 
-Ku also explores a more native semantic style where computation is expressed as thought, memory, relation, and self-correction rather than borrowed programming jargon.
+The current self-hosting work now lives primarily under `dao/`. The older `ku/`
+package remains as a compatibility and Python harness layer while the C VM takes
+over more of the bootstrap path.
 
-Examples from the repository's mother-tongue draft:
-
-```ku
-思 斐波那契(数) {
-  若 数 不大于 1 则 { 返 数 }
-  返 斐波那契(数 减 1) 加 斐波那契(数 减 2)
-}
-
-记 "用户偏好" 为 {"主题": "深色", "语言": "中文"}
-设 偏好 为 忆 "用户偏好"
 ```
-
-This direction is still experimental, but it reflects the deeper thesis behind Ku: language design for AGI may need concepts closer to memory, planning, reflection, and tool use than to conventional syntax alone.
-
-## Project structure
-
-```text
-ku/
-  runtime.py        # Core runtime (Node, Thought, KuEnv, evaluator)
-  compiler.py       # Bytecode compiler + stack VM
-  ku_lexer.py       # Python lexer (bootstrap step 1)
-  ku_parser.py      # Python parser (bootstrap step 1)
-  mcp_server.py     # MCP server for tool integration
-  __main__.py       # CLI entry point
-  std/              # Standard library (written in Ku)
-    io.ku
-    fs.ku
-    string.ku
-    list.ku
-    math.ku
-    debug.ku
-    http.ku
-    inspect.ku
+dao/                  # Dao/Ku active language core
+  dao_core.c          # C VM and bootstrap source runner
+  compiler.py         # Python bytecode compiler harness
+  dao_lexer.py        # Python lexer harness
+  dao_parser.py       # Python parser harness
+  std/                # Standard library and self-hosted frontend in .ku
     lexer.ku
     parser.ku
-    type.ku
-    task_queue.ku
-tests/
-  test_parser_bootstrap.py
+    compiler.ku
+    math.ku
+    string.ku
+    net.ku
+  test_core.ku        # Core self-check entrypoints
+demos/                # Generated bytecode fixtures and bootstrap images
+tools/                # Regeneration scripts for demos/bootstrap fixtures
+tests/                # Python, Ku frontend, and C VM parity tests
+docs/                 # Architecture notes, plans, and migration audits
+ku/                   # Legacy package and compatibility runtime
 ```
 
-## The bootstrap path
+See `docs/PROJECT_STRUCTURE.md` for the maintained directory map.
 
-Ku follows a deliberate self-hosting roadmap:
+## The Bootstrap Path
 
-1. **Bootstrap runtime** — Python lexer/parser load and execute Ku
-2. **Self-hosted parsing** — `std/lexer.ku` and `std/parser.ku` parse Ku source
-3. **Self-compiling compiler** — compiler rewritten in Ku and targeting Ku's VM
-4. **Runtime migration** — core runtime rewritten in Ku, removing Python dependency
+Ku follows a deliberate self-bootstrapping strategy:
 
-```text
-Python --(parses)--> Ku --(parses)--> Ku --(compiles)--> Ku
-         bootstrap      self-hosted      self-compiling
+1. **Phase 1** -- Python lexer/parser bootstrap the language
+2. **Phase 2** -- `std/lexer.ku` and `std/parser.ku` parse Ku source
+3. **Phase 3** -- `std/compiler.ku` compiles Ku AST to bytecode
+4. **Phase 4 (current)** -- C VM runs the Ku frontend through `--bootstrap`
+5. **Phase 5** -- Bootstrap image generation and runtime support move out of Python
+
+```
+Python harness --(builds bootstrap image)--> C VM --(runs Ku frontend)--> Ku source
 ```
 
-## Run Ku as an MCP server
+## MCP Server
+
+Run Ku as an MCP tool server for Claude Code:
 
 ```bash
 ku mcp
 ```
 
-This exposes `thought` definitions as callable tools over stdio, which makes Ku especially interesting for agent systems, tool orchestration, and executable memory experiments.
-
-## Why this matters for agent systems
-
-Ku is not just trying to be "another language." It is exploring a runtime where:
-
-- memory can be executable
-- tools can be generated from thoughts
-- plans can be represented as inspectable code
-- self-correction can happen inside the language, not only outside it
-
-If you care about agents, runtimes, self-hosting languages, or programming models for AI-native systems, Ku is the real project here.
-
-## Roadmap
-
-### Near term
-
-- expand runnable examples
-- harden self-hosted lexer/parser coverage
-- improve compiler completeness
-- add more docs for MCP usage and tooling
-
-### Longer term
-
-- remove Python from the critical execution path
-- make Ku compile Ku
-- grow the standard library around memory, planning, and tool composition
-- turn Ku into a practical substrate for agentic systems
+This exposes all `thought` definitions as callable MCP tools over stdio (JSON-RPC 2.0).
 
 ## Contributing
 
-Ku is in active development and the language is still evolving.
+Ku is in active development. The language spec is still evolving. Contributions welcome:
 
-Good contributions include:
-
-- runnable examples
-- documentation improvements
-- standard library extensions
-- parser / compiler bug fixes
-- experiments in self-hosting and metaprogramming
-
-## Philosophy
-
-> Code is data. Data is memory. Memory is thought. Thought is code.
-
-Ku is an attempt to build a language where program and state do not live in separate worlds.
-The long-term goal is simple to say and hard to build:
-
-**a language that can understand, rewrite, and eventually host itself in its own terms.**
+- Bug reports and feature requests via Issues
+- Standard library modules
+- Documentation and examples
+- Compiler optimizations
 
 ## License
 
 MIT
+
+## Philosophy
+
+> "Code is data. Data is memory. Memory is thought. Thought is code."
+
+Ku is not just a programming language -- it's an experiment in building a system where the boundary between program and state dissolve. Every thought is simultaneously executable code, inspectable data, and persistent memory.
+
+The ultimate goal: a language that can rewrite itself completely, from lexer to runtime, in its own terms.

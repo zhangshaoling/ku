@@ -1,0 +1,72 @@
+// test_import.ku - 测试 import 机制
+// 测试1：从 std/ 导入 math 模块
+引 "std/math" 别 m
+
+思 test_import_basic() {
+    result = m_fibonacci(10)
+    若 result == 55 {
+        print("[PASS] math import OK: fibonacci(10)=55")
+    } 否 {
+        print("[FAIL] math import")
+    }
+}
+
+// 测试2：导入 list 模块
+引 "std/list" 别 lst
+
+思 test_import_list() {
+    data = [3, 1, 4, 1, 5, 9, 2, 6]
+    sorted = lst_sort(data)
+    若 sorted[0] == 1 且 sorted[7] == 9 {
+        print("[PASS] list import OK: sort works")
+    } 否 {
+        print("[FAIL] list import")
+    }
+}
+
+// 测试3：导入 string 模块
+引 "std/string" 别 str_mod
+
+思 test_import_string() {
+    result = str_mod_join(["hello", "world"], " ")
+    若 result == "hello world" {
+        print("[PASS] string import OK: join works")
+    } 否 {
+        print("[FAIL] string import: got " + result)
+    }
+}
+
+// 测试4：导入 fs 模块
+引 "std/fs" 别 fs
+
+思 test_import_fs() {
+    result = fs_basename("/a/b/c.txt")
+    若 result == "c.txt" {
+        print("[PASS] fs import OK: basename works")
+    } 否 {
+        print("[FAIL] fs import")
+    }
+}
+
+// 测试5：导入 http 模块
+引 "std/http" 别 http
+
+思 test_import_http() {
+    // 前缀导入后 get 会注册为 http_get
+    若 http_get {
+        print("[PASS] http import OK")
+    } 否 {
+        print("[FAIL] http import")
+    }
+}
+
+// 运行所有测试
+思 run_all_tests() {
+    print("=== Import Tests ===")
+    test_import_basic()
+    test_import_list()
+    test_import_string()
+    test_import_fs()
+    test_import_http()
+    print("=== All Done ===")
+}

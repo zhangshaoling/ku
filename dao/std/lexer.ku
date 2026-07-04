@@ -1,0 +1,118 @@
+思 make_token(type, value, line, col) { { "type": type, "value": value, "line": line, "col": col } }
+思 is_digit(ch) { 且(>= (ord(ch), 48), <= (ord(ch), 57)) }
+思 is_letter(ch) { 或(且(>= (ord(ch), 65), <= (ord(ch), 90)), 且(>= (ord(ch), 97), <= (ord(ch), 122))) }
+思 is_id_start(ch) { 或(或(is_letter(ch), ch == "_"), > (ord(ch), 127)) }
+思 is_id_char(ch) { 或(is_id_start(ch), is_digit(ch)) }
+思 is_keyword(w) {
+    _k = ["思", "若", "否", "否则", "当", "遍", "于", "返", "断", "续", "引", "真", "假", "空", "且", "或", "非", "试", "捕", "抛", "记", "忆", "忘", "强", "弱", "联", "关联", "与", "匹", "为", "则", "终匹"]
+    i = 0
+    当 (< (i, len(_k))) { 若 (_k[i] == w) { 返(真) } i = + (i, 1) }
+    假
+}
+思 lex_number(src, i, n, line) {
+    s = i
+    当 (且(< (i, n), is_digit(src[i]))) { i = + (i, 1) }
+    若 (且(< (i, n), src[i] == ".")) { i = + (i, 1) 当 (且(< (i, n), is_digit(src[i]))) { i = + (i, 1) } }
+    { "token": make_token("number", slice(src, s, i), line, 1), "i": i }
+}
+思 lex_string_escape(e) {
+    若 (e == "n") { chr(10) } {
+        若 (e == "t") { chr(9) } { e }
+    }
+}
+思 lex_string(src, i, n, line) {
+    i = + (i, 1)
+    buf = ""
+    当 (< (i, n)) {
+        c = src[i]
+        若 (c == chr(34)) { 断 }
+        若 (c == chr(92)) {
+            i = + (i, 1)
+            e = src[i]
+            buf = + (buf, lex_string_escape(e))
+        } { buf = + (buf, c) }
+        i = + (i, 1)
+    }
+    { "token": make_token("string", buf, line, 1), "i": + (i, 1) }
+}
+思 lex_ident(src, i, n, line) {
+    s = i
+    当 (且(< (i, n), is_id_char(src[i]))) { i = + (i, 1) }
+    w = slice(src, s, i)
+    typ = "name"
+    若 (is_keyword(w)) { typ = "keyword" }
+    { "token": make_token(typ, w, line, 1), "i": i }
+}
+思 lex_op(src, i, n, line) {
+    ch = src[i]
+    next_i = + (i, 1)
+    combo = ""
+    若 (< (next_i, n)) { combo = + (ch, src[next_i]) }
+    _dbl = 或(或(或(或(或(或(或(或(combo == "==", combo == "!="), combo == "<="), combo == ">="), combo == "+="), combo == "-="), combo == ".."), combo == "->"), combo == "|>")
+    若 (_dbl) { { "token": make_token("op", combo, line, 1), "i": + (next_i, 1) } } { { "token": make_token("op", ch, line, 1), "i": next_i } }
+}
+思 next_token(src, i, n, line) {
+    ch = src[i]
+    若 (且(ch == "/", 且(< (+ (i, 1), n), src[+ (i, 1)] == "/"))) {
+        j = i
+        当 (且(< (j, n), src[j] != chr(10))) { j = + (j, 1) }
+        返({ "token": 空, "i": j })
+    }
+    若 (ch == "#") {
+        j = i
+        当 (且(< (j, n), src[j] != chr(10))) { j = + (j, 1) }
+        返({ "token": 空, "i": j })
+    }
+    若 (is_digit(ch)) { 返(lex_number(src, i, n, line)) }
+    若 (== (ch, chr(34))) { 返(lex_string(src, i, n, line)) }
+    若 (is_id_start(ch)) { 返(lex_ident(src, i, n, line)) }
+    _is_op = 或(或(或(或(或(或(或(或(或(或(或(或(ch == "+", ch == "-"), ch == "*"), ch == "/"), ch == "%"), ch == "="), ch == "!"), ch == "<"), ch == ">"), ch == "~"), ch == "&"), ch == "|"), ch == "^")
+    若 (_is_op) { 返(lex_op(src, i, n, line)) }
+    若 (== (ch, ";")) {
+        若 (且(< (+ (i, 1), n), src[+ (i, 1)] == ";")) {
+            j = i
+            当 (且(< (j, n), src[j] != chr(10))) { j = + (j, 1) }
+            返({ "token": 空, "i": j })
+        }
+        返({ "token": make_token("punct", ";", line, 1), "i": + (i, 1) })
+    }
+    _is_p = 假
+    若 (ch == chr(123)) { _is_p = 真 }
+    若 (ch == chr(125)) { _is_p = 真 }
+    若 (ch == "(") { _is_p = 真 }
+    若 (ch == ")") { _is_p = 真 }
+    若 (ch == "[") { _is_p = 真 }
+    若 (ch == "]") { _is_p = 真 }
+    若 (ch == ":") { _is_p = 真 }
+    若 (ch == ";") { _is_p = 真 }
+    若 (ch == ",") { _is_p = 真 }
+    若 (ch == ".") { _is_p = 真 }
+    若 (ch == "@") { _is_p = 真 }
+    若 (ch == "#") { _is_p = 真 }
+    若 (ch == "?") { _is_p = 真 }
+    若 (_is_p) { 返({ "token": make_token("punct", ch, line, 1), "i": + (i, 1) }) }
+    返({ "token": 空, "i": + (i, 1) })
+}
+思 process_char(src, i, n, line, tokens) {
+    ch = src[i]
+    若 (== (ch, chr(10))) { 返({ "tokens": push(tokens, make_token("newline", chr(10), line, 1)), "i": + (i, 1), "line": + (line, 1) }) }
+    若 (或(或(ch == " ", ch == chr(9)), ch == chr(13))) { 返({ "tokens": tokens, "i": + (i, 1), "line": line }) }
+    r = next_token(src, i, n, line)
+    out_tokens = tokens
+    若 (r["token"]) { out_tokens = push(tokens, r["token"]) }
+    { "tokens": out_tokens, "i": r["i"], "line": line }
+}
+思 lex(src) {
+    tokens = []
+    i = 0
+    line = 1
+    n = len(src)
+    当 (< (i, n)) {
+        r = process_char(src, i, n, line, tokens)
+        tokens = r["tokens"]
+        i = r["i"]
+        line = r["line"]
+    }
+    push(tokens, make_token("eof", "", line, 1))
+    返 tokens
+}

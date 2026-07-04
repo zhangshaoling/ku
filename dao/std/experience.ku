@@ -1,0 +1,205 @@
+// experience.道 — 运行时经验记忆（道 原生实现）
+// 让运行中的智能体记录：尝试了什么、缺什么、下一步补什么。
+// 类别 kind: attempt | observation | gap | dataset | code_gap | code_data_gap | data_memory
+// 状态 status: open | resolved | ignored
+//
+// 用法（经 MCP ku_call 或 ku_eval）：
+//   experience_init()
+//   gap_record("MCP 工具面", "缺少数据集", "需要 thought 调用日志样本", "采集 100 条调用", "mcp,dataset")
+//   gap_list_open(20)
+//   gap_resolve(id, "已补充 experience.ku")
+
+// ── 数据库路径（统一走 DAO_DATA_DIR）──
+思 _exp_db() {
+  dao_data_path("experience.db")
+}
+
+思 _exp_now() {
+  now_fmt()
+}
+
+思 _exp_gen_id() {
+  conn = sqlite_open(_exp_db())
+  rows = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM experience", [])
+  link_rows = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM experience_link", [])
+  sqlite_close(conn)
+  exp_count = 0
+  link_count = 0
+  若 (> (len(rows), 0)) { exp_count = rows[0]["cnt"] }
+  若 (> (len(link_rows), 0)) { link_count = link_rows[0]["cnt"] }
+  "exp_" + str(int(now())) + "_" + str(exp_count) + "_" + str(link_count)
+}
+
+// ── 初始化 ──
+思 experience_init() {
+  conn = sqlite_open(_exp_db())
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience (id TEXT PRIMARY KEY, kind TEXT NOT NULL, topic TEXT DEFAULT '', context TEXT DEFAULT '', input TEXT DEFAULT '', output TEXT DEFAULT '', missing TEXT DEFAULT '', next_action TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'open', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience_link (id TEXT PRIMARY KEY, experience_id TEXT NOT NULL, task_id TEXT DEFAULT '', thought_name TEXT DEFAULT '', dataset_id TEXT DEFAULT '', created_at TEXT NOT NULL)")
+  sqlite_close(conn)
+  {"ok": 真, "db": _exp_db()}
+}
+
+// ── tags 规整为 JSON 字符串 ──
+思 _exp_tags_json(tags) {
+  若 is_none(tags) { 返 "[]" }
+  若 is_list(tags) { 返 json_stringify(tags) }
+  若 is_str(tags) {
+    若 str_is_empty(tags) { 返 "[]" }
+    返 json_stringify(str_split(tags, ","))
+  }
+  json_stringify([str(tags)])
+}
+
+// ── 通用记录 ──
+思 experience_record(kind, topic, context, input, output, missing, next_action, tags) {
+  若 is_none(topic) { topic = "" }
+  若 is_none(context) { context = "" }
+  若 is_none(input) { input = "" }
+  若 is_none(output) { output = "" }
+  若 is_none(missing) { missing = "" }
+  若 is_none(next_action) { next_action = "" }
+
+  experience_init()
+  rec_id = _exp_gen_id()
+  ts = _exp_now()
+  tags_json = _exp_tags_json(tags)
+
+  conn = sqlite_open(_exp_db())
+  sqlite_exec(conn, "INSERT INTO experience (id, kind, topic, context, input, output, missing, next_action, status, tags_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)", [rec_id, kind, topic, context, input, output, missing, next_action, tags_json, ts, ts])
+  sqlite_close(conn)
+
+  {"id": rec_id, "kind": kind, "status": "open", "created_at": ts}
+}
+
+// ── 记录一个缺口（gap）──
+思 gap_record(topic, context, missing, next_action, tags) {
+  experience_record("gap", topic, context, "", "", missing, next_action, tags)
+}
+
+// ── 记录代码缺口 ──
+思 code_gap_record(topic, context, missing, next_action, tags) {
+  experience_record("code_gap", topic, context, "", "", missing, next_action, tags)
+}
+
+// ── 记录代码+数据缺口 ──
+思 code_data_gap_record(topic, context, missing, next_action, tags) {
+  experience_record("code_data_gap", topic, context, "", "", missing, next_action, tags)
+}
+
+// ── 记录数据集 ──
+思 dataset_record(topic, description, location, schema_json, tags) {
+  若 is_none(schema_json) { schema_json = "" }
+  experience_record("dataset", topic, description, location, schema_json, "", "", tags)
+}
+
+// ── 记录数据记忆（结构化长期事实）──
+思 data_memory_record(topic, key, value_json, tags) {
+  若 is_none(value_json) { value_json = "" }
+  experience_record("data_memory", topic, key, value_json, "", "", "", tags)
+}
+
+// ── 行转 dict ──
+思 _exp_row(row) {
+  out = {}
+  out["id"] = row["id"]
+  out["kind"] = row["kind"]
+  out["topic"] = row["topic"]
+  out["context"] = row["context"]
+  out["input"] = row["input"]
+  out["output"] = row["output"]
+  out["missing"] = row["missing"]
+  out["next_action"] = row["next_action"]
+  out["status"] = row["status"]
+  out["tags"] = json_parse(row["tags_json"])
+  out["created_at"] = row["created_at"]
+  out["updated_at"] = row["updated_at"]
+  out
+}
+
+思 _exp_rows(rows) {
+  out = []
+  若 is_list(rows) {
+    遍 r 于 rows {
+      out = out + [_exp_row(r)]
+    }
+  }
+  out
+}
+
+// ── 列出未解决缺口 ──
+思 gap_list_open(limit) {
+  若 is_none(limit) { limit = 20 }
+  experience_init()
+  conn = sqlite_open(_exp_db())
+  rows = sqlite_query(conn, "SELECT * FROM experience WHERE status = 'open' AND kind IN ('gap', 'code_gap', 'code_data_gap') ORDER BY created_at DESC LIMIT ?", [limit])
+  sqlite_close(conn)
+  {"gaps": _exp_rows(rows), "count": len(_exp_rows(rows))}
+}
+
+// ── 解决缺口 ──
+思 gap_resolve(id, note) {
+  若 is_none(note) { note = "" }
+  experience_init()
+  conn = sqlite_open(_exp_db())
+  ts = _exp_now()
+  affected = sqlite_exec(conn, "UPDATE experience SET status = 'resolved', next_action = ?, updated_at = ? WHERE id = ?", [note, ts, id])
+  sqlite_close(conn)
+  {"id": id, "status": "resolved", "updated": affected}
+}
+
+// ── 搜索经验 ──
+思 experience_search(query, kind, limit) {
+  若 is_none(query) { query = "" }
+  若 is_none(kind) { kind = "" }
+  若 is_none(limit) { limit = 20 }
+
+  experience_init()
+  conn = sqlite_open(_exp_db())
+  like = "%" + query + "%"
+
+  若 str_is_empty(kind) {
+    rows = sqlite_query(conn, "SELECT * FROM experience WHERE topic LIKE ? OR context LIKE ? OR missing LIKE ? OR input LIKE ? ORDER BY created_at DESC LIMIT ?", [like, like, like, like, limit])
+  } {
+    rows = sqlite_query(conn, "SELECT * FROM experience WHERE kind = ? AND (topic LIKE ? OR context LIKE ? OR missing LIKE ? OR input LIKE ?) ORDER BY created_at DESC LIMIT ?", [kind, like, like, like, like, limit])
+  }
+  sqlite_close(conn)
+  {"results": _exp_rows(rows), "count": len(_exp_rows(rows))}
+}
+
+// ── 经验统计 ──
+思 experience_stats() {
+  experience_init()
+  conn = sqlite_open(_exp_db())
+  rows = sqlite_query(conn, "SELECT kind, status, COUNT(*) AS cnt FROM experience GROUP BY kind, status")
+  sqlite_close(conn)
+  {"by_kind_status": rows, "db": _exp_db()}
+}
+
+// ── 把缺口转成任务队列任务（轻量桥接 task_queue）──
+思 gap_to_task(gap_id, task_type, priority) {
+  若 is_none(task_type) { task_type = "reasoning" }
+  若 is_none(priority) { priority = 2 }
+
+  experience_init()
+  conn = sqlite_open(_exp_db())
+  rows = sqlite_query(conn, "SELECT * FROM experience WHERE id = ?", [gap_id])
+  sqlite_close(conn)
+
+  若 is_none(rows) { 返 {"error": "gap not found", "gap_id": gap_id} }
+  若 == (len(rows), 0) { 返 {"error": "gap not found", "gap_id": gap_id} }
+
+  gap = rows[0]
+  prompt = gap["topic"] + " | 缺: " + gap["missing"] + " | 下一步: " + gap["next_action"]
+
+  // submit 来自 task_queue.道，需先 import 该模块
+  res = submit(task_type, prompt, priority, 空, "")
+  task_id = res["task_id"]
+
+  link_id = _exp_gen_id()
+  ts = _exp_now()
+  link_conn = sqlite_open(_exp_db())
+  sqlite_exec(link_conn, "INSERT INTO experience_link (id, experience_id, task_id, created_at) VALUES (?, ?, ?, ?)", [link_id, gap_id, task_id, ts])
+  sqlite_close(link_conn)
+
+  {"gap_id": gap_id, "task_id": task_id, "status": "queued"}
+}

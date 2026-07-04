@@ -1,0 +1,95 @@
+// memory_system.ku - Memory system
+// Functional style: state passed explicitly.
+// 方案B: dicts built incrementally.
+// Note: 空 is empty string "", not None. Use is_none() for None checks.
+// Note: nested dict assignment does not work. Use intermediate vars.
+
+思 make_memory() {
+    m = {}
+    store = {}
+    links = {}
+    m["store"] = store
+    m["links"] = links
+    m
+}
+
+思 mem_store(mem, key, value) {
+    store = mem["store"]
+    store[key] = value
+    mem
+}
+
+思 mem_recall(mem, key) {
+    mem["store"][key]
+}
+
+思 mem_forget(mem, key) {
+    store = mem["store"]
+    store[key] = 空
+    links = mem["links"]
+    links[key] = 空
+    mem
+}
+
+思 mem_link(mem, key1, key2) {
+    links = mem["links"]
+    l1 = links[key1]
+    若 is_none(l1) {
+        l1 = []
+        links[key1] = l1
+    }
+    push(l1, key2)
+    l2 = links[key2]
+    若 is_none(l2) {
+        l2 = []
+        links[key2] = l2
+    }
+    push(l2, key1)
+    mem
+}
+
+思 mem_get_links(mem, key) {
+    l = mem["links"][key]
+    若 is_none(l) {
+        []
+    } 否 {
+        l
+    }
+}
+
+思 mem_stats(mem) {
+    s = {}
+    s["total"] = len(mem["store"])
+    s["links"] = len(mem["links"])
+    s
+}
+
+// -- Self-test --
+
+思 test_memory_system() {
+    mem = make_memory()
+
+    mem = mem_store(mem, "user_name", "Alice")
+    mem = mem_store(mem, "user_age", "30")
+    mem = mem_link(mem, "user_name", "user_age")
+
+    name = mem_recall(mem, "user_name")
+    print("--- name: " + name)
+
+    age = mem_recall(mem, "user_age")
+    print("--- age: " + age)
+
+    links = mem_get_links(mem, "user_name")
+    print("--- links count: " + str_format("{}", [len(links)]))
+
+    stats = mem_stats(mem)
+    print("--- total: " + str_format("{}", [stats["total"]]))
+    print("--- link count: " + str_format("{}", [stats["links"]]))
+
+    mem = mem_forget(mem, "user_age")
+    stats2 = mem_stats(mem)
+    print("--- after forget total: " + str_format("{}", [stats2["total"]]))
+
+    print("[TEST] memory_system OK")
+    "ok"
+}

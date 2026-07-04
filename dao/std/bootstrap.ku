@@ -1,0 +1,112 @@
+// std/bootstrap.ku - Bootstrap image construction helpers.
+
+思 前端模块路径列(根目录) {
+    路径列 = []
+    路径列 = push(路径列, 根目录 + "/dao/std/lexer.ku")
+    路径列 = push(路径列, 根目录 + "/dao/std/parser.ku")
+    路径列 = push(路径列, 根目录 + "/dao/std/compiler.ku")
+    路径列
+}
+
+思 规范节点(节点) {
+    若 (type(节点) != "dict") { 返(节点) }
+    节点类型 = ""
+    节点值 = ""
+    若 (has(节点, "type")) { 节点类型 = 节点["type"] }
+    若 (has(节点, "value")) { 节点值 = 节点["value"] }
+    子列 = []
+    若 (has(节点, "children")) {
+        i = 0
+        当 i < len(节点["children"]) {
+            子列 = push(子列, 规范节点(节点["children"][i]))
+            i = i + 1
+        }
+    }
+    节点 = { "type": 节点类型, "value": 节点值, "children": 子列 }
+    若 (节点["type"] == "call") {
+        若 (节点["value"] == "且") { 返({ "type": "op", "value": "and", "children": 子列 }) }
+        若 (节点["value"] == "或") { 返({ "type": "op", "value": "or", "children": 子列 }) }
+        若 (节点["value"] == "非") { 返({ "type": "op", "value": "not", "children": 子列 }) }
+    }
+    若 (节点["type"] == "op") {
+        若 (节点["value"] == "且") { 节点["value"] = "and" }
+        若 (节点["value"] == "或") { 节点["value"] = "or" }
+        若 (节点["value"] == "非") { 节点["value"] = "not" }
+    }
+    节点
+}
+
+思 追加源码块(结果, 源码块) {
+    若 (str_trim(源码块) != "") {
+        模块 = parse_tokens(lex(源码块))
+        子列 = 模块["children"]
+        j = 0
+        当 j < len(子列) {
+            结果["children"] = push(结果["children"], 子列[j])
+            j = j + 1
+        }
+    }
+    结果
+}
+
+思 源码解析为块(源码) {
+    结果 = { "type": "block", "value": "", "children": [] }
+    行列 = str_split(源码, "\n")
+    当前 = ""
+    i = 0
+    当 i < len(行列) {
+        行 = 行列[i]
+        若 (str_starts_with(行, "思 ")) {
+            结果 = 追加源码块(结果, 当前)
+            当前 = 行 + "\n"
+        } {
+            当前 = 当前 + 行 + "\n"
+        }
+        i = i + 1
+    }
+    追加源码块(结果, 当前)
+}
+
+思 合并源码块(路径列) {
+    结果 = { "type": "block", "value": "", "children": [] }
+    i = 0
+    当 i < len(路径列) {
+        源码 = read_file(路径列[i])
+        模块 = 源码解析为块(源码)
+        子列 = 模块["children"]
+        j = 0
+        当 j < len(子列) {
+            结果["children"] = push(结果["children"], 子列[j])
+            j = j + 1
+        }
+        i = i + 1
+    }
+    结果
+}
+
+思 构造前端自举字节码(根目录) {
+    compile_ast(合并源码块(前端模块路径列(根目录)))
+}
+
+思 规范函数元数据(字节码) {
+    常量列 = 字节码["constants"]
+    i = 0
+    当 i < len(常量列) {
+        项 = 常量列[i]
+        若 (type(项) == "dict") {
+            若 (has(项, "params")) {
+                若 (has(项, "body_const_idx")) {
+                    项["body_const_idx"] = i - 1
+                }
+            }
+        }
+        i = i + 1
+    }
+    字节码
+}
+思 写前端自举字节码(根目录, 输出路径) {
+    字节码 = 构造前端自举字节码(根目录)
+    字节码 = 规范函数元数据(字节码)
+    write_file(输出路径, json_stringify(字节码) + "\n")
+    字节码
+}

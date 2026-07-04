@@ -1,0 +1,110 @@
+// std/type.道 — 类型检查与转换标准库
+// 用法: 引 "std/type" 别 typ
+
+// 类型检查
+思 is_int(x) {
+  type(x) == "int"
+}
+
+思 is_float(x) {
+  type(x) == "float"
+}
+
+思 is_str(x) {
+  type(x) == "str"
+}
+
+思 is_list(x) {
+  type(x) == "list"
+}
+
+思 is_dict(x) {
+  type(x) == "dict"
+}
+
+思 is_null(x) {
+  x == 空
+}
+
+思 is_num(x) {
+  is_int(x) 或 is_float(x)
+}
+
+// 类型转换
+思 to_int(x) {
+  若 is_int(x) {
+    x
+  } 否 若 is_float(x) {
+    floor(x)
+  } 否 若 is_str(x) {
+    int(x)
+  } 否 {
+    0
+  }
+}
+
+思 to_float(x) {
+  若 is_float(x) {
+    x
+  } 否 若 is_int(x) {
+    x + 0.0
+  } 否 若 is_str(x) {
+    float(x)
+  } 否 {
+    0.0
+  }
+}
+
+思 to_str(x) {
+  "" + x
+}
+
+// 字典操作：获取所有键
+思 keys(dict) {
+  result = []
+  遍 pair 于 items(dict) {
+    result = result + [pair[0]]
+  }
+  result
+}
+
+// 字典操作：获取所有值
+思 values(dict) {
+  result = []
+  遍 pair 于 items(dict) {
+    result = result + [pair[1]]
+  }
+  result
+}
+
+// 合并两个字典，dict2 覆盖 dict1
+思 merge(dict1, dict2) {
+  result = {}
+  遍 pair 于 items(dict1) {
+    result[pair[0]] = pair[1]
+  }
+  遍 pair 于 items(dict2) {
+    result[pair[0]] = pair[1]
+  }
+  result
+}
+
+// 深拷贝
+思 copy(x) {
+  若 is_list(x) {
+    result = []
+    遍 item 于 x {
+      result = result + [copy(item)]
+    }
+    result
+  } 否 若 is_dict(x) {
+    result = {}
+    遍 pair 于 items(x) {
+      result[pair[0]] = copy(pair[1])
+    }
+    result
+  } 否 {
+    x
+  }
+}
+

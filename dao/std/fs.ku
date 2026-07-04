@@ -1,0 +1,88 @@
+// std/fs.道 — 文件系统标准库
+// 用法: 引 "std/fs" 别 fs
+
+思 exists(path) { path_exists(path) }
+
+思 is_file(path) {
+  若 path_exists(path) {
+    非 str_contains(str(list_dir(path)), path)
+  } 否 {
+    假
+  }
+}
+
+思 read_text(path) {
+  read_file(path)
+}
+
+思 write_text(path, content) {
+  write_file(path, content)
+}
+
+思 read_json(path) {
+  若 path_exists(path) {
+    text = read_file(path)
+    json_parse(text)
+  } 否 {
+    空
+  }
+}
+
+思 write_json(path, obj) {
+  content = json_stringify(obj)
+  write_file(path, content)
+}
+
+思 list_files(path, ext) {
+  all = list_dir(path)
+  result = []
+  遍 f 于 all {
+    若 ext == "" 或 str_ends_with(f, ext) {
+      result = result + [f]
+    }
+  }
+  result
+}
+
+思 list_道_files(path) {
+  list_files(path, ".道")
+}
+
+思 ensure_dir(path) {
+  若 非 path_exists(path) {
+    mkdir(path)
+  }
+  真
+}
+
+思 basename(path) {
+  parts = str_split(path, "/")
+  last = parts[len(parts) - 1]
+  parts2 = str_split(last, "\\")
+  parts2[len(parts2) - 1]
+}
+
+思 dirname(path) {
+  parts = str_split(path, "/")
+  若 len(parts) > 1 {
+    result = parts[0]
+    i = 1
+    当 i < len(parts) - 1 {
+      result = result + "/" + parts[i]
+      i = i + 1
+    }
+    result
+  } 否 {
+    "."
+  }
+}
+
+思 file_size(path) {
+  若 path_exists(path) {
+    content = read_file(path)
+    len(content)
+  } 否 {
+    0
+  }
+}
+
