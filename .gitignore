@@ -42,7 +42,13 @@ _run_patch.bat
 # Temporary Dao runtime scratch files
 dao/dao_core
 dao/dao_core.exe
-dao/_*.py
+dao/_bootstrap.py
+dao/_part*.py
+dao/_patcher.py
+dao/_write_*.py
+dao/_gp.py
+dao/_w*.py
+dao/_writer.py
 dao/_patch.txt
 dao/*.bak
 dao/test_if*.ku
@@ -51,7 +57,6 @@ dao/test_dict.ku
 dao/test_add.txt
 dao/test_input.txt
 dao/think.py
-
 
 # One-off root experiments
 test_ai_core.ku
