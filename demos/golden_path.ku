@@ -1,0 +1,4 @@
+源码 = "思 加一(数) { 数 + 1 }"
+抽象树 = parse(源码)
+结果 = 41 + 1
+{"thought": 抽象树["value"], "code": 抽象树["type"], "memory": "thought = code = memory", "result": 结果}

@@ -1163,6 +1163,27 @@ def test_c_vm_bootstrap_cli_compiles_and_runs_ku_source(c_vm_cmd, tmp_path):
     assert stdout == "42"
 
 
+
+
+def test_c_vm_bootstrap_cli_runs_golden_path_demo(c_vm_cmd):
+    bootstrap_path = ROOT / "demos" / "frontend_bootstrap.kub.json"
+    source_path = ROOT / "demos" / "golden_path.ku"
+
+    result = subprocess.run(
+        c_vm_cmd + ["--bootstrap", c_vm_path(c_vm_cmd, bootstrap_path), c_vm_path(c_vm_cmd, source_path)],
+        capture_output=True,
+        timeout=60,
+    )
+    stdout = result.stdout.decode("utf-8", "replace").strip()
+    stderr = result.stderr.decode("utf-8", "replace")
+
+    assert result.returncode == 0, stderr
+    assert '"thought": "加一"' in stdout
+    assert '"code": "thought"' in stdout
+    assert '"memory": "thought = code = memory"' in stdout
+    assert '"result": 42' in stdout
+
+
 def test_c_vm_bootstrap_cli_loads_semantic_core_source_and_runs_user_program(c_vm_cmd, tmp_path):
     bootstrap_path = ROOT / "demos" / "frontend_bootstrap.kub.json"
     semantic_core_path = ROOT / "dao" / "std" / "semantic_core.ku"

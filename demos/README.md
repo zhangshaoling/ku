@@ -23,12 +23,15 @@ Then it runs `lex(source) -> parse_tokens(tokens) -> compile_ast(ast) -> run_byt
 
 `frontend_bootstrap.kub.json` is the reusable C VM bootstrap image for the `.ku` frontend. It loads `lexer.ku`, `parser.ku`, and `compiler.ku` definitions without binding a fixed source program.
 
+`golden_path.ku` is the checked-in source demo for the current project north star. It stays inside the current bootstrap compiler's stable subset and returns a concrete record for `thought = code = memory` without relying on generated JSON.
+
 Build and run with the C VM:
 
 ```bash
 gcc -o dao_core dao/dao_core.c -lm -Wall -O2
 ./dao_core demos/semantic_std_combo.kub.json
 ./dao_core --bootstrap demos/frontend_bootstrap.kub.json path/to/program.ku
+./dao_core --bootstrap demos/frontend_bootstrap.kub.json demos/golden_path.ku
 ./dao_core --bootstrap demos/frontend_bootstrap.kub.json dao/std/semantic_core.ku path/to/program.ku
 ```
 
