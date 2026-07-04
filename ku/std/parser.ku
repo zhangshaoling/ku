@@ -143,9 +143,11 @@ thought _parse_if(tokens, pos, end) {
     cond = _expr(tokens, pos, brace_pos)
     then_body = _parse_brace(tokens, brace_pos, end)
     pos = then_body["p"]
-    ;; 隐式 else: } {
+    ;; implicit else is only the compact form: } {
     else_body = ""
-    if (and(< (pos, end), tokens[pos]["value"] == "{")) {
+    prev_pos = - (pos, 1)
+    if (and(and(< (pos, end), tokens[pos]["value"] == "{"),
+           tokens[pos]["line"] == tokens[prev_pos]["line"])) {
         eb = _parse_brace(tokens, pos, end)
         else_body = eb["n"]
         pos = eb["p"]

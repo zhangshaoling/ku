@@ -1,0 +1,893 @@
+;; parser.道 — 简化 道 parser
+;; 生成嵌套字典 AST
+
+思 node(type, value, children) {
+    { "type": type, "value": value, "children": children }
+}
+思 node_lit(val) { node("literal", val, []) }
+思 node_ref(name) { node("ref", name, []) }
+思 node_op(op, l, r) { node("op", op, [l, r]) }
+
+思 _LP() { chr(40) }
+思 _RP() { chr(41) }
+思 _LB() { chr(91) }
+思 _RB() { chr(93) }
+思 _LC() { chr(123) }
+思 _RC() { chr(125) }
+
+思 parse_tokens(tokens) {
+    pos = 0
+    end = len(tokens)
+    stmts = []
+    当 (< (pos, end)) {
+        t = tokens[pos]
+        若 (t["type"] == "newline") {
+            pos = + (pos, 1)
+        } {
+            若 (t["type"] == "eof") { 断 }
+            result = _stmt(tokens, pos, end)
+            stmts = push(stmts, result["n"])
+            pos = result["p"]
+        }
+    }
+    desugar_pipe(node("block", "", stmts))
+}
+
+思 _res(n, p) { { "n": n, "p": p } }
+
+;; ── 语句 ──
+思 _stmt(tokens, pos, end) {
+    t = tokens[pos]
+
+    ;; EOF
+    若 (t["type"] == "eof") {
+        _res(node_lit(""), pos)
+    } {
+    ;; 思 定义
+    若 (且(t["type"] == "keyword", t["value"] == "思")) {
+        _parse_thought(tokens, + (pos, 1), end)
+    } {
+    ;; 若
+    若 (且(t["type"] == "keyword", t["value"] == "若")) {
+        _parse_if(tokens, + (pos, 1), end)
+    } {
+    ;; 当
+    若 (且(t["type"] == "keyword", t["value"] == "当")) {
+        _parse_while(tokens, + (pos, 1), end)
+    } {
+    ;; 遍
+    若 (且(t["type"] == "keyword", t["value"] == "遍")) {
+        _parse_for(tokens, + (pos, 1), end)
+    } {
+    ;; 返
+    若 (且(t["type"] == "keyword", t["value"] == "返")) {
+        _parse_return(tokens, + (pos, 1), end)
+    } {
+    ;; 断
+    若 (且(t["type"] == "keyword", t["value"] == "断")) {
+        _res(node("break", "", []), + (pos, 1))
+    } {
+    ;; 续
+    若 (且(t["type"] == "keyword", t["value"] == "续")) {
+        _res(node("continue", "", []), + (pos, 1))
+    } {
+    ;; 试/捕
+    若 (且(t["type"] == "keyword", t["value"] == "试")) {
+        _parse_try(tokens, + (pos, 1), end)
+    } {
+    ;; 抛
+    若 (且(t["type"] == "keyword", t["value"] == "抛")) {
+        val = _expr(tokens, + (pos, 1), end)
+        _res(node("throw", "", [val["n"]]), val["p"])
+    } {
+    ;; 引 "path" 别 alias
+    若 (且(t["type"] == "keyword", t["value"] == "引")) {
+        path_tok = tokens[+ (pos, 1)]
+        alias_tok = tokens[+ (pos, 3)]
+        path_val = ""
+        alias_val = ""
+        若 (path_tok["type"] == "string") { path_val = path_tok["value"] }
+        若 (alias_tok["type"] == "name") { alias_val = alias_tok["value"] }
+        _res(node("import", alias_val, [node_lit(path_val)]), + (pos, 4))
+    } {
+    ;; 匹 变量 为 ... 终匹 (模式匹配)
+    若 (且(t["type"] == "keyword", t["value"] == "匹")) {
+        var_tok = tokens[+ (pos, 1)]
+        若 (且(< (+ (pos, 2), end), 且(tokens[+ (pos, 2)]["type"] == "keyword", tokens[+ (pos, 2)]["value"] == "为"))) {
+            # 解析匹配体：收集所有 "则" 分支和可选的 "否则" 分支
+            cases = []
+            pos = + (pos, 3)  # skip 匹, var, 为
+            当 (且(< (pos, end), tokens[pos]["value"] != "终匹")) {
+                若 (且(tokens[pos]["type"] == "keyword", tokens[pos]["value"] == "否则")) {
+                    # 默认分支
+                    pos = + (pos, 1)
+                    default_expr = _expr(tokens, pos, end)
+                    cases = push(cases, {"type": "default", "value": "", "children": [default_expr["n"]]})
+                    pos = default_expr["p"]
+                } {
+                    # 普通分支：模式 则 结果
+                    pat_expr = _expr(tokens, pos, end)
+                    pos = pat_expr["p"]
+                    若 (且(< (pos, end), 且(tokens[pos]["type"] == "keyword", tokens[pos]["value"] == "则"))) {
+                        pos = + (pos, 1)
+                        result_expr = _expr(tokens, pos, end)
+                        cases = push(cases, {"type": "case", "value": "", "children": [pat_expr["n"], result_expr["n"]]})
+                        pos = result_expr["p"]
+                    }
+                }
+            }
+            _res({"type": "match", "value": var_tok["value"], "children": cases}, + (pos, 1))
+        } {
+            _res(node_lit(""), pos)
+        }
+    } {
+    ;; 记 key 为 value
+    若 (且(t["type"] == "keyword", 且(t["value"] == "记", 且(< (+ (pos, 3), end), tokens[+ (pos, 2)]["type"] == "keyword")))) {
+        key_tok = tokens[+ (pos, 1)]
+        wei_tok = tokens[+ (pos, 2)]
+        若 (wei_tok["value"] == "为") {
+            key_val = key_tok["value"]
+            val = _expr(tokens, + (pos, 3), end)
+            _res(node("mem_store", key_val, [val["n"]]), val["p"])
+        } {
+            _res(node_lit(""), pos)
+        }
+    } {
+    ;; 忆 key
+    若 (且(t["type"] == "keyword", 且(t["value"] == "忆", < (+ (pos, 1), end)))) {
+        key_tok = tokens[+ (pos, 1)]
+        _res(node("mem_load", key_tok["value"], []), + (pos, 2))
+    } {
+    ;; 忘 key
+    若 (且(t["type"] == "keyword", 且(t["value"] == "忘", < (+ (pos, 1), end)))) {
+        key_tok = tokens[+ (pos, 1)]
+        _res(node("mem_forget", key_tok["value"], []), + (pos, 2))
+    } {
+    ;; 强 key
+    若 (且(t["type"] == "keyword", 且(t["value"] == "强", < (+ (pos, 1), end)))) {
+        key_tok = tokens[+ (pos, 1)]
+        _res(node("mem_strengthen", key_tok["value"], []), + (pos, 2))
+    } {
+    ;; 弱 key
+    若 (且(t["type"] == "keyword", 且(t["value"] == "弱", < (+ (pos, 1), end)))) {
+        key_tok = tokens[+ (pos, 1)]
+        _res(node("mem_weaken", key_tok["value"], []), + (pos, 2))
+    } {
+    ;; 联 key1 与 key2
+    若 (且(t["type"] == "keyword", 且(t["value"] == "联", 且(< (+ (pos, 3), end), tokens[+ (pos, 2)]["type"] == "keyword")))) {
+        key1_tok = tokens[+ (pos, 1)]
+        yu_tok = tokens[+ (pos, 2)]
+        若 (yu_tok["value"] == "与") {
+            key2_tok = tokens[+ (pos, 3)]
+            _res(node("mem_link", key1_tok["value"], [node("literal", key2_tok["value"], [])]), + (pos, 4))
+        } {
+            _res(node_lit(""), pos)
+        }
+    } {
+    ;; 关联 key
+    若 (且(t["type"] == "keyword", 且(t["value"] == "关联", < (+ (pos, 1), end)))) {
+        key_tok = tokens[+ (pos, 1)]
+        _res(node("mem_query", key_tok["value"], []), + (pos, 2))
+    } {
+    ;; 赋值: name = expr
+    is_assign_stmt = 假
+    is_index_assign_start = 假
+    若 (t["type"] == "name") {
+        若 (< (+ (pos, 2), end)) {
+            next_tok = tokens[+ (pos, 1)]
+            若 (next_tok["type"] == "op") {
+                若 (next_tok["value"] == "=") { is_assign_stmt = 真 }
+            }
+            若 (next_tok["value"] == _LB()) { is_index_assign_start = 真 }
+        }
+    }
+    若 (is_assign_stmt) {
+        name = t["value"]
+        val = _expr(tokens, + (pos, 2), end)
+        _res(node("assign", name, [val["n"]]), val["p"])
+    } {
+    ;; 索引赋值: name[idx] = expr
+    若 (is_index_assign_start) {
+        idx_end = _find_close(tokens, + (pos, 2), end, _LB(), _RB())
+        若 (且(< (+ (idx_end, 1), end),
+                tokens[+ (idx_end, 1)]["value"] == "=")) {
+            obj = node_ref(t["value"])
+            idx = _expr(tokens, + (pos, 2), idx_end)
+            val = _expr(tokens, + (idx_end, 2), end)
+            idx_node = idx["n"]
+            val_node = val["n"]
+            target = node("index", "", [obj, idx_node])
+            _res(node("index_assign", "", [target, val_node]), val["p"])
+        } {
+            ;; 不是索引赋值，当普通表达式处理
+            expr_result = _expr(tokens, pos, end)
+            _res(expr_result["n"], expr_result["p"])
+        }
+    } {
+        ;; 表达式语句
+        expr_result = _expr(tokens, pos, end)
+        _res(expr_result["n"], expr_result["p"])
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+}
+
+;; ── 思 定义 ──
+思 _parse_thought(tokens, pos, end) {
+    name = tokens[pos]["value"]
+    pos = + (pos, 1)
+    ;; 跳过 (
+    pos = _skip(tokens, pos, "punct", _LP())
+    params = []
+    当 (< (pos, end)) {
+        t = tokens[pos]
+        若 (t["value"] == _RP()) { 断 }
+        若 (t["type"] == "name") {
+            params = push(params, t["value"])
+            pos = + (pos, 1)
+            若 (tokens[pos]["value"] == ",") { pos = + (pos, 1) }
+        } { 断 }
+    }
+    pos = _skip(tokens, pos, "punct", _RP())
+    body = _parse_brace(tokens, pos, end)
+    _res(node("thought", name, _push(params, body["n"])), body["p"])
+}
+
+;; ── 若 ──
+思 _parse_if(tokens, pos, end) {
+    brace_pos = _find_brace(tokens, pos, end)
+    cond = _expr(tokens, pos, brace_pos)
+    then_body = _parse_brace(tokens, brace_pos, end)
+    pos = then_body["p"]
+    当 (且(< (pos, end), tokens[pos]["type"] == "newline")) {
+        pos = + (pos, 1)
+    }
+    ;; 隐式 否 只允许紧凑形式: } {
+    else_body = ""
+    prev_pos = - (pos, 1)
+    若 (且(< (pos, end), 或(tokens[pos]["value"] == "否", tokens[pos]["value"] == "否则"))) {
+        pos = + (pos, 1)
+        当 (且(< (pos, end), tokens[pos]["type"] == "newline")) {
+            pos = + (pos, 1)
+        }
+        若 (且(< (pos, end), 且(tokens[pos]["type"] == "keyword", tokens[pos]["value"] == "若"))) {
+            eb = _parse_if(tokens, + (pos, 1), end)
+            else_body = eb["n"]
+            pos = eb["p"]
+        } {
+            eb = _parse_brace(tokens, pos, end)
+            else_body = eb["n"]
+            pos = eb["p"]
+        }
+    } {
+    若 (且(且(< (pos, end), tokens[pos]["value"] == _LC()),
+           tokens[pos]["line"] == tokens[prev_pos]["line"])) {
+        eb = _parse_brace(tokens, pos, end)
+        else_body = eb["n"]
+        pos = eb["p"]
+    }
+    }
+    kids = [cond["n"], then_body["n"]]
+    若 (else_body) { kids = push(kids, else_body) }
+    _res(node("if", "", kids), pos)
+}
+
+;; ── 当 ──
+思 _parse_while(tokens, pos, end) {
+    brace_pos = _find_brace(tokens, pos, end)
+    cond = _expr(tokens, pos, brace_pos)
+    body = _parse_brace(tokens, brace_pos, end)
+    _res(node("while", "", [cond["n"], body["n"]]), body["p"])
+}
+
+;; ── 遍 ──
+思 _parse_for(tokens, pos, end) {
+    var = tokens[pos]["value"]
+    pos = + (pos, 1)
+    pos = _skip(tokens, pos, "keyword", "于")
+    brace_pos = _find_brace(tokens, pos, end)
+    iterable = _expr(tokens, pos, brace_pos)
+    body = _parse_brace(tokens, brace_pos, end)
+    _res(node("for", var, [iterable["n"], body["n"]]), body["p"])
+}
+
+;; ── 返 ──
+思 _parse_return(tokens, pos, end) {
+    t = tokens[pos]
+    若 (或(t["type"] == "newline", t["type"] == "eof")) {
+        _res(node("return", "", [node_lit("")]), pos)
+    } {
+        val = _expr(tokens, pos, end)
+        _res(node("return", "", [val["n"]]), val["p"])
+    }
+}
+
+;; ── 试/捕 ──
+思 _parse_try(tokens, pos, end) {
+    try_body = _parse_brace(tokens, pos, end)
+    pos = try_body["p"]
+    catch_var = ""
+    catch_body = ""
+    finally_body = ""
+    当 (且(< (pos, end), tokens[pos]["type"] == "newline")) {
+        pos = + (pos, 1)
+    }
+    若 (且(< (pos, end), 且(tokens[pos]["type"] == "keyword", tokens[pos]["value"] == "捕"))) {
+        pos = + (pos, 1)
+        若 (tokens[pos]["value"] == _LP()) {
+            pos = + (pos, 1)
+            若 (tokens[pos]["type"] == "name") {
+                catch_var = tokens[pos]["value"]
+                pos = + (pos, 1)
+            }
+            pos = _skip(tokens, pos, "punct", _RP())
+        } {
+        若 (tokens[pos]["type"] == "name") {
+            catch_var = tokens[pos]["value"]
+            pos = + (pos, 1)
+        }
+        }
+        cb = _parse_brace(tokens, pos, end)
+        catch_body = cb["n"]
+        pos = cb["p"]
+    }
+    当 (且(< (pos, end), tokens[pos]["type"] == "newline")) {
+        pos = + (pos, 1)
+    }
+    若 (且(< (pos, end), tokens[pos]["value"] == "终")) {
+        pos = + (pos, 1)
+        fb = _parse_brace(tokens, pos, end)
+        finally_body = fb["n"]
+        pos = fb["p"]
+    }
+    kids = [try_body["n"]]
+    若 (catch_body) {
+        kids = push(kids, node_ref(catch_var))
+        kids = push(kids, catch_body)
+    }
+    若 (finally_body) {
+        若 (非(catch_body)) {
+            kids = push(kids, node_lit(""))
+            kids = push(kids, node_lit(""))
+        }
+        kids = push(kids, finally_body)
+    }
+    _res(node("try", "", kids), pos)
+}
+
+;; ── { } 块 ──
+思 _parse_brace(tokens, pos, end) {
+    pos = _skip(tokens, pos, "punct", _LC())
+    stmts = []
+    当 (< (pos, end)) {
+        t = tokens[pos]
+        若 (或(t["value"] == _RC(), t["type"] == "eof")) {
+            返(_res(node("block", "", stmts), + (pos, 1)))
+        }
+        若 (t["type"] == "newline") {
+            pos = + (pos, 1)
+        } {
+            result = _stmt(tokens, pos, end)
+            stmts = push(stmts, result["n"])
+            pos = result["p"]
+        }
+    }
+    _res(node("block", "", stmts), pos)
+}
+
+;; ── 辅助 ──
+思 _skip(tokens, pos, typ, val) {
+    若 (< (pos, len(tokens))) {
+        t = tokens[pos]
+        若 (t["type"] == typ) {
+            若 (t["value"] == val) { 返(+ (pos, 1)) }
+        }
+    }
+    pos
+}
+
+思 _find_brace(tokens, pos, end) {
+    当 (< (pos, end)) {
+        若 (tokens[pos]["value"] == _LC()) { 返(pos) }
+        pos = + (pos, 1)
+    }
+    pos
+}
+
+思 _push(arr, item) {
+    ;; 追加元素（道 没有 push 用于已有变量的语法糖）
+    result = arr
+    result = push(result, item)
+    result
+}
+
+思 _line_end(tokens, pos, end) {
+    当 (< (pos, end)) {
+        t = tokens[pos]
+        若 (t["type"] == "newline") { 返(pos) }
+        若 (t["type"] == "eof") { 返(pos) }
+        pos = + (pos, 1)
+    }
+    pos
+}
+
+;; ── 表达式（优先级爬升） ──
+思 _expr(tokens, pos, end) {
+    _expr_bp(tokens, pos, end, 0)
+}
+
+思 _expr_bp(tokens, pos, end, min_bp) {
+    left = _atom(tokens, pos, end)
+    pos = left["p"]
+    left = left["n"]
+
+    当 (< (pos, end)) {
+        t = tokens[pos]
+        ;; 函数调用 (args)
+        若 (t["value"] == _LP()) {
+            call = _call_args(tokens, pos, end)
+            若 (left["type"] == "ref") {
+                left = node("call", left["value"], call["args"])
+            } {
+                all_args = [left]
+                ai = 0
+                当 (< (ai, len(call["args"]))) {
+                    all_args = push(all_args, call["args"][ai])
+                    ai = + (ai, 1)
+                }
+                left = node("call", left["value"], all_args)
+            }
+            pos = call["p"]
+        } {
+        ;; 索引 [expr]
+        若 (t["value"] == _LB()) {
+            pos = + (pos, 1)
+            idx_end = _find_close(tokens, pos, end, _LB(), _RB())
+            idx = _expr(tokens, pos, idx_end)
+            left = node("index", "", [left, idx["n"]])
+            pos = + (idx_end, 1)
+        } {
+        ;; 属性访问 .attr
+        若 (t["value"] == ".") {
+            pos = + (pos, 1)
+            attr_name = tokens[pos]["value"]
+            pos = + (pos, 1)
+            left = node("attr", attr_name, [left])
+        } {
+        ;; lambda ->
+        若 (且(t["type"] == "op", t["value"] == "->")) {
+            params = []
+            若 (left["type"] == "ref") {
+                params = push(params, left["value"])
+            } {
+                若 (left["type"] == "list") {
+                    ci = 0
+                    当 (< (ci, len(left["children"]))) {
+                        params = push(params, left["children"][ci]["value"])
+                        ci = + (ci, 1)
+                    }
+                } {
+                    params = push(params, "_")
+                }
+            }
+            body = _expr_bp(tokens, + (pos, 1), end, 0)
+            ret_node = node("返", "", [body["n"]])
+            body_block = node("block", "", [ret_node])
+            kids = [body_block]
+            pi = 0
+            当 (< (pi, len(params))) {
+                kids = push(kids, node_lit(params[pi]))
+                pi = + (pi, 1)
+            }
+            left = node("lambda", "", kids)
+            pos = body["p"]
+        } {
+        ;; 二元操作符
+        若 (t["type"] == "op") {
+            bp = _bp(t["value"])
+            若 (< (bp, min_bp)) { 断 }
+            right = _expr_bp(tokens, + (pos, 1), end, + (bp, 1))
+            left = node_op(t["value"], left, right["n"])
+            pos = right["p"]
+        } {
+            断
+        }
+        }
+        }
+        }
+        }
+    }
+    _res(left, pos)
+}
+
+思 _bp(op) {
+    若 (op == "|>") { 0 } {
+        若 (op == "或") { 1 } {
+            若 (op == "且") { 2 } {
+                若 (或(op == "==", op == "!=")) { 3 } {
+                    若 (或(或(op == "<", op == ">"), 或(op == "<=", op == ">="))) { 4 } {
+                        若 (或(op == "+", op == "-")) { 5 } {
+                            若 (或(或(op == "*", op == "/"), op == "%")) { 6 } { 0 }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+;; ── pipe 脱糖 ──
+思 _has_placeholder(node) {
+    若 (node["type"] == "ref") {
+        node["value"] == "_"
+    } {
+        i = 0
+        found = 假
+        当 (且(< (i, len(node["children"])), 非(found))) {
+            c = node["children"][i]
+            若 (type(c) == "dict") {
+                found = _has_placeholder(c)
+            } {}
+            i = + (i, 1)
+        }
+        found
+    }
+}
+
+思 _replace_placeholder(nd, replacement) {
+    若 (nd["type"] == "ref") {
+        若 (nd["value"] == "_") { replacement } { nd }
+    } {
+        new_kids = []
+        i = 0
+        当 (< (i, len(nd["children"]))) {
+            c = nd["children"][i]
+            若 (type(c) == "dict") {
+                new_kids = push(new_kids, _replace_placeholder(c, replacement))
+            } {
+                new_kids = push(new_kids, c)
+            }
+            i = + (i, 1)
+        }
+        { "type": nd["type"], "value": nd["value"], "children": new_kids }
+    }
+}
+
+思 desugar_pipe(nd) {
+    new_kids = []
+    i = 0
+    当 (< (i, len(nd["children"]))) {
+        c = nd["children"][i]
+        若 (type(c) == "dict") {
+            new_kids = push(new_kids, desugar_pipe(c))
+        } {
+            new_kids = push(new_kids, c)
+        }
+        i = + (i, 1)
+    }
+    nd = { "type": nd["type"], "value": nd["value"], "children": new_kids }
+    若 (且(nd["type"] == "op", 且(nd["value"] == "|>", == (len(nd["children"]), 2)))) {
+        left = nd["children"][0]
+        right = nd["children"][1]
+        若 (_has_placeholder(right)) {
+            _replace_placeholder(right, left)
+        } {
+            若 (且(right["type"] == "call", right["value"] != "")) {
+                node("call", right["value"], _prepend(left, right["children"]))
+            } {
+                若 (且(right["type"] == "call", right["value"] == "")) {
+                    node("call", right["children"][0]["value"], _prepend(left, _tail(right["children"])))
+                } {
+                    若 (right["type"] == "ref") {
+                        node("call", right["value"], [left])
+                    } {
+                        node("call", right["value"], [right, left])
+                    }
+                }
+            }
+        }
+    } {
+        nd
+    }
+}
+
+思 _prepend(item, arr) {
+    result = [item]
+    i = 0
+    当 (< (i, len(arr))) {
+        result = push(result, arr[i])
+        i = + (i, 1)
+    }
+    result
+}
+
+思 _tail(arr) {
+    result = []
+    i = 1
+    当 (< (i, len(arr))) {
+        result = push(result, arr[i])
+        i = + (i, 1)
+    }
+    result
+}
+
+;; ── 原子（字面量、标识符、分组） ──
+思 _atom(tokens, pos, end) {
+    t = tokens[pos]
+    若 (t["type"] == "number") {
+        num_val = int(t["value"])
+        若 (str_contains(str(t["value"]), ".")) { num_val = float(t["value"]) }
+        _res(node_lit(num_val), + (pos, 1))
+    } {
+    若 (t["type"] == "string") {
+        _res(node_lit(t["value"]), + (pos, 1))
+    } {
+    若 (且(t["type"] == "keyword", t["value"] == "真")) {
+        _res(node_lit(真), + (pos, 1))
+    } {
+    若 (且(t["type"] == "keyword", t["value"] == "假")) {
+        _res(node_lit(假), + (pos, 1))
+    } {
+    若 (且(t["type"] == "keyword", t["value"] == "空")) {
+        _res(node_lit(""), + (pos, 1))
+    } {
+    若 (且(t["type"] == "keyword", t["value"] == "试")) {
+        _parse_try(tokens, + (pos, 1), end)
+    } {
+    若 (且(t["type"] == "keyword",
+         或(或(t["value"] == "忆", t["value"] == "关联"), 或(或(t["value"] == "忘", t["value"] == "强"), t["value"] == "弱")))) {
+        若 (< (+ (pos, 1), end)) {
+            key_tok = tokens[+ (pos, 1)]
+            _type = "mem_weaken"
+            若 (t["value"] == "忆") { _type = "mem_load" }
+            若 (t["value"] == "关联") { _type = "mem_query" }
+            若 (t["value"] == "忘") { _type = "mem_forget" }
+            若 (t["value"] == "强") { _type = "mem_strengthen" }
+            _res(node(_type, key_tok["value"], []), + (pos, 2))
+        } {
+            _res(node_lit(""), + (pos, 1))
+        }
+    } {
+    若 (且(t["type"] == "keyword",
+         且(或(t["value"] == "且", 或(t["value"] == "或", t["value"] == "非")),
+             且(< (+ (pos, 1), end), tokens[+ (pos, 1)]["value"] == _LP())))) {
+        call = _call_args(tokens, + (pos, 1), end)
+        _res(node("call", t["value"], call["args"]), call["p"])
+    } {
+    若 (t["type"] == "name") {
+        _res(node_ref(t["value"]), + (pos, 1))
+    } {
+    若 (且(t["type"] == "op", < (+ (pos, 1), end))) {
+        若 (tokens[+ (pos, 1)]["value"] == _LP()) {
+            call = _call_args(tokens, + (pos, 1), end)
+            _res(node("call", t["value"], call["args"]), call["p"])
+        } {
+            _res(node_lit(""), + (pos, 1))
+        }
+    } {
+    若 (t["value"] == _LP()) {
+        pos = + (pos, 1)
+        close = _find_close(tokens, pos, end, _LP(), _RP())
+        若 (且(< (+ (close, 1), end),
+                且(tokens[+ (close, 1)]["type"] == "op",
+                    tokens[+ (close, 1)]["value"] == "->"))) {
+            items = []
+            p = pos
+            当 (< (p, close)) {
+                tk = tokens[p]
+                若 (tk["type"] == "name") {
+                    items = push(items, node_lit(tk["value"]))
+                    p = + (p, 1)
+                } {
+                    若 (tk["value"] == ",") { p = + (p, 1) } { p = + (p, 1) }
+                }
+            }
+            _res(node("list", "", items), + (close, 1))
+        } {
+            inner = _expr(tokens, pos, close)
+            _res(inner["n"], + (close, 1))
+        }
+    } {
+    若 (t["value"] == _LB()) {
+        _list(tokens, pos, end)
+    } {
+    若 (t["value"] == _LC()) {
+        _dict(tokens, pos, end)
+    } {
+    若 (t["value"] == "-") {
+        right = _atom(tokens, + (pos, 1), end)
+        _res(node_op("-", node_lit(0), right["n"]), right["p"])
+    } {
+    若 (t["value"] == "非") {
+        right = _atom(tokens, + (pos, 1), end)
+        _res(node_op("非", right["n"], node_lit("")), right["p"])
+    } {
+        _res(node_lit(""), + (pos, 1))
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+}
+
+;; ── 函数调用参数 ──
+思 _call_args(tokens, pos, end) {
+    pos = pos + 1 ;; skip (
+    args = []
+    arg_start = pos
+    depth = 1
+    当 (pos < end) {
+        若 (depth <= 0) { 断 }
+        t = tokens[pos]
+        若 (t["value"] == _LP()) { depth = depth + 1 }
+        若 (t["value"] == _LB()) { depth = depth + 1 }
+        若 (t["value"] == _LC()) { depth = depth + 1 }
+        若 (t["value"] == _RP()) {
+            depth = depth - 1
+            若 (depth == 0) {
+                若 (pos > arg_start) {
+                    arg = _expr(tokens, arg_start, pos)
+                    args = push(args, arg["n"])
+                }
+                断
+            }
+        }
+        若 (t["value"] == _RB()) { depth = depth - 1 }
+        若 (t["value"] == _RC()) { depth = depth - 1 }
+        is_arg_sep = 假
+        若 (t["value"] == ",") {
+            若 (depth == 1) { is_arg_sep = 真 }
+        }
+        若 (is_arg_sep) {
+            arg = _expr(tokens, arg_start, pos)
+            args = push(args, arg["n"])
+            arg_start = pos + 1
+        }
+        pos = pos + 1
+    }
+    { "args": args, "p": pos + 1 }
+}
+
+;; ── 找匹配括号 ──
+思 _find_close(tokens, pos, end, open, close) {
+    depth = 1
+    当 (且(< (pos, end), > (depth, 0))) {
+        t = tokens[pos]
+        若 (t["value"] == open) { depth = + (depth, 1) }
+        若 (t["value"] == close) { depth = - (depth, 1) }
+        若 (> (depth, 0)) { pos = + (pos, 1) }
+    }
+    pos
+}
+
+;; ── 列表 ──
+思 _list(tokens, pos, end) {
+    pos = + (pos, 1)
+    items = []
+    item_start = pos
+    depth = 1
+    当 (且(< (pos, end), > (depth, 0))) {
+        t = tokens[pos]
+        若 (t["value"] == _LB()) { depth = + (depth, 1) }
+        若 (t["value"] == _LP()) { depth = + (depth, 1) }
+        若 (t["value"] == _LC()) { depth = + (depth, 1) }
+        若 (t["value"] == _RB()) {
+            depth = - (depth, 1)
+            若 (== (depth, 0)) {
+                若 (> (pos, item_start)) {
+                    item = _expr(tokens, item_start, pos)
+                    items = push(items, item["n"])
+                }
+                断
+            }
+        }
+        若 (t["value"] == _RP()) { depth = - (depth, 1) }
+        若 (t["value"] == _RC()) { depth = - (depth, 1) }
+        is_item_sep = 假
+        若 (t["value"] == ",") {
+            若 (depth == 1) { is_item_sep = 真 }
+        }
+        若 (is_item_sep) {
+            item = _expr(tokens, item_start, pos)
+            items = push(items, item["n"])
+            item_start = + (pos, 1)
+        }
+        pos = + (pos, 1)
+    }
+    _res(node("list", "", items), + (pos, 1))
+}
+
+;; ── 字典 ──
+思 _dict(tokens, pos, end) {
+    pos = + (pos, 1)
+    pairs = []
+    depth = 1
+    key_start = pos
+    state = "key"
+    cur_key = ""
+    当 (且(< (pos, end), > (depth, 0))) {
+        t = tokens[pos]
+        若 (t["value"] == _LC()) { depth = + (depth, 1) }
+        若 (t["value"] == _LP()) { depth = + (depth, 1) }
+        若 (t["value"] == _LB()) { depth = + (depth, 1) }
+        若 (t["value"] == _RC()) {
+            depth = - (depth, 1)
+            若 (== (depth, 0)) {
+                若 (且(state == "val", > (pos, key_start))) {
+                    val = _expr(tokens, key_start, pos)
+                    pairs = push(pairs, node("pair", cur_key, [val["n"]]))
+                }
+                断
+            }
+        }
+        若 (t["value"] == _RP()) { depth = - (depth, 1) }
+        若 (t["value"] == _RB()) { depth = - (depth, 1) }
+        is_key_sep = 假
+        若 (t["value"] == ":") {
+            若 (depth == 1) {
+                若 (state == "key") { is_key_sep = 真 }
+            }
+        }
+        若 (is_key_sep) {
+            cur_key = _get_key(tokens, key_start, pos)
+            key_start = + (pos, 1)
+            state = "val"
+        }
+        is_pair_sep = 假
+        若 (t["value"] == ",") {
+            若 (depth == 1) {
+                若 (state == "val") { is_pair_sep = 真 }
+            }
+        }
+        若 (is_pair_sep) {
+            val = _expr(tokens, key_start, pos)
+            pairs = push(pairs, node("pair", cur_key, [val["n"]]))
+            key_start = + (pos, 1)
+            state = "key"
+        }
+        pos = + (pos, 1)
+    }
+    _res(node("dict", "", pairs), + (pos, 1))
+}
+
+思 _get_key(tokens, from, to) {
+    若 (< (from, to)) {
+        t = tokens[from]
+        若 (t["type"] == "string") {
+            t["value"]
+        } {
+            key = ""
+            若 (t["type"] == "name") { key = t["value"] }
+            key
+        }
+    } { "" }
+}
+

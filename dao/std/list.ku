@@ -1,0 +1,451 @@
+// std/list.道 — 列表操作标准库（完整版）
+// 用法: 引 "std/list" 别 list
+// 完全替换旧版本，保留原有函数并扩展新功能
+
+// ========== 原有函数 ==========
+
+// 映射：对每个元素应用函数
+思 map(items, fn) {
+  result = []
+  遍 x 于 items {
+    result = result + [fn(x)]
+  }
+  result
+}
+
+// 过滤：保留满足条件的元素
+思 filter(items, fn) {
+  result = []
+  遍 x 于 items {
+    若 fn(x) {
+      result = result + [x]
+    }
+  }
+  result
+}
+
+// 归约：累积计算
+思 reduce(items, fn, initial) {
+  acc = initial
+  遍 x 于 items {
+    acc = fn(acc, x)
+  }
+  acc
+}
+
+// 查找：返回第一个满足条件的元素
+思 find(items, fn) {
+  result = 空
+  遍 x 于 items {
+    若 fn(x) {
+      result = x
+      断
+    }
+  }
+  result
+}
+
+// 是否包含目标值
+思 includes(items, target) {
+  遍 x 于 items {
+    若 x == target {
+      返 真
+    }
+  }
+  假
+}
+
+// 第一个元素
+思 first(items) {
+  若 len(items) > 0 { items[0] } 否 { 空 }
+}
+
+// 最后一个元素
+思 last(items) {
+  若 len(items) > 0 { items[len(items) - 1] } 否 { 空 }
+}
+
+// 截取子列表
+思 slice(items, start, end) {
+  若 (type(items) == "str") {
+    ;; 字符串切片：用 Python 内置切片
+    s = ""
+    i = start
+    当 (< (i, end)) {
+      若 (>= (i, len(items))) { 断 }
+      s = + (s, items[i])
+      i = + (i, 1)
+    }
+    s
+  } {
+    ;; 列表切片
+    result = []
+    i = start
+    当 (< (i, end)) {
+      若 (>= (i, len(items))) { 断 }
+      result = + (result, [items[i]])
+      i = + (i, 1)
+    }
+    result
+  }
+}
+
+// 反转列表
+思 reverse(items) {
+  result = []
+  i = len(items) - 1
+  当 i >= 0 {
+    result = result + [items[i]]
+    i = i - 1
+  }
+  result
+}
+
+// 递归展平
+思 flatten(items) {
+  result = []
+  遍 x 于 items {
+    若 type(x) == "list" {
+      inner = flatten(x)
+      遍 y 于 inner {
+        result = result + [y]
+      }
+    } 否 {
+      result = result + [x]
+    }
+  }
+  result
+}
+
+// 去重
+思 unique(items) {
+  result = []
+  遍 x 于 items {
+    seen = 假
+    遍 y 于 result {
+      若 x == y {
+        seen = 真
+      }
+    }
+    若 非 seen {
+      result = result + [x]
+    }
+  }
+  result
+}
+
+// ========== 新增函数 ==========
+
+// 排序（冒泡排序，支持数字和字符串）
+思 sort(list) {
+  result = []
+  遍 x 于 list {
+    result = result + [x]
+  }
+  n = len(result)
+  i = 0
+  当 i < n - 1 {
+    j = 0
+    当 j < n - i - 1 {
+      若 result[j] > result[j + 1] {
+        temp = result[j]
+        result[j] = result[j + 1]
+        result[j + 1] = temp
+      }
+      j = j + 1
+    }
+    i = i + 1
+  }
+  result
+}
+
+// 中文别名：排序
+思 排序(列表) {
+  sort(列表)
+}
+
+思 长度(列表) {
+  len(列表)
+}
+
+思 包含(列表, 值) {
+  includes(列表, 值)
+}
+
+思 首项(列表) {
+  first(列表)
+}
+
+思 末项(列表) {
+  last(列表)
+}
+
+思 反转(列表) {
+  reverse(列表)
+}
+
+思 唯一(列表) {
+  unique(列表)
+}
+
+思 映射(列表, 函数) {
+  map(列表, 函数)
+}
+
+思 过滤(列表, 函数) {
+  filter(列表, 函数)
+}
+
+思 归约(列表, 函数, 初值) {
+  reduce(列表, 函数, 初值)
+}
+
+思 查找(列表, 函数) {
+  find(列表, 函数)
+}
+
+思 切片(列表, 开始, 结束) {
+  slice(列表, 开始, 结束)
+}
+
+思 展平(列表) {
+  flatten(列表)
+}
+
+// 拉链：[1,2,3] + ["a","b","c"] -> [[1,"a"],[2,"b"],[3,"c"]]
+思 zip(list1, list2) {
+  result = []
+  n = len(list1)
+  若 len(list2) < n {
+    n = len(list2)
+  }
+  i = 0
+  当 i < n {
+    result = result + [[list1[i], list2[i]]]
+    i = i + 1
+  }
+  result
+}
+
+// 带索引枚举：enumerate(["a","b"]) -> [[0,"a"],[1,"b"]]
+思 enumerate(list) {
+  result = []
+  i = 0
+  遍 x 于 list {
+    result = result + [[i, x]]
+    i = i + 1
+  }
+  result
+}
+
+// 统计某个值出现的次数
+思 count(list, value) {
+  result = 0
+  遍 x 于 list {
+    若 x == value {
+      result = result + 1
+    }
+  }
+  result
+}
+
+// 是否所有元素都满足条件
+思 all(list, fn) {
+  result = 真
+  遍 x 于 list {
+    若 非 fn(x) {
+      result = 假
+      断
+    }
+  }
+  result
+}
+
+// 是否存在满足条件的元素
+思 any(list, fn) {
+  result = 假
+  遍 x 于 list {
+    若 fn(x) {
+      result = 真
+      断
+    }
+  }
+  result
+}
+
+// 列表中的最小值
+思 min_of(list) {
+  若 len(list) == 0 {
+    空
+  } 否 {
+    result = list[0]
+    遍 x 于 list {
+      若 x < result {
+        result = x
+      }
+    }
+    result
+  }
+}
+
+// 列表中的最大值
+思 max_of(list) {
+  若 len(list) == 0 {
+    空
+  } 否 {
+    result = list[0]
+    遍 x 于 list {
+      若 x > result {
+        result = x
+      }
+    }
+    result
+  }
+}
+
+// 分组：按 fn 返回值分组，返回 dict
+思 group_by(list, fn) {
+  result = {}
+  遍 x 于 list {
+    key = fn(x)
+    若 result[key] == 空 {
+      result[key] = []
+    }
+    result[key] = result[key] + [x]
+  }
+  result
+}
+
+// 展平一层
+思 flat_map(list, fn) {
+  result = []
+  遍 x 于 list {
+    mapped = fn(x)
+    遍 y 于 mapped {
+      result = result + [y]
+    }
+  }
+  result
+}
+
+// 交错合并：interleave([1,3], [2,4]) -> [1,2,3,4]
+思 interleave(list1, list2) {
+  result = []
+  n = len(list1)
+  若 len(list2) > n {
+    n = len(list2)
+  }
+  i = 0
+  当 i < n {
+    若 i < len(list1) {
+      result = result + [list1[i]]
+    }
+    若 i < len(list2) {
+      result = result + [list2[i]]
+    }
+    i = i + 1
+  }
+  result
+}
+
+// 每隔 n 个元素取一个
+思 step(list, n) {
+  result = []
+  i = 0
+  当 i < len(list) {
+    result = result + [list[i]]
+    i = i + n
+  }
+  result
+}
+
+// 填充列表到指定长度
+思 pad(list, length, value) {
+  result = []
+  遍 x 于 list {
+    result = result + [x]
+  }
+  当 len(result) < length {
+    result = result + [value]
+  }
+  result
+}
+
+// 旋转列表：rotate([1,2,3,4], 1) -> [4,1,2,3]
+思 rotate(list, n) {
+  若 len(list) == 0 {
+    []
+  } 否 {
+    size = len(list)
+    offset = n - floor(n / size) * size
+    若 offset < 0 {
+      offset = offset + size
+    }
+    result = []
+    i = 0
+    当 i < size {
+      idx = i - offset
+      若 idx < 0 {
+        idx = idx + size
+      }
+      result = result + [list[idx]]
+      i = i + 1
+    }
+    result
+  }
+}
+
+// ========== 中文别名补齐 ==========
+
+思 拉链(列表一, 列表二) {
+  zip(列表一, 列表二)
+}
+
+思 枚举(列表) {
+  enumerate(列表)
+}
+
+思 计数(列表, 值) {
+  count(列表, 值)
+}
+
+思 全部(列表, 函数) {
+  all(列表, 函数)
+}
+
+思 任一(列表, 函数) {
+  any(列表, 函数)
+}
+
+思 最小值(列表) {
+  min_of(列表)
+}
+
+思 最大值(列表) {
+  max_of(列表)
+}
+
+思 分组(列表, 函数) {
+  group_by(列表, 函数)
+}
+
+思 映射展平(列表, 函数) {
+  flat_map(列表, 函数)
+}
+
+思 交错(列表一, 列表二) {
+  interleave(列表一, 列表二)
+}
+
+思 步进(列表, 间隔) {
+  step(列表, 间隔)
+}
+
+思 填充(列表, 长度, 值) {
+  pad(列表, 长度, 值)
+}
+
+思 旋转(列表, 位数) {
+  rotate(列表, 位数)
+}
+

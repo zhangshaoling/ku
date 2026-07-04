@@ -1,0 +1,724 @@
+;; compiler.ku — Ku 字节码编译器（P0 最小闭环版）
+;; 目标：AST dict -> bytecode -> DaoVM.execute() -> 正确结果
+;; 原则：用已存在的 or/and（不用 或/且），字段名同时兼容 constants/instructions
+
+;; ═══════════════════════════════════════════
+;;  编译器状态
+;; ═══════════════════════════════════════════
+
+思 new_state() {
+    { "instrs": [], "consts": [], "label": 0, "loops": [] }
+}
+
+思 emit(state, op, arg) {
+    若 (== (arg, 空)) {
+        state["instrs"] = push(state["instrs"], [op])
+    } {
+        state["instrs"] = push(state["instrs"], [op, arg])
+    }
+    state
+}
+
+思 add_const(state, val) {
+    idx = len(state["consts"])
+    state["consts"] = push(state["consts"], val)
+    idx
+}
+
+思 current_addr(state) {
+    len(state["instrs"])
+}
+
+思 offset(target, addr) {
+    + (target, 0 - addr)
+}
+
+思 instr_arg(instr) {
+    若 (>= (len(instr), 3)) {
+        instr[2]
+    } {
+        instr[1]
+    }
+}
+
+思 patch_jump(state, addr) {
+    patch_jump_to(state, addr, current_addr(state))
+}
+
+思 patch_jump_to(state, addr, target) {
+    instrs = state["instrs"]
+    instr = instrs[addr]
+    new_instrs = []
+    i = 0
+    当 (< (i, len(instrs))) {
+        若 (== (i, addr)) {
+            new_instrs = push(new_instrs, [instr[0], offset(target, addr)])
+        } {
+            new_instrs = push(new_instrs, instrs[i])
+        }
+        i = + (i, 1)
+    }
+    state["instrs"] = new_instrs
+    state
+}
+
+思 record_loop_jump(state, key) {
+    loops = state["loops"]
+    last_idx = offset(len(loops), 1)
+    loop_ctx = loops[last_idx]
+    loop_ctx[key] = push(loop_ctx[key], current_addr(state))
+    state["loops"] = push(slice(loops, 0, last_idx), loop_ctx)
+    emit(state, "JUMP", 0)
+    state
+}
+
+;; ═══════════════════════════════════════════
+;;  AST 节点辅助
+;; ═══════════════════════════════════════════
+
+思 node_type(nd) { nd["type"] }
+思 node_value(nd) { nd["value"] }
+思 node_children(nd) {
+    若 (has(nd, "children")) { nd["children"] } { [] }
+}
+思 is_type(nd, t) { == (node_type(nd), t) }
+
+;; ═══════════════════════════════════════════
+;;  编译节点（核心分发）
+;; ═══════════════════════════════════════════
+
+思 compile_node(state, nd) {
+    若 (is_type(nd, "literal")) {
+        idx = add_const(state, node_value(nd))
+        emit(state, "LOAD_CONST", idx)
+    }
+    若 (is_type(nd, "ref")) {
+        emit(state, "LOAD_NAME", node_value(nd))
+    }
+    若 (is_type(nd, "op")) {
+        compile_op(state, nd)
+    }
+    若 (is_type(nd, "call")) {
+        compile_call(state, nd)
+    }
+    若 (is_type(nd, "block")) {
+        compile_block(state, nd)
+    }
+    若 (is_type(nd, "assign")) {
+        compile_assign(state, nd)
+    }
+    若 (is_type(nd, "if")) {
+        compile_if(state, nd)
+    }
+    若 (is_type(nd, "while")) {
+        compile_while(state, nd)
+    }
+    若 (is_type(nd, "for")) {
+        compile_for(state, nd)
+    }
+    若 (is_type(nd, "return")) {
+        compile_return(state, nd)
+    }
+    若 (is_type(nd, "break")) {
+        compile_break(state, nd)
+    }
+    若 (is_type(nd, "continue")) {
+        compile_continue(state, nd)
+    }
+    若 (is_type(nd, "throw")) {
+        compile_throw(state, nd)
+    }
+    若 (is_type(nd, "try")) {
+        compile_try(state, nd)
+    }
+    若 (is_type(nd, "list")) {
+        compile_list(state, nd)
+    }
+    若 (is_type(nd, "dict")) {
+        compile_dict(state, nd)
+    }
+    若 (is_type(nd, "index")) {
+        compile_index(state, nd)
+    }
+    若 (is_type(nd, "index_assign")) {
+        compile_index_assign(state, nd)
+    }
+    若 (is_type(nd, "attr")) {
+        compile_attr(state, nd)
+    }
+    若 (is_type(nd, "thought")) {
+        compile_thought(state, nd)
+    }
+    state
+}
+
+;; ═══════════════════════════════════════════
+;;  语句块
+;; ═══════════════════════════════════════════
+
+思 is_pop_op(op_name) {
+    pops = ["STORE_NAME", "STORE_FAST", "RETURN", "JUMP", "JUMP_IF_FALSE", "JUMP_IF_TRUE", "LOOP_END"]
+    i = 0
+    当 (< (i, len(pops))) {
+        若 (== (op_name, pops[i])) { 返(真) }
+        i = + (i, 1)
+    }
+    假
+}
+
+思 discard_last_value(state) {
+    last_idx = offset(len(state["instrs"]), 1)
+    若 (>= (last_idx, 0)) {
+        last_op = state["instrs"][last_idx][0]
+        若 (非(is_pop_op(last_op))) {
+            emit(state, "POP", 空)
+        }
+    }
+    state
+}
+
+思 compile_block(state, nd) {
+    kids = node_children(nd)
+    i = 0
+    当 (< (i, len(kids))) {
+        compile_node(state, kids[i])
+        ;; 非最后一个语句弹出栈值
+        若 (< (+ (i, 1), len(kids))) {
+            discard_last_value(state)
+        }
+        i = + (i, 1)
+    }
+    state
+}
+
+;; ═══════════════════════════════════════════
+;;  操作符
+;; ═══════════════════════════════════════════
+
+思 compile_op(state, nd) {
+    op = node_value(nd)
+    kids = node_children(nd)
+
+    ;; 一元 not
+    若 (or(== (op, "not"), == (op, "非"))) {
+        compile_node(state, kids[0])
+        emit(state, "UNARY_OP", "not")
+        返(state)
+    }
+    ;; 一元 -
+    若 (and(== (op, "-"), == (len(kids), 1))) {
+        compile_node(state, kids[0])
+        emit(state, "UNARY_OP", "-")
+        返(state)
+    }
+    ;; and 短路
+    若 (or(== (op, "and"), == (op, "且"))) {
+        compile_node(state, kids[0])
+        emit(state, "DUP", 空)
+        jmp_addr = current_addr(state)
+        emit(state, "JUMP_IF_FALSE", 0)
+        emit(state, "POP", 空)
+        compile_node(state, kids[1])
+        state = patch_jump(state, jmp_addr)
+        返(state)
+    }
+    ;; or 短路
+    若 (or(== (op, "or"), == (op, "或"))) {
+        compile_node(state, kids[0])
+        emit(state, "DUP", 空)
+        jmp_addr = current_addr(state)
+        emit(state, "JUMP_IF_TRUE", 0)
+        emit(state, "POP", 空)
+        compile_node(state, kids[1])
+        state = patch_jump(state, jmp_addr)
+        返(state)
+    }
+    ;; 二元操作
+    若 (>= (len(kids), 2)) {
+        compile_node(state, kids[0])
+        compile_node(state, kids[1])
+        emit(state, "BINARY_OP", op)
+    }
+    state
+}
+
+;; ═══════════════════════════════════════════
+;;  函数调用
+;; ═══════════════════════════════════════════
+
+思 is_op_name(name) {
+    ops = ["+", "-", "*", "/", "%", "==", "!=", "<", ">", "<=", ">=", "and", "or", "且", "或"]
+    i = 0
+    当 (< (i, len(ops))) {
+        若 (== (name, ops[i])) { 返(真) }
+        i = + (i, 1)
+    }
+    假
+}
+
+思 compile_call(state, nd) {
+    func_name = node_value(nd)
+    args = node_children(nd)
+
+    ;; 兼容两种 call 格式：
+    ;; 格式1: {"value":"func_name","children":[arg1, arg2, ...]}
+    ;; 格式2: {"value":"","children":[ref(func), arg1, arg2, ...]}
+    若 (== (func_name, "")) {
+        ;; 格式2：callee 在 children[0]，参数从 children[1:] 开始
+        若 (>= (len(args), 1)) {
+            callee = args[0]
+            若 (is_type(callee, "ref")) {
+                func_name = node_value(callee)
+                args = slice(args, 1, len(args))
+            }
+        }
+    }
+
+    ;; 运算符前缀调用 +(a,b) -> BINARY_OP
+    若 (is_op_name(func_name)) {
+        若 (>= (len(args), 2)) {
+            compile_op(state, { "type": "op", "value": func_name, "children": [args[0], args[1]] })
+            返(state)
+        }
+    }
+
+    ;; 普通函数调用
+    emit(state, "LOAD_NAME", func_name)
+    i = 0
+    当 (< (i, len(args))) {
+        compile_node(state, args[i])
+        i = + (i, 1)
+    }
+    emit(state, "CALL", len(args))
+    state
+}
+
+;; ═══════════════════════════════════════════
+;;  赋值
+;; ═══════════════════════════════════════════
+
+思 compile_assign(state, nd) {
+    name = node_value(nd)
+    kids = node_children(nd)
+    compile_node(state, kids[0])
+    emit(state, "STORE_NAME", name)
+    state
+}
+
+;; ═══════════════════════════════════════════
+;;  if
+;; ═══════════════════════════════════════════
+
+思 compile_if(state, nd) {
+    kids = node_children(nd)
+    compile_node(state, kids[0])
+    jmp_false = current_addr(state)
+    emit(state, "JUMP_IF_FALSE", 0)
+    compile_node(state, kids[1])
+    若 (>= (len(kids), 3)) {
+        jmp_end = current_addr(state)
+        emit(state, "JUMP", 0)
+        state = patch_jump(state, jmp_false)
+        compile_node(state, kids[2])
+        state = patch_jump(state, jmp_end)
+    } {
+        jmp_end = current_addr(state)
+        emit(state, "JUMP", 0)
+        state = patch_jump(state, jmp_false)
+        idx = add_const(state, 空)
+        emit(state, "LOAD_CONST", idx)
+        state = patch_jump(state, jmp_end)
+    }
+    state
+}
+
+;; ═══════════════════════════════════════════
+;;  while
+;; ═══════════════════════════════════════════
+
+思 compile_while(state, nd) {
+    kids = node_children(nd)
+    loop_id = state["label"]
+    state["label"] = + (state["label"], 1)
+    loop_start = current_addr(state)
+    emit(state, "LOOP_BEGIN", loop_id)
+    compile_node(state, kids[0])
+    jmp_end = current_addr(state)
+    emit(state, "JUMP_IF_FALSE", 0)
+    state["loops"] = push(state["loops"], { "id": loop_id, "start": loop_start, "breaks": [], "continues": [] })
+    compile_node(state, kids[1])
+    discard_last_value(state)
+    emit(state, "JUMP", offset(loop_start, current_addr(state)))
+    emit(state, "LOOP_END", loop_id)
+    state = patch_jump(state, jmp_end)
+    loop_end = current_addr(state)
+    loops = state["loops"]
+    state["loops"] = slice(loops, 0, offset(len(loops), 1))
+    loop_ctx = loops[offset(len(loops), 1)]
+    breaks = loop_ctx["breaks"]
+    bi = 0
+    当 (< (bi, len(breaks))) {
+        state = patch_jump(state, breaks[bi])
+        bi = + (bi, 1)
+    }
+    continues = loop_ctx["continues"]
+    ci = 0
+    当 (< (ci, len(continues))) {
+        state = patch_jump_to(state, continues[ci], loop_ctx["start"])
+        ci = + (ci, 1)
+    }
+    state
+}
+
+;; ═══════════════════════════════════════════
+;;  for
+;; ═══════════════════════════════════════════
+
+思 compile_for(state, nd) {
+    kids = node_children(nd)
+    var_name = node_value(nd)
+    loop_id = state["label"]
+    state["label"] = + (state["label"], 1)
+    compile_node(state, kids[0])
+    emit(state, "GET_ITER", 空)
+    loop_start = current_addr(state)
+    emit(state, "LOOP_BEGIN", loop_id)
+    for_iter_addr = current_addr(state)
+    emit(state, "FOR_ITER", 0)
+    emit(state, "STORE_FAST", var_name)
+    state["loops"] = push(state["loops"], { "id": loop_id, "start": loop_start, "breaks": [], "continues": [] })
+    compile_node(state, kids[1])
+    discard_last_value(state)
+    emit(state, "JUMP", offset(loop_start, current_addr(state)))
+    emit(state, "LOOP_END", loop_id)
+    state = patch_jump(state, for_iter_addr)
+    loop_end = current_addr(state)
+    loops = state["loops"]
+    state["loops"] = slice(loops, 0, offset(len(loops), 1))
+    loop_ctx = loops[offset(len(loops), 1)]
+    breaks = loop_ctx["breaks"]
+    bi = 0
+    当 (< (bi, len(breaks))) {
+        state = patch_jump(state, breaks[bi])
+        bi = + (bi, 1)
+    }
+    continues = loop_ctx["continues"]
+    ci = 0
+    当 (< (ci, len(continues))) {
+        state = patch_jump_to(state, continues[ci], loop_ctx["start"])
+        ci = + (ci, 1)
+    }
+    state
+}
+
+;; ═══════════════════════════════════════════
+;;  return
+;; ═══════════════════════════════════════════
+
+思 compile_return(state, nd) {
+    kids = node_children(nd)
+    若 (>= (len(kids), 1)) {
+        compile_node(state, kids[0])
+    } {
+        idx = add_const(state, 空)
+        emit(state, "LOAD_CONST", idx)
+    }
+    emit(state, "RETURN", 空)
+    state
+}
+
+思 compile_break(state, nd) {
+    record_loop_jump(state, "breaks")
+}
+
+思 compile_continue(state, nd) {
+    record_loop_jump(state, "continues")
+}
+
+思 compile_throw(state, nd) {
+    kids = node_children(nd)
+    若 (>= (len(kids), 1)) {
+        compile_node(state, kids[0])
+    } {
+        idx = add_const(state, "抛: 无值")
+        emit(state, "LOAD_CONST", idx)
+    }
+    emit(state, "RAISE", 空)
+    state
+}
+
+思 compile_try(state, nd) {
+    kids = node_children(nd)
+    catch_offset_addr = current_addr(state)
+    emit(state, "TRY_BEGIN", 0)
+    compile_node(state, kids[0])
+    emit(state, "TRY_END", 空)
+
+    catch_var = "_err"
+    catch_body = 空
+    finally_body = 空
+    若 (>= (len(kids), 3)) {
+        catch_ref = kids[1]
+        若 (is_type(catch_ref, "ref")) {
+            catch_var = node_value(catch_ref)
+        }
+        catch_body = kids[2]
+    } {
+        若 (>= (len(kids), 2)) {
+            catch_body = kids[1]
+        }
+    }
+    若 (>= (len(kids), 4)) {
+        finally_body = kids[3]
+    }
+
+    has_catch = catch_body != 空
+    若 (and(has_catch, is_type(catch_body, "literal"))) {
+        has_catch = != (node_value(catch_body), "")
+    }
+    has_finally = finally_body != 空
+    若 (and(has_finally, is_type(finally_body, "literal"))) {
+        has_finally = != (node_value(finally_body), "")
+    }
+
+    若 (has_finally) {
+        discard_last_value(state)
+        compile_node(state, finally_body)
+    }
+    jump_end_addr = current_addr(state)
+    emit(state, "JUMP", 0)
+    state = patch_jump(state, catch_offset_addr)
+
+    若 (has_catch) {
+        emit(state, "STORE_NAME", catch_var)
+        compile_node(state, catch_body)
+        若 (has_finally) {
+            discard_last_value(state)
+            compile_node(state, finally_body)
+        }
+    } {
+        若 (has_finally) {
+            emit(state, "STORE_NAME", catch_var)
+            compile_node(state, finally_body)
+            discard_last_value(state)
+            emit(state, "LOAD_NAME", catch_var)
+            emit(state, "RAISE", 空)
+            state = patch_jump(state, jump_end_addr)
+            返(state)
+        }
+        emit(state, "POP", 空)
+        idx = add_const(state, 空)
+        emit(state, "LOAD_CONST", idx)
+    }
+
+    state = patch_jump(state, jump_end_addr)
+    state
+}
+
+;; ═══════════════════════════════════════════
+;;  列表 / 字典 / 索引 / 属性
+;; ═══════════════════════════════════════════
+
+思 compile_list(state, nd) {
+    kids = node_children(nd)
+    i = 0
+    当 (< (i, len(kids))) {
+        compile_node(state, kids[i])
+        i = + (i, 1)
+    }
+    emit(state, "BUILD_LIST", len(kids))
+    state
+}
+
+思 compile_dict(state, nd) {
+    kids = node_children(nd)
+    count = 0
+    i = 0
+    当 (< (i, len(kids))) {
+        pair = kids[i]
+        若 (== (node_type(pair), "pair")) {
+            key = node_value(pair)
+            val_kids = node_children(pair)
+            若 (>= (len(val_kids), 1)) {
+                idx = add_const(state, key)
+                emit(state, "LOAD_CONST", idx)
+                compile_node(state, val_kids[0])
+                count = + (count, 1)
+            }
+        }
+        i = + (i, 1)
+    }
+    emit(state, "BUILD_DICT", count)
+    state
+}
+
+思 compile_index(state, nd) {
+    kids = node_children(nd)
+    compile_node(state, kids[0])
+    compile_node(state, kids[1])
+    emit(state, "GET_INDEX", 空)
+    state
+}
+
+思 compile_attr(state, nd) {
+    kids = node_children(nd)
+    compile_node(state, kids[0])
+    emit(state, "GET_ATTR", node_value(nd))
+    state
+}
+
+思 compile_index_assign(state, nd) {
+    kids = node_children(nd)
+    target = kids[0]
+    target_kids = node_children(target)
+    compile_node(state, target_kids[0])
+    compile_node(state, target_kids[1])
+    compile_node(state, kids[1])
+    emit(state, "SET_INDEX", 空)
+    state
+}
+
+;; ═══════════════════════════════════════════
+;;  thought 定义
+;; ═══════════════════════════════════════════
+
+思 compile_thought(state, nd) {
+    name = node_value(nd)
+    kids = node_children(nd)
+    params = []
+    body = 空
+    i = 0
+    当 (< (i, len(kids))) {
+        kid = kids[i]
+        若 (is_str(kid)) {
+            params = push(params, kid)
+        } {
+            若 (is_type(kid, "block")) {
+                body = kid
+            } {
+                params = push(params, node_value(kid))
+            }
+        }
+        i = + (i, 1)
+    }
+    ;; 编译函数体到临时指令列表
+    saved_instrs = state["instrs"]
+    saved_consts = state["consts"]
+    state["instrs"] = []
+    state["consts"] = []
+    若 (body != 空) {
+        compile_node(state, body)
+    }
+    emit(state, "RETURN", 空)
+    body_instructions = state["instrs"]
+    body_consts = state["consts"]
+    state["instrs"] = saved_instrs
+    state["consts"] = saved_consts
+    ;; 将函数体常量存到父常量池（偏移量 = 当前长度）
+    const_offset = len(state["consts"])
+    ci = 0
+    当 (< (ci, len(body_consts))) {
+        state["consts"] = push(state["consts"], body_consts[ci])
+        ci = + (ci, 1)
+    }
+    ;; 更新 body_instructions 中的 LOAD_CONST 索引
+    new_body = []
+    bi = 0
+    load_ci = 0
+    当 (< (bi, len(body_instructions))) {
+        instr = body_instructions[bi]
+        若 (and(>= (len(instr), 2), == (instr[0], "LOAD_CONST"))) {
+            new_body = push(new_body, [instr[0], + (load_ci, const_offset)])
+            load_ci = + (load_ci, 1)
+        } {
+            new_body = push(new_body, instr)
+        }
+        bi = + (bi, 1)
+    }
+    ;; 将函数体指令存为常量
+    body_idx = len(state["consts"])
+    state["consts"] = push(state["consts"], new_body)
+    ;; 发射 MAKE_FUNCTION + STORE_NAME
+    func_info = { "params": params, "body_const_idx": body_idx, "const_offset": const_offset, "doc": "", "meta": {} }
+    func_idx = add_const(state, func_info)
+    emit(state, "MAKE_FUNCTION", func_idx)
+    emit(state, "STORE_NAME", name)
+    state
+}
+
+;; ═══════════════════════════════════════════
+;;  主编译入口
+;; ═══════════════════════════════════════════
+
+思 compile_ast(ast) {
+    state = new_state()
+    若 (is_type(ast, "block")) {
+        kids = node_children(ast)
+        i = 0
+        当 (< (i, len(kids))) {
+            compile_node(state, kids[i])
+            i = + (i, 1)
+        }
+    } {
+        compile_node(state, ast)
+    }
+    emit(state, "RETURN", 空)
+    ;; 输出同时包含两种字段名，兼容 DaoVM 和 Python compiler
+    { "format": "kub", "version": "0.1", "constants": state["consts"], "instructions": state["instrs"], "consts": state["consts"], "instrs": state["instrs"], "entry": 0 }
+}
+
+;; ═══════════════════════════════════════════
+;;  反汇编器
+;; ═══════════════════════════════════════════
+
+思 disassemble(bc) {
+    consts = bc["constants"]
+    instrs = bc["instructions"]
+    lines = []
+    lines = push(lines, "; kub v" + bc["version"] + " — " + str(len(consts)) + " constants, " + str(len(instrs)) + " instructions")
+    lines = push(lines, "")
+    lines = push(lines, "; === CONSTANTS ===")
+    ci = 0
+    当 (< (ci, len(consts))) {
+        c = consts[ci]
+        若 (is_list(c)) {
+            lines = push(lines, "  [" + str(ci) + "] <bytecode block: " + str(len(c)) + " instructions>")
+        } {
+            若 (is_dict(c)) {
+                若 (has(c, "params")) {
+                    lines = push(lines, "  [" + str(ci) + "] <function: params=" + str(c["params"]) + ">")
+                } {
+                    lines = push(lines, "  [" + str(ci) + "] " + str(c))
+                }
+            } {
+                lines = push(lines, "  [" + str(ci) + "] " + str(c))
+            }
+        }
+        ci = + (ci, 1)
+    }
+    lines = push(lines, "")
+    lines = push(lines, "; === CODE ===")
+    ii = 0
+    当 (< (ii, len(instrs))) {
+        instr = instrs[ii]
+        op = instr[0]
+        若 (>= (len(instr), 2)) {
+            lines = push(lines, "  " + str(ii) + "  " + op + "  " + str(instr[1]))
+        } {
+            lines = push(lines, "  " + str(ii) + "  " + op)
+        }
+        ii = + (ii, 1)
+    }
+    _str_join(lines, "\n")
+}
+
+思 _str_join(lines, sep) {
+    若 (== (len(lines), 0)) { 返("") }
+    result = lines[0]
+    i = 1
+    当 (< (i, len(lines))) {
+        result = result + sep + lines[i]
+        i = + (i, 1)
+    }
+    result
+}

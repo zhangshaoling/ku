@@ -4,7 +4,10 @@ import re
 
 _KEYWORDS = {"thought", "if", "else", "while", "for", "in", "return",
              "break", "continue", "try", "catch", "throw", "true", "false",
-             "null", "and", "or", "not", "import", "as"}
+             "null", "and", "or", "not", "import", "as",
+             "思", "若", "否则", "当", "遍", "于", "返", "断", "续",
+             "真", "假", "空", "且", "或", "非", "试", "捕", "抛",
+             "记", "忆", "忘", "强", "弱", "联", "关联", "匹", "为", "则", "终匹"}
 
 _OPS = {"+", "-", "*", "/", "%", "==", "!=", "<", ">", "<=", ">=",
         "=", "!", "and", "or", "not"}

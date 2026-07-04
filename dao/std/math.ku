@@ -1,0 +1,148 @@
+// std/math.道 — 数学标准库
+// 用法: 引 "std/math" 别 math
+
+// 求和
+思 sum(list) {
+  result = 0
+  遍 x 于 list {
+    result = result + x
+  }
+  result
+}
+
+// 连乘积
+思 product(list) {
+  result = 1
+  遍 x 于 list {
+    result = result * x
+  }
+  result
+}
+
+// 平均值
+思 avg(list) {
+  若 len(list) == 0 {
+    0
+  } 否 {
+    sum(list) / len(list)
+  }
+}
+
+// 限制在 [min_val, max_val] 范围内
+思 clamp(val, min_val, max_val) {
+  若 val < min_val {
+    min_val
+  } 否 若 val > max_val {
+    max_val
+  } 否 {
+    val
+  }
+}
+
+// 线性插值: a + (b - a) * t
+思 lerp(a, b, t) {
+  a + (b - a) * t
+}
+
+// 最大公约数（欧几里得算法）
+思 gcd(a, b) {
+  x = abs(a)
+  y = abs(b)
+  当 y != 0 {
+    temp = y
+    y = x - floor(x / y) * y
+    x = temp
+  }
+  x
+}
+
+// 最小公倍数
+思 lcm(a, b) {
+  若 a == 0或 b == 0 {
+    0
+  } 否 {
+    abs(a * b) / gcd(a, b)
+  }
+}
+
+// 判断质数
+思 is_prime(n) {
+  若 n <= 1 {
+    假
+  } 否 若 n <= 3 {
+    真
+  } 否 若 n - floor(n / 2) * 2 == 0或 n - floor(n / 3) * 3 == 0 {
+    假
+  } 否 {
+    i = 5
+    result = 真
+    当 i * i <= n {
+      若 n - floor(n / i) * i == 0或 n - floor(n / (i + 2)) * (i + 2) == 0 {
+        result = 假
+        断
+      }
+      i = i + 6
+    }
+    result
+  }
+}
+
+// 斐波那契数列第 n 项（从 0 开始）
+思 fibonacci(n) {
+  若 n <= 0 {
+    0
+  } 否 若 n == 1 {
+    1
+  } 否 {
+    a = 0
+    b = 1
+    i = 2
+    当 i <= n {
+      temp = b
+      b = a + b
+      a = temp
+      i = i + 1
+    }
+    b
+  }
+}
+
+// 中文别名：斐波那契数列第 n 项
+思 斐波那契(n) {
+  fibonacci(n)
+}
+
+// ========== 中文别名补齐 ==========
+
+思 求和(列表) {
+  sum(列表)
+}
+
+思 求积(列表) {
+  product(列表)
+}
+
+思 平均(列表) {
+  avg(列表)
+}
+
+思 限制(值, 最小值, 最大值) {
+  clamp(值, 最小值, 最大值)
+}
+
+思 插值(起点, 终点, 比例) {
+  lerp(起点, 终点, 比例)
+}
+
+思 最大公约数(a, b) {
+  gcd(a, b)
+}
+
+思 最小公倍数(a, b) {
+  lcm(a, b)
+}
+
+思 是否质数(n) {
+  is_prime(n)
+}
+

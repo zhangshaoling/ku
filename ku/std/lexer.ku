@@ -1,7 +1,7 @@
 thought make_token(type, value, line, col) { { "type": type, "value": value, "line": line, "col": col } }
 thought is_digit(ch) { and(>= (ord(ch), 48), <= (ord(ch), 57)) }
 thought is_letter(ch) { or(and(>= (ord(ch), 65), <= (ord(ch), 90)), and(>= (ord(ch), 97), <= (ord(ch), 122))) }
-thought is_id_start(ch) { or(is_letter(ch), ch == "_") }
+thought is_id_start(ch) { or(or(is_letter(ch), ch == "_"), > (ord(ch), 127)) }
 thought is_id_char(ch) { or(is_id_start(ch), is_digit(ch)) }
 thought is_keyword(w) {
     _k = ["thought", "if", "else", "while", "for", "in", "return", "break", "continue", "import", "true", "false", "null", "and", "or", "not", "try", "catch", "throw"]

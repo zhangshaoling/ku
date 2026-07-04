@@ -1,0 +1,366 @@
+// std/string.道 — 字符串操作标准库（完整版）
+// 用法: 引 "std/string" 别 str
+// 完全替换旧版本，保留原有函数并扩展新功能
+
+// ========== 原有函数 ==========
+
+// 检查字符串是否为空
+思 is_empty(s) {
+  s == "" 或 s == 空
+}
+
+// 检查字符串非空
+思 not_empty(s) {
+  非 is_empty(s)
+}
+
+// 去除空白行
+思 trim_all(lines) {
+  result = []
+  遍 line 于 str_split(lines, "\n") {
+    trimmed = str_trim(line)
+    若 not_empty(trimmed) {
+      result = result + [trimmed]
+    }
+  }
+  result
+}
+
+// 连接列表为字符串
+思 join(items, delimiter) {
+  result = ""
+  first = 真
+  遍 x 于 items {
+    若 first {
+      result = "" + x
+      first = 假
+    } 否 {
+      result = result + delimiter + x
+    }
+  }
+  result
+}
+
+// 中文别名：连接列表为字符串
+思 连接(项, 分隔符) {
+  join(项, 分隔符)
+}
+
+// 转换为字符串
+思 str(x) {
+  "" + x
+}
+
+// 按行分割
+思 lines(text) {
+  str_split(text, "\n")
+}
+
+// 检查是否包含任意字符
+思 contains_any(s, chars) {
+  found = 假
+  遍 c 于 chars {
+    若 str_contains(s, c) {
+      found = 真
+    }
+  }
+  found
+}
+
+// 批量替换
+思 replace_all(s, pairs) {
+  result = s
+  遍 pair 于 pairs {
+    result = str_replace(result, pair[0], pair[1])
+  }
+  result
+}
+
+// 截取子串
+思 substring(s, start, end) {
+  result = ""
+  i = start
+  当 i < end 且 i < len(s) {
+    result = result + s[i]
+    i = i + 1
+  }
+  result
+}
+
+// 重复字符串
+思 repeat(s, n) {
+  result = ""
+  i = 0
+  当 i < n {
+    result = result + s
+    i = i + 1
+  }
+  result
+}
+
+// 转义 JSON 字符串
+思 escape_json(s) {
+  result = str_replace(s, "\\", "\\\\")
+  result = str_replace(result, "\"", "\\\"")
+  result = str_replace(result, "\n", "\\n")
+  result = str_replace(result, "\r", "\\r")
+  result = str_replace(result, "\t", "\\t")
+  result
+}
+
+// 右填充
+思 pad_right(s, length, char) {
+  若 len(s) >= length {
+    s
+  } 否 {
+    s + repeat(char, length - len(s))
+  }
+}
+
+// 左填充
+思 pad_left(s, length, char) {
+  若 len(s) >= length {
+    s
+  } 否 {
+    repeat(char, length - len(s)) + s
+  }
+}
+
+// ========== 新增函数 ==========
+
+// 分割字符串为列表
+思 split(s, delimiter) {
+  str_split(s, delimiter)
+}
+
+// 去除首尾空白
+思 trim(s) {
+  str_trim(s)
+}
+
+// 转大写
+思 upper(s) {
+  str_upper(s)
+}
+
+// 转小写
+思 lower(s) {
+  str_lower(s)
+}
+
+// 替换子串
+思 replace(s, old, new) {
+  str_replace(s, old, new)
+}
+
+// 是否包含子串
+思 contains(s, sub) {
+  str_contains(s, sub)
+}
+
+// ========== 中文别名 ==========
+
+思 分割(文本, 分隔符) {
+  split(文本, 分隔符)
+}
+
+思 去空白(文本) {
+  trim(文本)
+}
+
+思 包含(文本, 子串) {
+  contains(文本, 子串)
+}
+
+思 替换(文本, 旧, 新) {
+  replace(文本, 旧, 新)
+}
+
+思 是否为空(文本) {
+  is_empty(文本)
+}
+
+思 非空(文本) {
+  not_empty(文本)
+}
+
+思 去空白行(文本) {
+  trim_all(文本)
+}
+
+思 转字符串(值) {
+  str(值)
+}
+
+思 按行(文本) {
+  lines(文本)
+}
+
+思 包含任一(文本, 字符集) {
+  contains_any(文本, 字符集)
+}
+
+思 全部替换(文本, 替换对) {
+  replace_all(文本, 替换对)
+}
+
+思 截取(文本, 开始, 结束) {
+  substring(文本, 开始, 结束)
+}
+
+思 重复(文本, 次数) {
+  repeat(文本, 次数)
+}
+
+思 转义JSON(文本) {
+  escape_json(文本)
+}
+
+思 右填充(文本, 长度, 字符) {
+  pad_right(文本, 长度, 字符)
+}
+
+思 左填充(文本, 长度, 字符) {
+  pad_left(文本, 长度, 字符)
+}
+
+// 是否以 prefix 开头
+思 starts_with(s, prefix) {
+  str_starts_with(s, prefix)
+}
+
+// 是否以 suffix 结尾
+思 ends_with(s, suffix) {
+  str_ends_with(s, suffix)
+}
+
+// 简单格式化: "Hello {0}, you are {1}" + ["world", 42]
+思 format(template, args) {
+  result = template
+  i = 0
+  当 i < len(args) {
+    placeholder = "{" + i + "}"
+    result = str_replace(result, placeholder, "" + args[i])
+    i = i + 1
+  }
+  result
+}
+
+// 获取指定位置的字符
+思 char_at(s, index) {
+  若 index < 0或 index >= len(s) {
+    ""
+  } 否 {
+    s[index]
+  }
+}
+
+// ASCII 码转字符
+思 chr(code) {
+  试 {
+    s = json_stringify("\\u" + pad_left("" + code, 4, "0"))
+    json_parse(s)
+  } 捕(e) {
+    ""
+  }
+}
+
+// 统计子串出现次数
+思 count_occurrences(s, sub) {
+  count = 0
+  pos = 0
+  sub_len = len(sub)
+  当 pos <= len(s) - sub_len {
+    若 str_contains(substring(s, pos, pos + sub_len), sub) {
+      count = count + 1
+      pos = pos + sub_len
+    } 否 {
+      pos = pos + 1
+    }
+  }
+  count
+}
+
+// 首字母大写
+思 capitalize(s) {
+  若 is_empty(s) {
+    s
+  } 否 {
+    upper(s[0]) + lower(substring(s, 1, len(s)))
+  }
+}
+
+// 反转字符串
+思 reverse_str(s) {
+  result = ""
+  i = len(s) - 1
+  当 i >= 0 {
+    result = result + s[i]
+    i = i - 1
+  }
+  result
+}
+
+// 检查是否为纯数字
+思 is_numeric(s) {
+  若 is_empty(s) {
+    假
+  } 否 {
+    digits = "0123456789"
+    result = 真
+    遍 ch 于 s {
+      若 非 str_contains(digits, ch) {
+        result = 假
+        断
+      }
+    }
+    result
+  }
+}
+
+// ========== 中文别名补齐 ==========
+
+思 开头是(文本, 前缀) {
+  starts_with(文本, 前缀)
+}
+
+思 结尾是(文本, 后缀) {
+  ends_with(文本, 后缀)
+}
+
+思 格式化(模板, 参数) {
+  format(模板, 参数)
+}
+
+思 取字符(文本, 位置) {
+  char_at(文本, 位置)
+}
+
+思 字符(码点) {
+  chr(码点)
+}
+
+思 出现次数(文本, 子串) {
+  count_occurrences(文本, 子串)
+}
+
+思 首字大写(文本) {
+  capitalize(文本)
+}
+
+思 反转文本(文本) {
+  reverse_str(文本)
+}
+
+思 是否数字(文本) {
+  is_numeric(文本)
+}
+
+思 大写(文本) {
+  upper(文本)
+}
+
+思 小写(文本) {
+  lower(文本)
+}
+

@@ -1,0 +1,132 @@
+// std/io.道 — 输入输出标准库
+// 用法: 引 "std/io" 别 io
+
+// 读取文件为行列表
+思 read_lines(path) {
+  content = read_file(path)
+  lines = str_split(content, "\n")
+  result = []
+  遍 line 于 lines {
+    // 保留非空行（也可以去掉这层判断保留空行）
+    result = result + [line]
+  }
+  result
+}
+
+// 写入行列表到文件
+思 write_lines(path, lines) {
+  content = ""
+  first = 真
+  遍 line 于 lines {
+    若 first {
+      content = "" + line
+      first = 假
+    } 否 {
+      content = content + "\n" + line
+    }
+  }
+  write_file(path, content)
+}
+
+// 追加内容到文件末尾
+思 append_file(path, content) {
+  existing = ""
+  若 path_exists(path) {
+    existing = read_file(path)
+  }
+  write_file(path, existing + content)
+}
+
+// 追加一行到文件
+思 append_line(path, line) {
+  existing = ""
+  若 path_exists(path) {
+    existing = read_file(path)
+    若 existing != "" {
+      existing = existing + "\n"
+    }
+  }
+  write_file(path, existing + line)
+}
+
+// 获取文件大小（字节数，近似用字符数）
+思 file_size(path) {
+  若 path_exists(path) {
+    content = read_file(path)
+    len(content)
+  } 否 {
+    0
+  }
+}
+
+// 文件是否存在（别名）
+思 file_exists(path) {
+  path_exists(path)
+}
+
+// 判断是文件还是目录
+思 is_dir(path) {
+  若 path_exists(path) {
+    files = list_dir(path)
+    type(files) == "list"
+  } 否 {
+    假
+  }
+}
+
+// 安全读取：不存在则返回默认值
+思 read_or(path, default_val) {
+  若 path_exists(path) {
+    read_file(path)
+  } 否 {
+    default_val
+  }
+}
+
+// 安全读取 JSON：不存在或解析失败返回默认值
+思 read_json_or(path, default_val) {
+  若 path_exists(path) {
+    试 {
+      text = read_file(path)
+      json_parse(text)
+    } 捕(e) {
+      default_val
+    }
+  } 否 {
+    default_val
+  }
+}
+
+// 复制文件
+思 copy_file(src, dst) {
+  若 path_exists(src) {
+    content = read_file(src)
+    write_file(dst, content)
+    真
+  } 否 {
+    假
+  }
+}
+
+// 删除文件（安全版，存在才删）
+思 safe_delete(path) {
+  若 path_exists(path) {
+    delete_file(path)
+    真
+  } 否 {
+    假
+  }
+}
+
+// 列出目录下所有 .道 文件
+思 list_道(path) {
+  all = list_dir(path)
+  result = []
+  遍 f 于 all {
+    若 str_ends_with(f, ".道") {
+      result = result + [f]
+    }
+  }
+  result
+}
+

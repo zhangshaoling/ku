@@ -143,37 +143,37 @@ def _stmt(tokens, pos, end):
         return _lit(""), pos
 
     # thought definition
-    if t["type"] == "keyword" and t["value"] == "thought":
+    if t["type"] == "keyword" and t["value"] in ("thought", "思"):
         return _parse_thought(tokens, pos + 1, end)
 
     # if
-    if t["type"] == "keyword" and t["value"] == "if":
+    if t["type"] == "keyword" and t["value"] in ("if", "若"):
         return _parse_if(tokens, pos + 1, end)
 
     # while
-    if t["type"] == "keyword" and t["value"] == "while":
+    if t["type"] == "keyword" and t["value"] in ("while", "当"):
         return _parse_while(tokens, pos + 1, end)
 
     # for
-    if t["type"] == "keyword" and t["value"] == "for":
+    if t["type"] == "keyword" and t["value"] in ("for", "遍"):
         return _parse_for(tokens, pos + 1, end)
 
     # return
-    if t["type"] == "keyword" and t["value"] == "return":
+    if t["type"] == "keyword" and t["value"] in ("return", "返"):
         return _parse_return(tokens, pos + 1, end)
 
     # break / continue
-    if t["type"] == "keyword" and t["value"] == "break":
+    if t["type"] == "keyword" and t["value"] in ("break", "断"):
         return _node("break", "", []), pos + 1
-    if t["type"] == "keyword" and t["value"] == "continue":
+    if t["type"] == "keyword" and t["value"] in ("continue", "续"):
         return _node("continue", "", []), pos + 1
 
     # try/catch
-    if t["type"] == "keyword" and t["value"] == "try":
+    if t["type"] == "keyword" and t["value"] in ("try", "试"):
         return _parse_try(tokens, pos + 1, end)
 
     # throw
-    if t["type"] == "keyword" and t["value"] == "throw":
+    if t["type"] == "keyword" and t["value"] in ("throw", "抛"):
         val, new_pos = _expr(tokens, pos + 1, end)
         return _node("throw", "", [val]), new_pos
 
@@ -257,14 +257,16 @@ def _parse_if(tokens, pos, end):
     brace_pos = _find_brace(tokens, pos, end)
     cond, _ = _expr(tokens, pos, brace_pos)
     then_b, pos = _parse_brace(tokens, brace_pos, end)
-    # skip newlines after }
-    while pos < end and _peek(tokens, pos)["type"] == "newline":
-        pos += 1
-    # else / else if
-    t = _peek(tokens, pos)
+    close_tok = _peek(tokens, pos - 1)
     else_b = None
+
+    # explicit else may start on the next line
+    else_pos = pos
+    while else_pos < end and _peek(tokens, else_pos)["type"] == "newline":
+        else_pos += 1
+    t = _peek(tokens, else_pos)
     if t["type"] == "keyword" and t["value"] == "else":
-        pos += 1  # skip 'else'
+        pos = else_pos + 1  # skip 'else'
         while pos < end and _peek(tokens, pos)["type"] == "newline":
             pos += 1
         t2 = _peek(tokens, pos)
@@ -274,8 +276,9 @@ def _parse_if(tokens, pos, end):
         elif t2["value"] == "{":
             else_b, pos = _parse_brace(tokens, pos, end)
     elif t["value"] == "{":
-        # implicit else: } {
-        else_b, pos = _parse_brace(tokens, pos, end)
+        # implicit else is only the compact form: } { ... }
+        if t.get("line") == close_tok.get("line"):
+            else_b, pos = _parse_brace(tokens, pos, end)
     return _ifnode(cond, then_b, else_b), pos
 
 
@@ -314,6 +317,7 @@ def _parse_for(tokens, pos, end):
     var = _peek(tokens, pos)["value"]
     pos += 1
     pos = _skip(tokens, pos, "keyword", "in")
+    pos = _skip(tokens, pos, "keyword", "于")
     brace_pos = _find_brace(tokens, pos, end)
     iterable, _ = _expr(tokens, pos, brace_pos)
     body, pos = _parse_brace(tokens, brace_pos, end)
@@ -333,7 +337,7 @@ def _parse_return(tokens, pos, end):
 def _parse_try(tokens, pos, end):
     try_body, pos = _parse_brace(tokens, pos, end)
     t = _peek(tokens, pos)
-    if t["type"] == "keyword" and t["value"] == "catch":
+    if t["type"] == "keyword" and t["value"] in ("catch", "捕"):
         pos += 1
         catch_var = _peek(tokens, pos)["value"] if _peek(tokens, pos)["type"] == "name" else ""
         if _peek(tokens, pos)["type"] == "name":
@@ -459,21 +463,21 @@ def _prefix(tokens, pos, end):
 
     # true/false/null
     if t["type"] == "keyword":
-        if t["value"] == "true":
+        if t["value"] in ("true", "真"):
             return _lit(True), pos + 1
-        if t["value"] == "false":
+        if t["value"] in ("false", "假"):
             return _lit(False), pos + 1
-        if t["value"] == "null":
+        if t["value"] in ("null", "空"):
             return _lit(""), pos + 1
-        # and/or/not used as function calls: and(a, b)
-        if t["value"] in ("and", "or", "not") and pos + 1 < end:
+        # and/or/not used as function calls: and(a, b) / 且(a, b)
+        if t["value"] in ("and", "or", "not", "且", "或", "非") and pos + 1 < end:
             next_t = _peek(tokens, pos + 1)
             if next_t["value"] == "(":
                 args, new_pos = _parse_call_args(tokens, pos + 1, end)
                 return _call(t["value"], args), new_pos
 
-        # if expression: if (cond) { then } { else }
-        if t["value"] == "if":
+        # if expression: if (cond) { then } { else } / 若 (cond) { then } { else }
+        if t["value"] in ("if", "若"):
             return _parse_if_expr(tokens, pos + 1, end)
 
     # name

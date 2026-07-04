@@ -61,7 +61,7 @@ def run_ku_parser(tokens):
     return result
 
 
-def test_single(name, source):
+def compare_single(name, source):
     tokens = lex(source)
     py_ast = py_parse(tokens)
 
@@ -88,7 +88,7 @@ if __name__ == "__main__":
     errors = []
     for name, source in TESTS.items():
         try:
-            msg, ok = test_single(name, source)
+            msg, ok = compare_single(name, source)
         except Exception as e:
             msg = f"ERR  [{name}]: {e}"
             ok = False

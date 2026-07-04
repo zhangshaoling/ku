@@ -1,0 +1,96 @@
+// tool_registry.ku - Tool registry & dispatch
+// Functional style: state passed explicitly, no module-level globals.
+// 方案B: dicts built incrementally (no multi-pair literals in 若 blocks).
+// Note: std/string.ku shadows builtin str() with "" + x (string-only).
+// Use str_format("{}", [x]) for int-to-string conversion.
+// Note: try/catch catches ReturnSignal, so handlers cannot use 返 inside try.
+// Workaround: call handlers directly without try/catch in call_tool.
+
+思 make_registry() {
+    r = {}
+    r
+}
+
+思 reg_add(reg, name, handler, desc) {
+    entry = {}
+    entry["name"] = name
+    entry["handler"] = handler
+    entry["desc"] = desc
+    entry["calls"] = 0
+    entry["errors"] = 0
+    reg[name] = entry
+    print("[TOOL] registered: " + name)
+    reg
+}
+
+思 reg_get(reg, name) {
+    reg[name]
+}
+
+思 reg_list(reg) {
+    keys(reg)
+}
+
+思 call_tool(reg, name, args) {
+    tool = reg[name]
+    若 tool == 空 {
+        print("[ERROR] tool not found: " + name)
+        返 空
+    }
+    tool["calls"] = tool["calls"] + 1
+    r = tool["handler"](args)
+    r
+}
+
+思 __tool_read(args) {
+    p = args["path"]
+    若 path_exists(p) {
+        read_file(p)
+    } 否 {
+        "not found: " + p
+    }
+}
+
+思 __tool_write(args) {
+    write_file(args["path"], args["content"])
+    "written: " + args["path"]
+}
+
+思 __tool_list(args) { list_dir(args["path"]) }
+
+思 __tool_exec(args) { system(args["cmd"]) }
+
+思 __tool_http(args) { http_get(args["url"], {}) }
+
+思 init_builtin_tools() {
+    reg = make_registry()
+    reg = reg_add(reg, "read_file", __tool_read, "read file")
+    reg = reg_add(reg, "write_file", __tool_write, "write file")
+    reg = reg_add(reg, "list_dir", __tool_list, "list dir")
+    reg = reg_add(reg, "exec", __tool_exec, "exec cmd")
+    reg = reg_add(reg, "http_get", __tool_http, "http get")
+    print("[INIT] builtin tools registered")
+    reg
+}
+
+思 test_tool_registry() {
+    reg = init_builtin_tools()
+
+    args1 = {}
+    args1["path"] = "dao/tool_registry.ku"
+    content = call_tool(reg, "read_file", args1)
+    print("--- read length: " + str_format("{}", [len(content)]))
+
+    args2 = {}
+    args2["path"] = "dao/_test_output.txt"
+    args2["content"] = "hello from tool_registry"
+    result = call_tool(reg, "write_file", args2)
+    print("--- write: " + result)
+
+    read_back = call_tool(reg, "read_file", args2)
+    print("--- read back: " + read_back)
+
+    delete_file("dao/_test_output.txt")
+    print("[TEST] tool_registry OK")
+    "ok"
+}
