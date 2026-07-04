@@ -1,0 +1,156 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Ku",
+  "scopeName": "source.ku",
+  "fileTypes": [
+    "ku"
+  ],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#imports"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#declarations"
+    },
+    {
+      "include": "#builtins"
+    },
+    {
+      "include": "#operators"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.ku",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.ku",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.ku",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.ku",
+              "match": "\\\\(?:[\\\\\"nrt]|u[0-9A-Fa-f]{4})"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.ku",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            {
+              "name": "constant.character.escape.ku",
+              "match": "\\\\(?:[\\\\'nrt]|u[0-9A-Fa-f]{4})"
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.ku",
+          "match": "\\b(?:0x[0-9A-Fa-f]+|\\d+(?:\\.\\d+)?)\\b"
+        }
+      ]
+    },
+    "imports": {
+      "patterns": [
+        {
+          "name": "keyword.control.import.ku",
+          "match": "\\b(?:import|from|as)\\b|引|别"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.ku",
+          "match": "\\b(?:if|else|while|for|in|return|break|continue|try|catch|throw)\\b"
+        },
+        {
+          "name": "storage.type.ku",
+          "match": "\\b(?:thought|let|fn|self)\\b"
+        },
+        {
+          "name": "constant.language.ku",
+          "match": "\\b(?:true|false|null|None)\\b"
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "name": "meta.function.thought.ku",
+          "match": "\\b(thought)\\s+([A-Za-z_\\u4e00-\\u9fff][A-Za-z0-9_\\u4e00-\\u9fff]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.ku"
+            },
+            "2": {
+              "name": "entity.name.function.ku"
+            }
+          }
+        },
+        {
+          "name": "meta.function.anonymous.ku",
+          "match": "\\b(fn)\\s*(?=\\()",
+          "captures": {
+            "1": {
+              "name": "storage.type.function.ku"
+            }
+          }
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.ku",
+          "match": "\\b(?:print|len|map|filter|sum|range|append|typeof|inspect|rewrite)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "variable.language.self.ku",
+          "match": "\\bself\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.pipe.ku",
+          "match": "\\|"
+        },
+        {
+          "name": "keyword.operator.assignment.ku",
+          "match": "(?:==|!=|<=|>=|=|<|>|\\+|-|\\*|/|%)"
+        }
+      ]
+    }
+  }
+}
