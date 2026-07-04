@@ -114,6 +114,52 @@ def test_dao_mcp_server_lists_and_calls_tools():
             proc.kill()
 
 
+def test_dao_mcp_server_exposes_golden_path_as_default_tool():
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "dao.mcp_server"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    try:
+        send_request(
+            proc,
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "pytest", "version": "0"},
+            },
+        )
+        send_notification(proc, "notifications/initialized")
+
+        listed = send_request(proc, 2, "tools/list")
+        names = {tool["name"] for tool in listed["result"]["tools"]}
+        assert "ku_golden_path" in names
+
+        result = send_request(proc, 3, "tools/call", {"name": "ku_golden_path", "arguments": {}})
+        assert tool_text(result) == {
+            "result": {
+                "thought": "加一",
+                "code": "thought",
+                "memory": "thought = code = memory",
+                "result": 42,
+            }
+        }
+    finally:
+        if proc.stdin:
+            proc.stdin.close()
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
 def test_dao_mcp_server_can_expose_thought_tools_explicitly():
     proc = subprocess.Popen(
         [sys.executable, "-m", "dao.mcp_server", "--expose-thought-tools"],
