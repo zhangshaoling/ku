@@ -1140,7 +1140,9 @@ def test_c_vm_executes_committed_frontend_compile_demo_file(c_vm_cmd):
 
 def test_c_vm_bootstrap_cli_compiles_and_runs_ku_source(c_vm_cmd, tmp_path):
     bootstrap_path = ROOT / "demos" / "frontend_bootstrap.kub.json"
-    source_path = tmp_path / "加一.ku"
+    # Keep the path ASCII: Windows native argv can still pass non-ASCII file
+    # names to the C VM as "??" on CI, while the source contents remain UTF-8.
+    source_path = tmp_path / "increment.ku"
     source_path.write_text(
         "思 加一(数) {\n"
         "  数 + 1\n"
