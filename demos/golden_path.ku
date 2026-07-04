@@ -1,0 +1,26 @@
+// Golden path demo for Ku / Dao.
+// This source is intentionally small and executable through:
+//   dao_core --bootstrap demos/frontend_bootstrap.kub.json demos/golden_path.ku
+// It demonstrates the current real path: Dao source -> frontend -> bytecode -> C VM.
+
+思 记忆化思(名字, 输入, 输出) {
+  {
+    "kind": "thought-memory",
+    "name": 名字,
+    "input": 输入,
+    "output": 输出,
+    "equation": "thought = code = memory"
+  }
+}
+
+源码 = "思 加一(数) { 数 + 1 }"
+抽象树 = parse(源码)
+结果 = 41 + 1
+记忆 = 记忆化思("加一", 41, 结果)
+
+{
+  "thought": 记忆["name"],
+  "code": 抽象树["type"],
+  "memory": 记忆["equation"],
+  "result": 记忆["output"]
+}
