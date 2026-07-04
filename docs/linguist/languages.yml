@@ -1,0 +1,14 @@
+# Candidate GitHub Linguist entry for Ku.
+#
+# This file is not consumed by this repository directly. It is kept here as the
+# review-ready snippet for a future PR to github-linguist/linguist once Ku/Dao's
+# syntax and public examples have stabilized.
+
+Ku:
+  type: programming
+  color: "#cba6f7"
+  extensions:
+    - ".ku"
+  tm_scope: source.ku
+  ace_mode: text
+  language_id: 0

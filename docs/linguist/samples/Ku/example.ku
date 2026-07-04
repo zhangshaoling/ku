@@ -1,0 +1,36 @@
+// Ku / Dao sample for future GitHub Linguist submission.
+// It intentionally exercises thoughts, self-rewriting, imports, pipes,
+// anonymous functions, strings, numbers, comments, and Chinese module aliases.
+
+引 "std/math" 别 Math
+
+thought greet(name) {
+  return "Hello, " + name + "!"
+}
+
+thought fibonacci(n) {
+  if (n <= 1) {
+    return n
+  }
+  return fibonacci(n - 1) + fibonacci(n - 2)
+}
+
+thought counter {
+  let count = 0
+  self.count = count + 1
+  return count
+}
+
+thought squares_total(values) {
+  return values
+    | filter(fn(x) { x > 2 })
+    | map(fn(x) { x * x })
+    | sum()
+}
+
+thought main {
+  let message = greet("World")
+  let fib = fibonacci(10)
+  let total = squares_total([1, 2, 3, 4, 5])
+  return message + " fib=" + fib + " total=" + total
+}
