@@ -349,6 +349,23 @@ def main():
 
     tool_handlers["ku_list_thoughts"] = handle_list_thoughts
 
+    tool_definitions.append({
+        "name": "ku_golden_path",
+        "description": "Run the checked-in Dao golden path demo through the C VM: source -> frontend -> bytecode -> result",
+        "inputSchema": {"type": "object", "properties": {}},
+    })
+
+    def handle_golden_path(arguments):
+        demo_path = os.path.join(os.path.dirname(KU_DIR), "demos", "golden_path.ku")
+        with open(demo_path, "r", encoding="utf-8") as f:
+            source = f.read()
+        result = c_vm_runtime.eval_code(source, profile="frontend")
+        if not result.ok:
+            raise RuntimeError(result.error or result.stderr or result.stdout or "C VM execution failed")
+        return simplify_result(result.value)
+
+    tool_handlers["ku_golden_path"] = handle_golden_path
+
     # ── 经验记忆网关工具 ──
     # 让运行中的智能体把“尝试了什么 / 缺什么 / 下一步补什么”落库，
     # 而不是只在对话里说。底层是 dao/std/experience.ku（SQLite）。
