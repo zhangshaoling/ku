@@ -21,6 +21,9 @@ Its purpose is narrower: make a thought writable as source, inspectable as
 structured code, persistent as memory, executable by the C VM, and callable by
 agents through MCP.
 
+The long-term AGI memory direction is defined in
+`docs/AGI_EXECUTABLE_MEMORY_ROADMAP.md`.
+
 ## Names
 
 - **Ku** is the public package name, repository lineage, and historical language
