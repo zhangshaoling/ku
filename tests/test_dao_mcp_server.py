@@ -247,6 +247,79 @@ def test_ku_call_preserves_string_arguments():
             proc.kill()
 
 
+def test_default_mcp_execution_does_not_call_python_thought(tmp_path):
+    sitecustomize = tmp_path / "sitecustomize.py"
+    sitecustomize.write_text(
+        """
+import dao.runtime
+
+
+def fail_if_called(self, args=None, env=None):
+    raise AssertionError("default MCP execution called Python Thought.call")
+
+
+dao.runtime.Thought.call = fail_if_called
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    env = dict(os.environ)
+    env.pop("DAO_MCP_ALLOW_PYTHON_FALLBACK", None)
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        str(tmp_path)
+        if not existing_pythonpath
+        else str(tmp_path) + os.pathsep + existing_pythonpath
+    )
+
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "dao.mcp_server"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    try:
+        send_request(
+            proc,
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "pytest", "version": "0"},
+            },
+        )
+        send_notification(proc, "notifications/initialized")
+
+        eval_result = send_request(
+            proc,
+            2,
+            "tools/call",
+            {"name": "ku_eval", "arguments": {"code": "1 + 2"}},
+        )
+        assert tool_text(eval_result) == {"result": 3}
+
+        call_result = send_request(
+            proc,
+            3,
+            "tools/call",
+            {"name": "ku_call", "arguments": {"name": "is_numeric", "arguments": {"s": "12345"}}},
+        )
+        assert tool_text(call_result) == {"result": True}
+    finally:
+        if proc.stdin:
+            proc.stdin.close()
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
 def test_ku_eval_surfaces_sqlite_errors_as_tool_errors():
     proc = subprocess.Popen(
         [sys.executable, "-m", "dao.mcp_server"],
