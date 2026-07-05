@@ -19,8 +19,38 @@ A thought is simultaneously:
 - executable behavior
 - inspectable structure
 - persistent memory
+- structured data
 - composable tool surface
 - material that can eventually rewrite itself
+
+## 1.1 Dao Identity Law
+
+Dao must not become Python with Chinese keywords.
+
+The language's native object is not "a function plus variables." The native
+object is a Dao thought-memory:
+
+```text
+Dao source = executable thought = durable memory = structured data
+```
+
+That means new syntax, standard-library APIs, MCP tools, and storage schemas
+should prefer one unified lifecycle:
+
+```text
+write thought
+  -> inspect as structure
+  -> persist as memory
+  -> recall as data
+  -> execute in the C VM
+  -> expose as a tool
+  -> revise into a new thought
+```
+
+Do not copy Python concepts just because they are familiar. A proposed feature
+must explain how it helps Dao make memory executable, code persistent, or data
+callable. If it only recreates Python classes, modules, decorators, exceptions,
+or package habits without serving this lifecycle, it is not a Dao feature yet.
 
 ## 2. Naming Law
 
