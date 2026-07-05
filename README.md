@@ -45,6 +45,8 @@ The project has moved beyond the early Python prototype:
   and MCP.
 - SQLite-backed experience memory, task queues, gaps, datasets, and data memory
   records persist under `DAO_DATA_DIR`.
+- Selected memory records can be promoted into callable thought/tool candidates
+  through the C VM-backed MCP path.
 - MCP tools use the C VM by default; Python semantic fallback is opt-in only for
   parity/debug work.
 
@@ -114,6 +116,14 @@ Build the C VM:
 .\tools\build_dao_core.ps1
 ```
 
+The checked-in golden path demo is `demos/golden_path.ku`. It exercises the
+current source -> frontend -> bytecode -> C VM path and is covered by:
+
+```powershell
+.\tools\verify_module.ps1 c-vm
+.\tools\verify_module.ps1 mcp
+```
+
 ## MCP
 
 Run the MCP server:
@@ -123,8 +133,9 @@ python -m dao.mcp_server
 ```
 
 The default `ku_eval`, `ku_call`, `ku_golden_path`, and experience-memory tools
-run through the C VM gateway. If the C VM binary is missing, `ku_eval` fails
-loudly by default.
+run through the C VM gateway. Memory recall and promotion are exposed through
+`ku_recall_memory`, `ku_promote_memory`, and `ku_call_memory`. If the C VM
+binary is missing, `ku_eval` fails loudly by default.
 
 Python fallback for `ku_eval` is reserved for debug/parity work:
 
