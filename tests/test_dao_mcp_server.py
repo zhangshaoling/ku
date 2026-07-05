@@ -59,6 +59,7 @@ def test_dao_mcp_server_lists_and_calls_tools():
             "ku_record_gap",
             "ku_list_gaps",
             "ku_search_experience",
+            "ku_recall_memory",
             "ku_record_dataset",
             "ku_record_data_memory",
         }.issubset(names)

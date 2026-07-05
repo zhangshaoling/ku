@@ -137,6 +137,8 @@ Current state:
 - Gaps, datasets, data memories, and gap-to-task links run through C VM-backed
   MCP tools.
 - UTF-8 topic storage is covered.
+- Fast memory recall is backed by a SQLite FTS index and exposed through
+  `ku_recall_memory`.
 
 Remaining:
 

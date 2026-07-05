@@ -149,6 +149,54 @@ def test_experience_memory_roundtrip_and_persistence(tmp_path):
         _close(proc2)
 
 
+def test_memory_recall_uses_fts_and_preserves_utf8(tmp_path):
+    data_dir = tmp_path / "dao_data"
+
+    proc = _spawn(data_dir)
+    try:
+        _init(proc)
+
+        _text(_req(proc, 2, "tools/call", {"name": "ku_record_data_memory", "arguments": {
+            "topic": "AGI 长期记忆",
+            "key": "项目方向",
+            "value_json": "{\"rule\":\"代码等于记忆等于数据\"}",
+            "tags": "agi,memory,dao",
+        }}))
+        _text(_req(proc, 3, "tools/call", {"name": "ku_record_gap", "arguments": {
+            "topic": "临时缺口",
+            "context": "不会被 data_memory 召回",
+            "missing": "无",
+            "next_action": "无",
+            "tags": "gap",
+        }}))
+
+        recalled = _text(_req(proc, 4, "tools/call", {"name": "ku_recall_memory", "arguments": {
+            "query": "长期记忆",
+            "kind": "data_memory",
+            "limit": 5,
+        }}))
+        assert recalled["count"] == 1
+        assert recalled["query"] == "长期记忆"
+        assert recalled["kind"] == "data_memory"
+        assert recalled["memories"][0]["topic"] == "AGI 长期记忆"
+        assert recalled["memories"][0]["context"] == "项目方向"
+        assert recalled["memories"][0]["tags"] == ["agi", "memory", "dao"]
+
+        recent = _text(_req(proc, 5, "tools/call", {"name": "ku_recall_memory", "arguments": {
+            "query": "",
+            "limit": 10,
+        }}))
+        assert recent["count"] >= 2
+    finally:
+        _close(proc)
+
+    with sqlite3.connect(data_dir / "experience.db") as conn:
+        fts_table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'experience_fts'"
+        ).fetchone()
+    assert fts_table is not None
+
+
 def test_experience_db_lands_in_dao_data_dir(tmp_path):
     data_dir = tmp_path / "dao_data"
     proc = _spawn(data_dir)

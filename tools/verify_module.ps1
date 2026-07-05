@@ -205,6 +205,15 @@ assert recorded.ok, recorded.error or recorded.stderr or recorded.stdout
 listed = rt.call_thought("gap_list_open", [20], params=["limit"], profile="memory")
 assert listed.ok, listed.error or listed.stderr or listed.stdout
 assert any(row.get("topic") == topic for row in listed.value.get("gaps", []))
+
+recalled = rt.call_thought(
+    "memory_recall",
+    [topic, "gap", 10],
+    params=["query", "kind", "limit"],
+    profile="memory",
+)
+assert recalled.ok, recalled.error or recalled.stderr or recalled.stdout
+assert any(row.get("topic") == topic for row in recalled.value.get("memories", []))
 print("memory ok")
 '@
         $tmp = Join-Path $Root "scratch\verify_module_memory.py"

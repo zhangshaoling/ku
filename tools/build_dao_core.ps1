@@ -13,7 +13,7 @@ if ($OutDir -and -not (Test-Path $OutDir)) {
     New-Item -ItemType Directory -Path $OutDir | Out-Null
 }
 
-$Inputs = @($Source, $SqliteSource, $SqliteHeader)
+$Inputs = @($Source, $SqliteSource, $SqliteHeader, $MyInvocation.MyCommand.Path)
 if ((Test-Path $OutPath) -and ($Inputs | ForEach-Object { Test-Path $_ } | Where-Object { -not $_ } | Measure-Object).Count -eq 0) {
     $OutTime = (Get-Item $OutPath).LastWriteTimeUtc
     $NewestInput = ($Inputs | ForEach-Object { (Get-Item $_).LastWriteTimeUtc } | Sort-Object -Descending | Select-Object -First 1)
@@ -48,7 +48,7 @@ function Invoke-GccBuild {
             $env:PATH = "$MsysUsrBin;$GccBin;$env:PATH"
         }
 
-        & $GccPath -o $OutPath $Source $SqliteSource -lm -Wall -O2
+        & $GccPath -DSQLITE_ENABLE_FTS5 -o $OutPath $Source $SqliteSource -lm -Wall -O2
         return $LASTEXITCODE
     } finally {
         $env:PATH = $oldPath
@@ -69,7 +69,7 @@ foreach ($GccPath in $GccCandidates) {
 
 $cl = Get-Command cl -ErrorAction SilentlyContinue
 if ($cl) {
-    & $cl.Source /nologo /O2 /Fe:$OutPath $Source $SqliteSource
+    & $cl.Source /nologo /O2 /DSQLITE_ENABLE_FTS5 /Fe:$OutPath $Source $SqliteSource
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }

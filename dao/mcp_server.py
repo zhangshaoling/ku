@@ -324,6 +324,7 @@ def main():
             "gap_list_open",
             "gap_resolve",
             "experience_search",
+            "memory_recall",
             "experience_stats",
             "gap_to_task",
             "init_db",
@@ -507,6 +508,28 @@ def main():
         ])
 
     tool_handlers["ku_search_experience"] = handle_search_experience
+
+    tool_definitions.append({
+        "name": "ku_recall_memory",
+        "description": "Recall persisted Dao experience/data memories through the C VM-backed memory index",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Recall query; empty returns recent memories"},
+                "kind": {"type": "string", "description": "Optional kind filter"},
+                "limit": {"type": "integer", "description": "Maximum memories to return, default 10"},
+            },
+        },
+    })
+
+    def handle_recall_memory(arguments):
+        return call_c_vm_memory_thought("memory_recall", [
+            arguments.get("query"),
+            arguments.get("kind"),
+            coerce_arg(arguments.get("limit", 10)),
+        ])
+
+    tool_handlers["ku_recall_memory"] = handle_recall_memory
 
     tool_definitions.append({
         "name": "ku_record_dataset",
