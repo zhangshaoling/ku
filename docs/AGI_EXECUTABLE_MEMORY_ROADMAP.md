@@ -57,6 +57,8 @@ stage:
 - Python semantic fallback is explicit debug behavior, not the default path.
 - Experience memory, gaps, datasets, data memories, and task queues persist
   under `DAO_DATA_DIR`.
+- C VM-backed memory recall is exposed through an FTS-backed
+  `ku_recall_memory` MCP tool.
 - SQLite is the current durable store. It is acceptable as the first memory
   substrate and can later be joined by FTS, graph, vector, or distributed stores.
 
@@ -131,13 +133,12 @@ Required capabilities:
 
 The next implementation work should stay narrow:
 
-1. Add a C VM-backed `memory_recall` path.
-2. Add SQLite FTS for fast text search over experience/data memories.
-3. Add MCP tools for memory record and recall with clear schemas.
-4. Add memory promotion: record -> stable thought/tool candidate.
-5. Add callable-memory tests proving a persisted record can become a callable
+1. Harden memory recall scoring, filters, and explainability.
+2. Add MCP tools for memory promotion with clear schemas.
+3. Add memory promotion: record -> stable thought/tool candidate.
+4. Add callable-memory tests proving a persisted record can become a callable
    surface.
-6. Only then expand syntax or higher-level AGI behavior.
+5. Only then expand syntax or higher-level AGI behavior.
 
 ## 6. Non-Goals For Now
 

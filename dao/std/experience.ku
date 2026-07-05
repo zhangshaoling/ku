@@ -35,6 +35,8 @@
   conn = sqlite_open(_exp_db())
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience (id TEXT PRIMARY KEY, kind TEXT NOT NULL, topic TEXT DEFAULT '', context TEXT DEFAULT '', input TEXT DEFAULT '', output TEXT DEFAULT '', missing TEXT DEFAULT '', next_action TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'open', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience_link (id TEXT PRIMARY KEY, experience_id TEXT NOT NULL, task_id TEXT DEFAULT '', thought_name TEXT DEFAULT '', dataset_id TEXT DEFAULT '', created_at TEXT NOT NULL)")
+  sqlite_exec(conn, "CREATE VIRTUAL TABLE IF NOT EXISTS experience_fts USING fts5(id UNINDEXED, kind, topic, context, input, output, missing, next_action, tags)")
+  sqlite_exec(conn, "INSERT INTO experience_fts (id, kind, topic, context, input, output, missing, next_action, tags) SELECT id, kind, topic, context, input, output, missing, next_action, tags_json FROM experience WHERE NOT EXISTS (SELECT 1 FROM experience_fts WHERE experience_fts.id = experience.id)")
   sqlite_close(conn)
   {"ok": 真, "db": _exp_db()}
 }
@@ -66,6 +68,7 @@
 
   conn = sqlite_open(_exp_db())
   sqlite_exec(conn, "INSERT INTO experience (id, kind, topic, context, input, output, missing, next_action, status, tags_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)", [rec_id, kind, topic, context, input, output, missing, next_action, tags_json, ts, ts])
+  sqlite_exec(conn, "INSERT INTO experience_fts (id, kind, topic, context, input, output, missing, next_action, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [rec_id, kind, topic, context, input, output, missing, next_action, tags_json])
   sqlite_close(conn)
 
   {"id": rec_id, "kind": kind, "status": "open", "created_at": ts}
@@ -164,6 +167,32 @@
   }
   sqlite_close(conn)
   {"results": _exp_rows(rows), "count": len(_exp_rows(rows))}
+}
+
+// ── 快速召回记忆（FTS 优先；空 query 返回最近记忆）──
+思 memory_recall(query, kind, limit) {
+  若 is_none(query) { query = "" }
+  若 is_none(kind) { kind = "" }
+  若 is_none(limit) { limit = 10 }
+
+  experience_init()
+  conn = sqlite_open(_exp_db())
+
+  若 str_is_empty(query) {
+    若 str_is_empty(kind) {
+      rows = sqlite_query(conn, "SELECT * FROM experience ORDER BY created_at DESC LIMIT ?", [limit])
+    } {
+      rows = sqlite_query(conn, "SELECT * FROM experience WHERE kind = ? ORDER BY created_at DESC LIMIT ?", [kind, limit])
+    }
+  } {
+    若 str_is_empty(kind) {
+      rows = sqlite_query(conn, "SELECT e.* FROM experience_fts f JOIN experience e ON e.id = f.id WHERE experience_fts MATCH ? ORDER BY bm25(experience_fts), e.created_at DESC LIMIT ?", [query, limit])
+    } {
+      rows = sqlite_query(conn, "SELECT e.* FROM experience_fts f JOIN experience e ON e.id = f.id WHERE experience_fts MATCH ? AND e.kind = ? ORDER BY bm25(experience_fts), e.created_at DESC LIMIT ?", [query, kind, limit])
+    }
+  }
+  sqlite_close(conn)
+  {"memories": _exp_rows(rows), "count": len(_exp_rows(rows)), "query": query, "kind": kind}
 }
 
 // ── 经验统计 ──
