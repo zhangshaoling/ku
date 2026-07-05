@@ -79,6 +79,39 @@ def test_memory_profile_experience_roundtrip(runtime, tmp_path):
     assert any(row["topic"] == "M4.5" for row in gaps["gaps"])
 
 
+def test_memory_profile_preserves_utf8_through_sqlite(runtime, tmp_path):
+    data_dir = tmp_path / "dao_data"
+    topic = "\u5ba1\u8ba1"
+
+    direct = runtime.eval_code(
+        (
+            'db = sqlite_open(dao_data_path("utf8.db"))\n'
+            'sqlite_exec(db, "CREATE TABLE IF NOT EXISTS probe (x TEXT)", [])\n'
+            'sqlite_exec(db, "DELETE FROM probe", [])\n'
+            f'sqlite_exec(db, "INSERT INTO probe VALUES (?)", ["{topic}"])\n'
+            'rows = sqlite_query(db, "SELECT x FROM probe", [])\n'
+            "sqlite_close(db)\n"
+            'rows[0]["x"]\n'
+        ),
+        profile="frontend",
+        data_dir=data_dir,
+    )
+    assert assert_ok(direct) == topic
+
+    recorded = runtime.call_thought(
+        "gap_record",
+        [topic, "\u8fd0\u884c\u65f6\u89c2\u5bdf", "\u4e2d\u6587\u7ecf\u9a8c\u8bb0\u5fc6", "\u4fdd\u6301 UTF-8 \u5f80\u8fd4", "utf8,sqlite"],
+        params=["topic", "context", "missing", "next_action", "tags"],
+        profile="memory",
+        data_dir=data_dir,
+    )
+    assert_ok(recorded)
+
+    listed = runtime.call_thought("gap_list_open", [20], params=["limit"], profile="memory", data_dir=data_dir)
+    gaps = assert_ok(listed)
+    assert any(row["topic"] == topic for row in gaps["gaps"])
+
+
 def test_runtime_error_shape_for_unknown_thought(runtime):
     result = runtime.call_thought("不存在的思", [], params=[], profile="frontend")
     assert not result.ok

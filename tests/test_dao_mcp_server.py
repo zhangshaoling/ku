@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 
@@ -279,6 +280,96 @@ def test_ku_eval_surfaces_sqlite_errors_as_tool_errors():
         )
         assert result["error"]["code"] == -32603
         assert "no such table: missing_table" in result["error"]["message"]
+    finally:
+        if proc.stdin:
+            proc.stdin.close()
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def test_ku_eval_requires_explicit_python_fallback_when_c_vm_missing(tmp_path):
+    env = dict(os.environ)
+    env["DAO_CVM_BINARY"] = str(tmp_path / "missing_dao_core.exe")
+    env.pop("DAO_MCP_ALLOW_PYTHON_FALLBACK", None)
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "dao.mcp_server"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    try:
+        send_request(
+            proc,
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "pytest", "version": "0"},
+            },
+        )
+        send_notification(proc, "notifications/initialized")
+
+        result = send_request(
+            proc,
+            2,
+            "tools/call",
+            {"name": "ku_eval", "arguments": {"code": "1 + 2"}},
+        )
+        assert result["error"]["code"] == -32603
+        assert "C VM binary not found" in result["error"]["message"]
+        assert "DAO_MCP_ALLOW_PYTHON_FALLBACK=1" in result["error"]["message"]
+    finally:
+        if proc.stdin:
+            proc.stdin.close()
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def test_ku_eval_python_fallback_is_debug_opt_in(tmp_path):
+    env = dict(os.environ)
+    env["DAO_CVM_BINARY"] = str(tmp_path / "missing_dao_core.exe")
+    env["DAO_MCP_ALLOW_PYTHON_FALLBACK"] = "1"
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "dao.mcp_server"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    try:
+        send_request(
+            proc,
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "pytest", "version": "0"},
+            },
+        )
+        send_notification(proc, "notifications/initialized")
+
+        result = send_request(
+            proc,
+            2,
+            "tools/call",
+            {"name": "ku_eval", "arguments": {"code": "1 + 2"}},
+        )
+        assert tool_text(result) == {"result": 3}
     finally:
         if proc.stdin:
             proc.stdin.close()

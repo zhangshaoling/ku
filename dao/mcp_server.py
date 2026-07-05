@@ -32,6 +32,10 @@ from dao.runtime import DaoEnv, Thought, Node, parse_道, _parse_expr
 from dao.c_vm_runtime import CVMRuntime
 
 
+def env_flag(name):
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 # ── MCP Protocol helpers ──
 
 @contextlib.contextmanager
@@ -160,7 +164,11 @@ def main():
     # 构建 tool 定义和处理器
     tool_definitions = []
     tool_handlers = {}
-    c_vm_runtime = CVMRuntime()
+    c_vm_runtime = CVMRuntime(
+        binary=os.environ.get("DAO_CVM_BINARY") or None,
+        bootstrap=os.environ.get("DAO_CVM_BOOTSTRAP") or None,
+    )
+    allow_python_fallback = env_flag("DAO_MCP_ALLOW_PYTHON_FALLBACK")
 
     def simplify_result(result):
         if isinstance(result, (str, int, float, bool, type(None))):
@@ -232,7 +240,13 @@ def main():
                 raise RuntimeError(result.error or result.stderr or result.stdout or "C VM execution failed")
             return simplify_result(result.value)
 
-        # Fallback：仅当原生 C VM 二进制缺失时，退回 Python 解释路径（对拍/引导用）。
+        if not allow_python_fallback:
+            raise RuntimeError(
+                f"C VM binary not found: {c_vm_runtime.binary}. "
+                "Set DAO_MCP_ALLOW_PYTHON_FALLBACK=1 only for parity/debug fallback."
+            )
+
+        # Explicit fallback: only for parity/debug/bootstrap work when requested.
         env = load_runtime_env()
         ast = None
         if is_expr_candidate(code):

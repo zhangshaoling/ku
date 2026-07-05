@@ -110,6 +110,19 @@ ku/                   # Legacy package and compatibility runtime
 ```
 
 See `docs/PROJECT_STRUCTURE.md` for the maintained directory map.
+See `docs/MODULE_COMPLETION_PLAN.md` for the module-by-module completion map
+that keeps the project aligned with `thought = code = memory`.
+
+## Current C VM Reality
+
+The active path is no longer only a Python prototype:
+
+- `dao/dao_core.exe` runs committed bytecode and source bootstrap demos.
+- `dao/c_vm_runtime.py` is the gateway used by MCP and tests to call the C VM.
+- SQLite-backed experience memory and task queues run under `DAO_DATA_DIR`.
+- Python remains as packaging, tests, fixture generation, MCP stdio glue, and
+  parity harness. It should continue shrinking as semantic authority moves into
+  Dao source and the C VM.
 
 ## The Bootstrap Path
 
@@ -134,6 +147,32 @@ ku mcp
 ```
 
 This exposes all `thought` definitions as callable MCP tools over stdio (JSON-RPC 2.0).
+
+By default, MCP execution uses the C VM. If `dao_core.exe` is missing,
+`ku_eval` fails loudly instead of silently falling back to Python. The Python
+fallback is reserved for parity/debug work and must be enabled explicitly:
+
+```powershell
+$env:DAO_MCP_ALLOW_PYTHON_FALLBACK = "1"
+```
+
+## Verification
+
+Run the full local gate on Windows:
+
+```powershell
+.\tools\test.ps1 -q
+```
+
+Run smaller module smoke checks:
+
+```powershell
+.\tools\verify_module.ps1 c-vm
+.\tools\verify_module.ps1 frontend
+.\tools\verify_module.ps1 std
+.\tools\verify_module.ps1 memory
+.\tools\verify_module.ps1 mcp
+```
 
 ## Contributing
 
