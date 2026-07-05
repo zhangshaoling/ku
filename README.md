@@ -1,170 +1,91 @@
-# Ku Language
+# Ku / Dao
 
-**Ku** is an AI-native, self-modifying programming language where `thought = code = memory`.
+**Ku / Dao** is an AI-native language runtime for executable memory:
 
-<p align="center">
-  <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT">
-  <img src="https://img.shields.io/badge/Python-3.10%2B-blue" alt="Python">
-  <img src="https://img.shields.io/badge/topic-programming--language-7c6cf0" alt="programming-language">
-  <img src="https://img.shields.io/badge/topic-ai-5ba4e8" alt="ai">
-  <img src="https://img.shields.io/badge/topic-self--modifying-3ddc84" alt="self-modifying">
-  <img src="https://img.shields.io/badge/topic-compiler-fab387" alt="compiler">
-  <img src="https://img.shields.io/badge/topic-metaprogramming-f5a97f" alt="metaprogramming">
-  <img src="https://img.shields.io/badge/topic-thought--as--code-cba6f7" alt="thought-as-code">
-</p>
-
-Born as the native tongue of the **Xuanli (玄璃)** AGI system, Ku treats code as executable memory — every expression is a thought that can be inspected, rewritten, and composed at runtime.
-
-## Key Features
-
-- **Everything-is-Node** -- AST nodes are first-class values, inspectable and rewritable
-- **Self-bootstrapping** -- Lexer and parser written in Ku itself (dual Python/Ku implementation)
-- **Thought system** -- Named code blocks that persist as memory, callable by name
-- **Self-rewriting** -- The `self` keyword lets code modify its own AST at runtime
-- **Pipe operator** -- `|` chains for readable data transformation
-- **Bytecode compiler** -- Stack-based VM, targeting self-compilation
-- **MCP integration** -- Expose Ku thoughts as MCP tools for Claude Code
-
-## Quick Start
-
-```bash
-pip install -e .
+```text
+thought = code = memory
 ```
 
-```python
-from ku import KuEnv, parse_ku
+This repository is not trying to become a general-purpose scripting language.
+Its purpose is narrower: make a thought writable as source, inspectable as
+structured code, persistent as memory, executable by the C VM, and callable by
+agents through MCP.
 
-env = KuEnv()
-env.exec(parse_ku('''
-  thought greet(name) {
-    return "Hello, " + name + "!"
-  }
-  greet("World")
-'''))
-# => "Hello, World!"
+## Names
+
+- **Ku** is the public package name, repository lineage, and historical language
+  name.
+- **Dao** is the active runtime line: Chinese-first syntax, self-hosted
+  frontend, C VM execution, executable memory, and MCP tools.
+- The repository may stay named `ku`, but new core runtime work should live
+  under `dao/`.
+
+## Current Status
+
+The project has moved beyond the early Python prototype:
+
+- `dao/dao_core.exe` runs committed bytecode demos and source through
+  `--bootstrap`.
+- `dao/std/lexer.ku`, `dao/std/parser.ku`, and `dao/std/compiler.ku` form the
+  self-hosting frontend path.
+- `dao/c_vm_runtime.py` is the Python gateway for invoking the C VM from tests
+  and MCP.
+- SQLite-backed experience memory, task queues, gaps, datasets, and data memory
+  records persist under `DAO_DATA_DIR`.
+- MCP tools use the C VM by default; Python semantic fallback is opt-in only for
+  parity/debug work.
+
+Python is still allowed as packaging, test harness, fixture generation, and MCP
+stdio glue. It must not silently become the semantic authority.
+
+## Architecture
+
+```text
+Dao source
+  -> self-hosted lexer/parser/compiler
+  -> bytecode
+  -> C VM
+  -> executable memory
+  -> MCP tool surface
 ```
 
-## Language Overview
+The practical bootstrap path still uses generated fixtures:
 
-### Thoughts (named code blocks)
-
-```ku
-thought fibonacci(n) {
-  if (n <= 1) { return n }
-  return fibonacci(n - 1) + fibonacci(n - 2)
-}
-
-thought result = fibonacci(10)
-// result = 55
+```text
+Python harness -> bootstrap image -> C VM -> Dao frontend -> Dao source
 ```
 
-### Self-rewriting
+The long-term direction is to move more of that generation and runtime support
+into Dao itself.
 
-```ku
-thought counter {
-  let count = 0
-  self.count = count + 1  // rewrites own AST
-  return count
-}
+## Repository Map
 
-counter()  // 0
-counter()  // 1
-counter()  // 2
+```text
+dao/        Active Dao runtime, C VM, MCP server, and std .ku modules
+demos/      Generated bootstrap images and checked demo bytecode
+docs/       Architecture notes, module gates, and migration records
+ku/         Legacy compatibility package and historical Python runtime
+syntaxes/   Ku syntax highlighting assets
+tests/      Python, frontend, C VM, memory, and MCP regression tests
+tools/      Build, verification, and fixture generation scripts
+vendor/     Vendored runtime dependencies such as SQLite amalgamation
 ```
 
-### Pipe operator
+Maintained maps:
 
-```ku
-[1, 2, 3, 4, 5]
-  | filter(fn(x) { x > 2 })
-  | map(fn(x) { x * x })
-  | sum()
-// => 50
-```
+- `docs/PROJECT_STRUCTURE.md`
+- `docs/MODULE_COMPLETION_PLAN.md`
+- `docs/PROJECT_CONSTITUTION.md`
 
-## Project Structure
+## Quick Verification
 
-The current self-hosting work now lives primarily under `dao/`. The older `ku/`
-package remains as a compatibility and Python harness layer while the C VM takes
-over more of the bootstrap path.
-
-```
-dao/                  # Dao/Ku active language core
-  dao_core.c          # C VM and bootstrap source runner
-  compiler.py         # Python bytecode compiler harness
-  dao_lexer.py        # Python lexer harness
-  dao_parser.py       # Python parser harness
-  std/                # Standard library and self-hosted frontend in .ku
-    lexer.ku
-    parser.ku
-    compiler.ku
-    math.ku
-    string.ku
-    net.ku
-  test_core.ku        # Core self-check entrypoints
-demos/                # Generated bytecode fixtures and bootstrap images
-tools/                # Regeneration scripts for demos/bootstrap fixtures
-tests/                # Python, Ku frontend, and C VM parity tests
-docs/                 # Architecture notes, plans, and migration audits
-ku/                   # Legacy package and compatibility runtime
-```
-
-See `docs/PROJECT_STRUCTURE.md` for the maintained directory map.
-See `docs/MODULE_COMPLETION_PLAN.md` for the module-by-module completion map
-that keeps the project aligned with `thought = code = memory`.
-
-## Current C VM Reality
-
-The active path is no longer only a Python prototype:
-
-- `dao/dao_core.exe` runs committed bytecode and source bootstrap demos.
-- `dao/c_vm_runtime.py` is the gateway used by MCP and tests to call the C VM.
-- SQLite-backed experience memory and task queues run under `DAO_DATA_DIR`.
-- Python remains as packaging, tests, fixture generation, MCP stdio glue, and
-  parity harness. It should continue shrinking as semantic authority moves into
-  Dao source and the C VM.
-
-## The Bootstrap Path
-
-Ku follows a deliberate self-bootstrapping strategy:
-
-1. **Phase 1** -- Python lexer/parser bootstrap the language
-2. **Phase 2** -- `std/lexer.ku` and `std/parser.ku` parse Ku source
-3. **Phase 3** -- `std/compiler.ku` compiles Ku AST to bytecode
-4. **Phase 4 (current)** -- C VM runs the Ku frontend through `--bootstrap`
-5. **Phase 5** -- Bootstrap image generation and runtime support move out of Python
-
-```
-Python harness --(builds bootstrap image)--> C VM --(runs Ku frontend)--> Ku source
-```
-
-## MCP Server
-
-Run Ku as an MCP tool server for Claude Code:
-
-```bash
-ku mcp
-```
-
-This exposes all `thought` definitions as callable MCP tools over stdio (JSON-RPC 2.0).
-
-By default, MCP execution uses the C VM. If `dao_core.exe` is missing,
-`ku_eval` fails loudly instead of silently falling back to Python. The Python
-fallback is reserved for parity/debug work and must be enabled explicitly:
-
-```powershell
-$env:DAO_MCP_ALLOW_PYTHON_FALLBACK = "1"
-```
-
-## Verification
-
-Run the full local gate on Windows:
+On Windows, run the local test gate:
 
 ```powershell
 .\tools\test.ps1 -q
 ```
 
-Run smaller module smoke checks:
+Run module smoke checks:
 
 ```powershell
 .\tools\verify_module.ps1 c-vm
@@ -174,23 +95,37 @@ Run smaller module smoke checks:
 .\tools\verify_module.ps1 mcp
 ```
 
-## Contributing
+Build the C VM:
 
-Ku is in active development. The language spec is still evolving. Contributions welcome:
+```powershell
+.\tools\build_dao_core.ps1
+```
 
-- Bug reports and feature requests via Issues
-- Standard library modules
-- Documentation and examples
-- Compiler optimizations
+## MCP
 
-## License
+Run the MCP server:
 
-MIT
+```powershell
+python -m dao.mcp_server
+```
+
+The default `ku_eval`, `ku_call`, `ku_golden_path`, and experience-memory tools
+run through the C VM gateway. If the C VM binary is missing, `ku_eval` fails
+loudly by default.
+
+Python fallback for `ku_eval` is reserved for debug/parity work:
+
+```powershell
+$env:DAO_MCP_ALLOW_PYTHON_FALLBACK = "1"
+```
 
 ## Philosophy
 
-> "Code is data. Data is memory. Memory is thought. Thought is code."
+Dao treats memory as something that can run, and code as something that can be
+remembered, inspected, linked, and rewritten.
 
-Ku is not just a programming language -- it's an experiment in building a system where the boundary between program and state dissolve. Every thought is simultaneously executable code, inspectable data, and persistent memory.
+The finish line is not "a nicer syntax." The finish line is an executable memory
+system where an agent can load a thought, inspect it, run it, persist its result,
+and evolve the system without Python owning the meaning.
 
-The ultimate goal: a language that can rewrite itself completely, from lexer to runtime, in its own terms.
+MIT licensed.
