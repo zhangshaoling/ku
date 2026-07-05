@@ -165,11 +165,11 @@ Current state:
 - Python fallback for `ku_eval` is opt-in only through
   `DAO_MCP_ALLOW_PYTHON_FALLBACK=1`; missing C VM binaries fail loudly by
   default.
+- Default `ku_eval` and `ku_call` paths are guarded by a regression test that
+  fails if Python `Thought.call` becomes the semantic execution path.
 
 Remaining:
 
-- Add assertions that default tool execution uses C VM rather than
-  `Thought.call`.
 - Keep JSON-RPC stdout clean and runtime logs on stderr.
 
 Proof:
