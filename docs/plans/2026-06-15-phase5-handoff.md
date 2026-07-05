@@ -5,6 +5,31 @@
 > 目标：玄璃执行路径从 Python DaoVM 切到 C VM。  
 > 状态：Phase 5 未完成；本轮完成 M0，推进 M1/M2，开始审计 MCP 执行链。
 
+## 2026-07-05 status calibration
+
+The current code is ahead of the earlier handoff notes:
+
+- Native Windows `dao/dao_core.exe` exists and can run the committed demos directly.
+- `dao/c_vm_runtime.py` is now the single Python gateway for invoking the C VM.
+- `dao/mcp_server.py` routes `ku_eval`, `ku_call`, and experience-memory tools through the C VM by default; Python `Thought.call` is mostly retained for schema discovery and fallback scaffolding.
+- SQLite, `DAO_DATA_DIR`, and `now_fmt` exist in the C VM. `experience.ku` and `task_queue.ku` can create tables, insert, query, and persist through the C VM.
+- A local regression now requires the C VM SQLite and experience layers to preserve UTF-8 strings through storage roundtrips.
+
+Smoke checks verified in this state:
+
+```powershell
+.\dao\dao_core.exe --bootstrap .\demos\frontend_bootstrap.kub.json .\demos\golden_path.ku
+.\dao\dao_core.exe .\demos\semantic_std_combo.kub.json
+.\dao\dao_core.exe .\demos\frontend_compile_demo.kub.json
+```
+
+Remaining Phase 5 risk has shifted from "SQLite does not exist" to:
+
+1. Python is still the MCP stdio glue and parity-test environment, but should not be treated as the default semantic execution path.
+2. Long-running memory ownership still needs a dedicated audit.
+3. Local Windows testing needs a stable entry point so missing `python` / `uv` / `pytest` on PATH does not look like a runtime failure.
+4. Docs and roadmap files need periodic reality sync so stale M3 blockers do not hide current progress.
+
 ## 当前工作树
 
 本轮主线改动集中在：
@@ -163,4 +188,3 @@ pytest -q
 3. 做 M3 sqlite builtins，使 `experience.ku` / `task_queue.ku` 可在 C VM 运行。
 4. 做 MCP C VM bridge，先切 `ku_eval`，再切 `ku_call`。
 5. 最后做 M5 验收：MCP 网关默认 C VM，Python DaoVM 只作为对拍基准或 fallback。
-

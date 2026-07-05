@@ -38,6 +38,9 @@ _rt_b64.txt
 _cn_ops.json
 _run.ps1
 _run_patch.bat
+inspect_wechat_sqlite.py
+scan_wechat_xlog.py
+wechat_login_diag.ps1
 
 # Temporary Dao runtime scratch files
 dao/dao_core

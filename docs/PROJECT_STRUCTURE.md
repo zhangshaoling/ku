@@ -61,6 +61,8 @@ generator is also updated.
 
 ```text
 tools/
+  test.ps1
+  verify_module.ps1
   generate_frontend_bootstrap.py
   generate_frontend_compile_demo.py
   generate_semantic_std_combo_demo.py
@@ -68,6 +70,10 @@ tools/
 
 Python is still allowed here as build harness. The self-hosting goal is to shrink
 this role over time, not to mix generator logic into tests or demos.
+
+`tools/test.ps1` is the local Windows test entrypoint. `tools/verify_module.ps1`
+is the smaller module smoke entrypoint for checking the C VM, frontend, std
+imports, executable memory, and MCP gateway independently.
 
 ## Verification
 
@@ -107,6 +113,7 @@ explicitly about the packaged `ku` CLI.
 docs/
   C_VM_接管审计.md
   AGI母语语义内核规范.md
+  MODULE_COMPLETION_PLAN.md
   PROJECT_STRUCTURE.md
   plans/
 ```
