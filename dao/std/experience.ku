@@ -37,7 +37,7 @@
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience_link (id TEXT PRIMARY KEY, experience_id TEXT NOT NULL, task_id TEXT DEFAULT '', thought_name TEXT DEFAULT '', dataset_id TEXT DEFAULT '', created_at TEXT NOT NULL)")
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS memory_promotion (id TEXT PRIMARY KEY, experience_id TEXT NOT NULL, thought_name TEXT NOT NULL UNIQUE, tool_name TEXT NOT NULL, description TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS memory_promotion_meta (promotion_id TEXT PRIMARY KEY, reason TEXT DEFAULT '', policy TEXT DEFAULT '', updated_at TEXT NOT NULL)")
-  sqlite_exec(conn, "CREATE VIRTUAL TABLE IF NOT EXISTS experience_fts USING fts5(id UNINDEXED, kind, topic, context, input, output, missing, next_action, tags)")
+  sqlite_exec(conn, "CREATE VIRTUAL TABLE IF NOT EXISTS experience_fts USING fts5(id UNINDEXED, kind, topic, context, input, output, missing, next_action, tags, tokenize='trigram')")
   sqlite_exec(conn, "INSERT INTO experience_fts (id, kind, topic, context, input, output, missing, next_action, tags) SELECT id, kind, topic, context, input, output, missing, next_action, tags_json FROM experience WHERE NOT EXISTS (SELECT 1 FROM experience_fts WHERE experience_fts.id = experience.id)")
   sqlite_close(conn)
   {"ok": 真, "db": _exp_db()}

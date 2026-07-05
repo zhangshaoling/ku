@@ -1912,35 +1912,6 @@ static char *read_text_file(const char *path, size_t *out_len) {
     return data;
 }
 
-/* Strip C-style comments from source: both // line comments
- * and star-block comments. Returns new heap string (caller frees).
- * Does not strip comments inside string literals. */
-static char *strip_c_comments(const char *src) {
-    if (!src) return NULL;
-    size_t n = strlen(src);
-    char *out = malloc(n + 1);
-    if (!out) return NULL;
-    size_t j = 0;
-    size_t i = 0;
-    while (i < n) {
-        // line comment
-        if (src[i] == '/' && i + 1 < n && src[i + 1] == '/') {
-            while (i < n && src[i] != '\n') i++;
-            continue;
-        }
-        // block comment
-        if (src[i] == '/' && i + 1 < n && src[i + 1] == '*') {
-            i += 2;
-            while (i + 1 < n && !(src[i] == '*' && src[i + 1] == '/')) i++;
-            if (i + 1 < n) i += 2;
-            continue;
-        }
-        out[j++] = src[i++];
-    }
-    out[j] = '\0';
-    return out;
-}
-
 static char *read_stdin_all(size_t *out_len) {
     size_t cap = 4096;
     size_t len = 0;
@@ -2105,13 +2076,6 @@ static int collect_source_file(StrBuf *out, const char *path, const char *repo_r
     size_t part_len = 0;
     char *part = read_text_file(path, &part_len);
     if (!part) return 0;
-
-    // Strip C-style comments so block/line comments do not confuse the Ku lexer
-    char *clean = strip_c_comments(part);
-    if (clean) {
-        free(part);
-        part = clean;
-    }
 
     if (!append_imports_from_source(out, part, repo_root, ctx)) {
         free(part);
