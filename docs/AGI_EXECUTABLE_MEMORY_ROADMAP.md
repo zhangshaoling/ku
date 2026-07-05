@@ -28,6 +28,11 @@ The goal is not merely "a model remembers chat history." The goal is a durable
 external brain where memory can run, code can be remembered, and data can become
 thought.
 
+Dao must develop its own language shape. It should not copy Python's mental
+model and merely rename it. In Dao, the important unit is a thought-memory:
+source that can be stored, data that can be called, and memory that can execute.
+Features are valuable when they make that cycle tighter.
+
 ## 2. What "Thought" Means
 
 A Dao thought must eventually have all of these faces:
@@ -108,6 +113,8 @@ Required capabilities:
 - preserve the original memory record and link derived thoughts back to it
 - distinguish factual memory, preference memory, procedure memory, and code
   memory
+- make promoted memory feel like a native Dao thought, not a Python callback
+  wrapper
 
 ### Stage D: Dao-Owned Bootstrap And Modules
 
@@ -119,6 +126,8 @@ Required capabilities:
 - move more bootstrap image or bytecode generation into Dao itself
 - make the C VM load, run, and inspect Dao modules without Python deciding
   meaning
+- design module identity around persisted thoughts and memories, not only
+  filename-based imports copied from another language
 
 ### Stage E: Native Agent Gateway
 
