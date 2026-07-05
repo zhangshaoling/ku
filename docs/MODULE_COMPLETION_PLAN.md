@@ -141,14 +141,17 @@ Current state:
   `ku_recall_memory`.
 - Persisted memory records can be promoted into stable callable thought/tool
   candidates through C VM-backed memory promotion.
+- Recall explainability and local promotion suggestions are available through
+  C VM-backed memory thoughts.
+- Active promoted memories can be listed and exposed as dynamic
+  `ku_memory_<thought_name>` MCP tools.
 
 Remaining:
 
 - Define retention, compaction, and migration rules for long-lived experience
   databases.
-- Add policy and ranking around which memories deserve promotion.
-- Move from fixed promotion/call tools toward dynamic schemas for promoted
-  memories.
+- Improve promotion ranking beyond the current simple local policy.
+- Define when dynamic promoted tools should be retired or compacted.
 
 Proof:
 
@@ -175,10 +178,13 @@ Current state:
   default.
 - Default `ku_eval` and `ku_call` paths are guarded by a regression test that
   fails if Python `Thought.call` becomes the semantic execution path.
+- Active promoted memories are surfaced as dynamic MCP tools while their calls
+  still execute through the C VM-backed `memory_call` path.
 
 Remaining:
 
 - Keep JSON-RPC stdout clean and runtime logs on stderr.
+- Move schema discovery for promoted memories toward Dao/C ownership.
 
 Proof:
 
@@ -218,9 +224,9 @@ Proof:
 ## Near-Term Finish Order
 
 1. Lock current C VM/MCP/memory behavior with tests.
-2. Harden memory recall scoring, filters, and explainability.
-3. Add promotion policy and dynamic MCP exposure for promoted memories.
-4. Audit C VM long-process memory ownership.
+2. Define retention, compaction, and retirement rules for long-lived memories.
+3. Audit C VM long-process memory ownership.
+4. Move promoted-memory schema discovery toward Dao/C ownership.
 5. Stabilize std module public APIs.
 6. Move bootstrap generation out of Python when Dao can own the path.
 7. Cut a release only after README, demos, tests, and MCP claims all match.

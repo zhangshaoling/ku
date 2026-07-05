@@ -67,6 +67,8 @@ stage:
 - Selected memory records can be promoted into stable callable thought/tool
   candidates through `ku_promote_memory` and called back through
   `ku_call_memory`.
+- Recall explainability, local promotion suggestions, and dynamic
+  `ku_memory_<thought_name>` MCP tools are available for active promotions.
 - SQLite is the current durable store. It is acceptable as the first memory
   substrate and can later be joined by FTS, graph, vector, or distributed stores.
 
@@ -100,6 +102,7 @@ Required capabilities:
 - recency and importance scoring
 - MCP tools for record, search, promote, and explain-recall
 - tests that prove UTF-8 Chinese memory survives roundtrip storage and recall
+- local promotion policy that does not depend on external model judgment
 
 ### Stage C: Callable Memory
 
@@ -115,6 +118,7 @@ Required capabilities:
   memory
 - make promoted memory feel like a native Dao thought, not a Python callback
   wrapper
+- expose active promotions as dynamic tools while keeping execution C VM-backed
 
 ### Stage D: Dao-Owned Bootstrap And Modules
 
@@ -145,11 +149,10 @@ Required capabilities:
 
 The next implementation work should stay narrow:
 
-1. Harden memory recall scoring, filters, and explainability.
-2. Add promotion policy: decide which memories should become callable and why.
-3. Expose promoted memories as dynamic MCP tool schemas, not only through the
-   generic `ku_call_memory` entry point.
-4. Add retention, compaction, and migration rules for long-lived memory stores.
+1. Add retention, compaction, and retirement rules for long-lived memory stores.
+2. Improve promotion ranking beyond the current simple local policy.
+3. Move promoted-memory schema discovery toward Dao/C ownership.
+4. Audit C VM long-process memory ownership.
 5. Only then expand syntax or higher-level AGI behavior.
 
 ## 6. Non-Goals For Now

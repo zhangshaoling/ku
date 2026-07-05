@@ -164,6 +164,7 @@ def main():
     # 构建 tool 定义和处理器
     tool_definitions = []
     tool_handlers = {}
+    dynamic_memory_tool_names = set()
     c_vm_runtime = CVMRuntime(
         binary=os.environ.get("DAO_CVM_BINARY") or None,
         bootstrap=os.environ.get("DAO_CVM_BOOTSTRAP") or None,
@@ -325,8 +326,11 @@ def main():
             "gap_resolve",
             "experience_search",
             "memory_recall",
+            "memory_recall_explain",
             "memory_promote",
+            "memory_promotion_list",
             "memory_call",
+            "memory_suggest_promotions",
             "experience_stats",
             "gap_to_task",
             "init_db",
@@ -392,6 +396,71 @@ def main():
         if not result.ok:
             raise RuntimeError(result.error or result.stderr or result.stdout or "C VM execution failed")
         return simplify_result(result.value)
+
+    def memory_tool_name_to_thought(tool_name):
+        if not tool_name.startswith("ku_memory_"):
+            return ""
+        return tool_name[len("ku_memory_"):]
+
+    def make_promoted_memory_handler(thought_name):
+        def handle_promoted_memory(arguments):
+            called = call_c_vm_memory_thought("memory_call", [thought_name])
+            note = (arguments or {}).get("note") or ""
+            if note:
+                call_c_vm_memory_thought("experience_record", [
+                    "observation",
+                    "memory_call:" + thought_name,
+                    note,
+                    thought_name,
+                    json.dumps(called.get("result"), ensure_ascii=False),
+                    "",
+                    "",
+                    "memory_call,promoted",
+                ])
+            return called
+        return handle_promoted_memory
+
+    def refresh_promoted_memory_tools():
+        for name in list(dynamic_memory_tool_names):
+            tool_handlers.pop(name, None)
+        tool_definitions[:] = [
+            tool for tool in tool_definitions
+            if tool.get("name") not in dynamic_memory_tool_names
+        ]
+        dynamic_memory_tool_names.clear()
+
+        if not c_vm_runtime.binary.exists():
+            return
+
+        result = c_vm_runtime.call_thought("memory_promotion_list", [], profile="memory")
+        if not result.ok:
+            print(
+                result.error or result.stderr or result.stdout or "failed to refresh promoted memory tools",
+                file=sys.stderr,
+            )
+            return
+
+        value = result.value or {}
+        for promotion in value.get("promotions", []):
+            tool_name = promotion.get("tool_name") or ""
+            thought_name = promotion.get("thought_name") or memory_tool_name_to_thought(tool_name)
+            if not tool_name.startswith("ku_memory_") or not thought_name:
+                continue
+            dynamic_memory_tool_names.add(tool_name)
+            tool_definitions.append({
+                "name": tool_name,
+                "description": promotion.get("description") or f"Call promoted Dao memory: {thought_name}",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "note": {
+                            "type": "string",
+                            "description": "Optional call context to persist as an observation",
+                        },
+                    },
+                },
+            })
+            tool_handlers[tool_name] = make_promoted_memory_handler(thought_name)
 
     tool_definitions.append({
         "name": "ku_record_experience",
@@ -534,6 +603,28 @@ def main():
     tool_handlers["ku_recall_memory"] = handle_recall_memory
 
     tool_definitions.append({
+        "name": "ku_recall_memory_explain",
+        "description": "Recall Dao memories and explain why each result matched",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Recall query; empty returns recent memories"},
+                "kind": {"type": "string", "description": "Optional kind filter"},
+                "limit": {"type": "integer", "description": "Maximum memories to return, default 10"},
+            },
+        },
+    })
+
+    def handle_recall_memory_explain(arguments):
+        return call_c_vm_memory_thought("memory_recall_explain", [
+            arguments.get("query"),
+            arguments.get("kind"),
+            coerce_arg(arguments.get("limit", 10)),
+        ])
+
+    tool_handlers["ku_recall_memory_explain"] = handle_recall_memory_explain
+
+    tool_definitions.append({
         "name": "ku_promote_memory",
         "description": "Promote a persisted Dao memory record into a stable callable thought/tool candidate",
         "inputSchema": {
@@ -555,6 +646,39 @@ def main():
         ])
 
     tool_handlers["ku_promote_memory"] = handle_promote_memory
+
+    tool_definitions.append({
+        "name": "ku_list_memory_promotions",
+        "description": "List active promoted Dao thought-memory tool candidates",
+        "inputSchema": {"type": "object", "properties": {}},
+    })
+
+    def handle_list_memory_promotions(arguments):
+        return call_c_vm_memory_thought("memory_promotion_list", [])
+
+    tool_handlers["ku_list_memory_promotions"] = handle_list_memory_promotions
+
+    tool_definitions.append({
+        "name": "ku_suggest_memory_promotions",
+        "description": "Suggest persisted memories that should become callable Dao thought-memory tools",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Candidate search query; empty returns recent memories"},
+                "kind": {"type": "string", "description": "Optional kind filter"},
+                "limit": {"type": "integer", "description": "Maximum candidates to return, default 10"},
+            },
+        },
+    })
+
+    def handle_suggest_memory_promotions(arguments):
+        return call_c_vm_memory_thought("memory_suggest_promotions", [
+            arguments.get("query"),
+            arguments.get("kind"),
+            coerce_arg(arguments.get("limit", 10)),
+        ])
+
+    tool_handlers["ku_suggest_memory_promotions"] = handle_suggest_memory_promotions
 
     tool_definitions.append({
         "name": "ku_call_memory",
@@ -659,10 +783,13 @@ def main():
         elif method == "notifications/initialized":
             pass
         elif method == "tools/list":
+            refresh_promoted_memory_tools()
             rpc_result(req_id, {"tools": tool_definitions})
         elif method == "tools/call":
             tool_name = params.get("name")
             arguments = params.get("arguments", {})
+            if tool_name and tool_name.startswith("ku_memory_") and tool_name not in tool_handlers:
+                refresh_promoted_memory_tools()
             handler = tool_handlers.get(tool_name)
             if not handler:
                 rpc_error(req_id, -32601, f"Unknown tool: {tool_name}")

@@ -46,7 +46,10 @@ The project has moved beyond the early Python prototype:
 - SQLite-backed experience memory, task queues, gaps, datasets, and data memory
   records persist under `DAO_DATA_DIR`.
 - Selected memory records can be promoted into callable thought/tool candidates
-  through the C VM-backed MCP path.
+  through the C VM-backed MCP path, and active promotions appear as dynamic
+  `ku_memory_<thought_name>` tools.
+- Memory recall can return explainability metadata, and promotion suggestions
+  use local Dao policy rules without calling an external model.
 - MCP tools use the C VM by default; Python semantic fallback is opt-in only for
   parity/debug work.
 
@@ -134,8 +137,11 @@ python -m dao.mcp_server
 
 The default `ku_eval`, `ku_call`, `ku_golden_path`, and experience-memory tools
 run through the C VM gateway. Memory recall and promotion are exposed through
-`ku_recall_memory`, `ku_promote_memory`, and `ku_call_memory`. If the C VM
-binary is missing, `ku_eval` fails loudly by default.
+`ku_recall_memory`, `ku_recall_memory_explain`, `ku_promote_memory`,
+`ku_list_memory_promotions`, `ku_suggest_memory_promotions`, and
+`ku_call_memory`. Active promotions are also exposed as dynamic
+`ku_memory_<thought_name>` tools. If the C VM binary is missing, `ku_eval` fails
+loudly by default.
 
 Python fallback for `ku_eval` is reserved for debug/parity work:
 

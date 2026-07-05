@@ -36,6 +36,7 @@
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience (id TEXT PRIMARY KEY, kind TEXT NOT NULL, topic TEXT DEFAULT '', context TEXT DEFAULT '', input TEXT DEFAULT '', output TEXT DEFAULT '', missing TEXT DEFAULT '', next_action TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'open', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience_link (id TEXT PRIMARY KEY, experience_id TEXT NOT NULL, task_id TEXT DEFAULT '', thought_name TEXT DEFAULT '', dataset_id TEXT DEFAULT '', created_at TEXT NOT NULL)")
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS memory_promotion (id TEXT PRIMARY KEY, experience_id TEXT NOT NULL, thought_name TEXT NOT NULL UNIQUE, tool_name TEXT NOT NULL, description TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS memory_promotion_meta (promotion_id TEXT PRIMARY KEY, reason TEXT DEFAULT '', policy TEXT DEFAULT '', updated_at TEXT NOT NULL)")
   sqlite_exec(conn, "CREATE VIRTUAL TABLE IF NOT EXISTS experience_fts USING fts5(id UNINDEXED, kind, topic, context, input, output, missing, next_action, tags)")
   sqlite_exec(conn, "INSERT INTO experience_fts (id, kind, topic, context, input, output, missing, next_action, tags) SELECT id, kind, topic, context, input, output, missing, next_action, tags_json FROM experience WHERE NOT EXISTS (SELECT 1 FROM experience_fts WHERE experience_fts.id = experience.id)")
   sqlite_close(conn)
@@ -137,11 +138,73 @@
   out["thought_name"] = row["thought_name"]
   out["tool_name"] = row["tool_name"]
   out["description"] = row["description"]
+  out["reason"] = row["reason"]
+  out["policy"] = row["policy"]
   out["status"] = row["status"]
   out["created_at"] = row["created_at"]
   out["updated_at"] = row["updated_at"]
   out["memory"] = memory
   out
+}
+
+思 _promotion_rows(rows) {
+  out = []
+  若 is_list(rows) {
+    遍 r 于 rows {
+      out = out + [_promotion_row(r, {})]
+    }
+  }
+  out
+}
+
+思 _memory_match_reason(row, query) {
+  若 str_is_empty(query) { 返 "recent memory" }
+  reason = "fts match"
+  tag_text = ""
+  若 has(row, "tags_json") { tag_text = row["tags_json"] }
+  若 has(row, "tags") { tag_text = str(row["tags"]) }
+  若 str_contains(row["topic"], query) { reason = "topic match" }
+  若 str_contains(row["context"], query) { reason = reason + "; context match" }
+  若 str_contains(row["input"], query) { reason = reason + "; input match" }
+  若 str_contains(row["output"], query) { reason = reason + "; output match" }
+  若 str_contains(row["missing"], query) { reason = reason + "; missing match" }
+  若 str_contains(row["next_action"], query) { reason = reason + "; next_action match" }
+  若 str_contains(tag_text, query) { reason = reason + "; tag match" }
+  reason
+}
+
+思 _promotion_policy(row) {
+  score = 0
+  reason = ""
+  若 == (row["kind"], "data_memory") {
+    score = score + 3
+    reason = reason + "data_memory is durable structured memory; "
+  }
+  若 == (row["kind"], "code_data_gap") {
+    score = score + 2
+    reason = reason + "code_data_gap links code and data work; "
+  }
+  tag_text = ""
+  若 has(row, "tags_json") { tag_text = row["tags_json"] }
+  若 has(row, "tags") { tag_text = str(row["tags"]) }
+  若 str_contains(tag_text, "principle") {
+    score = score + 3
+    reason = reason + "principle tag indicates reusable rule; "
+  }
+  若 str_contains(tag_text, "memory") {
+    score = score + 1
+    reason = reason + "memory tag indicates long-lived value; "
+  }
+  若 str_contains(tag_text, "dao") {
+    score = score + 1
+    reason = reason + "dao tag ties it to language identity; "
+  }
+  若 str_contains(tag_text, "longterm") {
+    score = score + 2
+    reason = reason + "longterm tag indicates persistence intent; "
+  }
+  若 str_is_empty(reason) { reason = "low-confidence candidate" }
+  {"policy": "promotion_policy_v1", "score": score, "reason": reason, "recommended": (> (score, 0))}
 }
 
 // ── 列出未解决缺口 ──
@@ -210,6 +273,26 @@
   {"memories": _exp_rows(rows), "count": len(_exp_rows(rows)), "query": query, "kind": kind}
 }
 
+// ── 可解释召回：返回记忆和命中原因，便于智能体知道为什么想起它 ──
+思 memory_recall_explain(query, kind, limit) {
+  若 is_none(query) { query = "" }
+  若 is_none(kind) { kind = "" }
+  若 is_none(limit) { limit = 10 }
+
+  recalled = memory_recall(query, kind, limit)
+  explanations = []
+  遍 memory 于 recalled["memories"] {
+    item = {}
+    item["memory_id"] = memory["id"]
+    item["reason"] = _memory_match_reason(memory, query)
+    item["kind"] = memory["kind"]
+    item["topic"] = memory["topic"]
+    item["tags"] = memory["tags"]
+    explanations = explanations + [item]
+  }
+  {"memories": recalled["memories"], "explanations": explanations, "count": recalled["count"], "query": query, "kind": kind}
+}
+
 // ── 提升记忆：把一条持久化 memory 绑定成稳定 thought/tool 候选 ──
 思 memory_promote(experience_id, thought_name, description) {
   若 is_none(experience_id) { experience_id = "" }
@@ -227,6 +310,9 @@
   existing = sqlite_query(conn, "SELECT * FROM memory_promotion WHERE thought_name = ?", [thought_name])
   ts = _exp_now()
   tool_name = "ku_memory_" + thought_name
+  policy = _promotion_policy(rows[0])
+  reason = policy["reason"]
+  policy_name = policy["policy"]
 
   若 (> (len(existing), 0)) {
     promotion_id = existing[0]["id"]
@@ -235,13 +321,23 @@
     promotion_id = _exp_gen_id()
     sqlite_exec(conn, "INSERT INTO memory_promotion (id, experience_id, thought_name, tool_name, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)", [promotion_id, experience_id, thought_name, tool_name, description, ts, ts])
   }
+  sqlite_exec(conn, "INSERT OR REPLACE INTO memory_promotion_meta (promotion_id, reason, policy, updated_at) VALUES (?, ?, ?, ?)", [promotion_id, reason, policy_name, ts])
 
   link_id = _exp_gen_id()
   sqlite_exec(conn, "INSERT INTO experience_link (id, experience_id, thought_name, created_at) VALUES (?, ?, ?, ?)", [link_id, experience_id, thought_name, ts])
-  promotion_rows = sqlite_query(conn, "SELECT * FROM memory_promotion WHERE id = ?", [promotion_id])
+  promotion_rows = sqlite_query(conn, "SELECT m.*, COALESCE(mm.reason, '') AS reason, COALESCE(mm.policy, '') AS policy FROM memory_promotion m LEFT JOIN memory_promotion_meta mm ON mm.promotion_id = m.id WHERE m.id = ?", [promotion_id])
   sqlite_close(conn)
 
   _promotion_row(promotion_rows[0], _exp_row(rows[0]))
+}
+
+// ── 列出已提升记忆，用于 MCP 动态工具发现 ──
+思 memory_promotion_list() {
+  experience_init()
+  conn = sqlite_open(_exp_db())
+  rows = sqlite_query(conn, "SELECT m.*, COALESCE(mm.reason, '') AS reason, COALESCE(mm.policy, '') AS policy FROM memory_promotion m LEFT JOIN memory_promotion_meta mm ON mm.promotion_id = m.id WHERE m.status = 'active' ORDER BY m.updated_at DESC", [])
+  sqlite_close(conn)
+  {"promotions": _promotion_rows(rows), "count": len(rows)}
 }
 
 // ── 调用已提升记忆：按 thought_name 返回绑定的 memory record ──
@@ -250,7 +346,7 @@
 
   experience_init()
   conn = sqlite_open(_exp_db())
-  promotion_rows = sqlite_query(conn, "SELECT * FROM memory_promotion WHERE thought_name = ? AND status = 'active' LIMIT 1", [thought_name])
+  promotion_rows = sqlite_query(conn, "SELECT m.*, COALESCE(mm.reason, '') AS reason, COALESCE(mm.policy, '') AS policy FROM memory_promotion m LEFT JOIN memory_promotion_meta mm ON mm.promotion_id = m.id WHERE m.thought_name = ? AND m.status = 'active' LIMIT 1", [thought_name])
   若 == (len(promotion_rows), 0) {
     sqlite_close(conn)
     返 {"error": "promoted memory not found", "thought_name": thought_name}
@@ -264,6 +360,32 @@
   sqlite_close(conn)
 
   _promotion_row(promotion_rows[0], _exp_row(memory_rows[0]))
+}
+
+// ── 推荐可提升记忆：简单本地规则，不调用外部模型 ──
+思 memory_suggest_promotions(query, kind, limit) {
+  若 is_none(query) { query = "" }
+  若 is_none(kind) { kind = "" }
+  若 is_none(limit) { limit = 10 }
+
+  recalled = memory_recall(query, kind, limit)
+  conn = sqlite_open(_exp_db())
+  candidates = []
+  遍 memory 于 recalled["memories"] {
+    policy = _promotion_policy(memory)
+    existing = sqlite_query(conn, "SELECT * FROM memory_promotion WHERE experience_id = ? AND status = 'active' LIMIT 1", [memory["id"]])
+    already = (> (len(existing), 0))
+    item = {}
+    item["memory"] = memory
+    item["reason"] = policy["reason"]
+    item["policy"] = policy["policy"]
+    item["score"] = policy["score"]
+    item["recommended"] = policy["recommended"]
+    item["already_promoted"] = already
+    candidates = candidates + [item]
+  }
+  sqlite_close(conn)
+  {"candidates": candidates, "count": len(candidates), "query": query, "kind": kind, "policy": "promotion_policy_v1"}
 }
 
 // ── 经验统计 ──

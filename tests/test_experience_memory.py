@@ -182,7 +182,16 @@ def test_memory_recall_uses_fts_and_preserves_utf8(tmp_path):
         assert recalled["memories"][0]["context"] == "项目方向"
         assert recalled["memories"][0]["tags"] == ["agi", "memory", "dao"]
 
-        recent = _text(_req(proc, 5, "tools/call", {"name": "ku_recall_memory", "arguments": {
+        explained = _text(_req(proc, 5, "tools/call", {"name": "ku_recall_memory_explain", "arguments": {
+            "query": "长期记忆",
+            "kind": "data_memory",
+            "limit": 5,
+        }}))
+        assert explained["count"] == 1
+        assert explained["explanations"][0]["memory_id"] == recalled["memories"][0]["id"]
+        assert "topic match" in explained["explanations"][0]["reason"]
+
+        recent = _text(_req(proc, 6, "tools/call", {"name": "ku_recall_memory", "arguments": {
             "query": "",
             "limit": 10,
         }}))
@@ -219,6 +228,8 @@ def test_memory_promotion_makes_memory_callable(tmp_path):
         assert promoted["experience_id"] == recorded["id"]
         assert promoted["thought_name"] == "dao_semantic_authority"
         assert promoted["tool_name"] == "ku_memory_dao_semantic_authority"
+        assert promoted["policy"] == "promotion_policy_v1"
+        assert "data_memory" in promoted["reason"]
         assert promoted["memory"]["topic"] == "Dao 发展原则"
 
         called = _text(_req(proc, 4, "tools/call", {"name": "ku_call_memory", "arguments": {
@@ -228,16 +239,99 @@ def test_memory_promotion_makes_memory_callable(tmp_path):
         assert called["memory"]["id"] == recorded["id"]
         assert called["memory"]["context"] == "语义权威"
         assert called["memory"]["tags"] == ["dao", "principle", "memory"]
+
+        listed_promotions = _text(_req(proc, 5, "tools/call", {"name": "ku_list_memory_promotions", "arguments": {}}))
+        assert listed_promotions["count"] == 1
+        assert listed_promotions["promotions"][0]["tool_name"] == "ku_memory_dao_semantic_authority"
+
+        listed_tools = _req(proc, 6, "tools/list")
+        tool_names = [tool["name"] for tool in listed_tools["result"]["tools"]]
+        assert tool_names.count("ku_memory_dao_semantic_authority") == 1
+
+        dynamic_called = _text(_req(proc, 7, "tools/call", {"name": "ku_memory_dao_semantic_authority", "arguments": {
+            "note": "测试动态 thought-memory 工具调用",
+        }}))
+        assert dynamic_called["thought_name"] == "dao_semantic_authority"
+        assert dynamic_called["memory"]["id"] == recorded["id"]
+
+        suggestions = _text(_req(proc, 8, "tools/call", {"name": "ku_suggest_memory_promotions", "arguments": {
+            "query": "Dao",
+            "kind": "data_memory",
+            "limit": 5,
+        }}))
+        assert suggestions["policy"] == "promotion_policy_v1"
+        assert suggestions["count"] >= 1
+        assert suggestions["candidates"][0]["recommended"] is True
+
+        replacement = _text(_req(proc, 9, "tools/call", {"name": "ku_record_data_memory", "arguments": {
+            "topic": "Dao 发展原则 v2",
+            "key": "语义权威",
+            "value_json": "{\"rule\":\"默认执行必须由 C VM 负责\"}",
+            "tags": "dao,principle,memory,longterm",
+        }}))
+        updated = _text(_req(proc, 10, "tools/call", {"name": "ku_promote_memory", "arguments": {
+            "experience_id": replacement["id"],
+            "thought_name": "dao_semantic_authority",
+            "description": "Updated Dao semantic authority principle",
+        }}))
+        assert updated["experience_id"] == replacement["id"]
+
+        listed_tools_after_update = _req(proc, 11, "tools/list")
+        tool_names_after_update = [tool["name"] for tool in listed_tools_after_update["result"]["tools"]]
+        assert tool_names_after_update.count("ku_memory_dao_semantic_authority") == 1
+
+        updated_dynamic_called = _text(_req(proc, 12, "tools/call", {"name": "ku_memory_dao_semantic_authority", "arguments": {}}))
+        assert updated_dynamic_called["memory"]["id"] == replacement["id"]
     finally:
         _close(proc)
 
     with sqlite3.connect(data_dir / "experience.db") as conn:
         conn.row_factory = sqlite3.Row
         promotion = conn.execute("SELECT * FROM memory_promotion").fetchone()
+        promotion_meta = conn.execute("SELECT * FROM memory_promotion_meta WHERE promotion_id = ?", (promotion["id"],)).fetchone()
         link = conn.execute("SELECT * FROM experience_link WHERE thought_name = ?", ("dao_semantic_authority",)).fetchone()
-    assert promotion["experience_id"] == recorded["id"]
+        call_observation = conn.execute("SELECT * FROM experience WHERE kind = 'observation' AND topic = ?", ("memory_call:dao_semantic_authority",)).fetchone()
+    assert promotion["experience_id"] == replacement["id"]
     assert promotion["thought_name"] == "dao_semantic_authority"
-    assert link["experience_id"] == recorded["id"]
+    assert promotion_meta["reason"]
+    assert promotion_meta["policy"] == "promotion_policy_v1"
+    assert link["experience_id"] in {recorded["id"], replacement["id"]}
+    assert call_observation["context"] == "测试动态 thought-memory 工具调用"
+
+
+def test_promoted_memory_missing_target_returns_structured_error(tmp_path):
+    data_dir = tmp_path / "dao_data"
+    proc = _spawn(data_dir)
+    try:
+        _init(proc)
+        recorded = _text(_req(proc, 2, "tools/call", {"name": "ku_record_data_memory", "arguments": {
+            "topic": "可删除记忆",
+            "key": "target",
+            "value_json": "{\"ok\":true}",
+            "tags": "dao,memory",
+        }}))
+        _text(_req(proc, 3, "tools/call", {"name": "ku_promote_memory", "arguments": {
+            "experience_id": recorded["id"],
+            "thought_name": "deleted_target_memory",
+            "description": "Will point to a deleted target",
+        }}))
+    finally:
+        _close(proc)
+
+    with sqlite3.connect(data_dir / "experience.db") as conn:
+        conn.execute("DELETE FROM experience WHERE id = ?", (recorded["id"],))
+        conn.commit()
+
+    proc2 = _spawn(data_dir)
+    try:
+        _init(proc2)
+        called = _text(_req(proc2, 2, "tools/call", {"name": "ku_call_memory", "arguments": {
+            "thought_name": "deleted_target_memory",
+        }}))
+        assert called["error"] == "promoted memory target missing"
+        assert called["thought_name"] == "deleted_target_memory"
+    finally:
+        _close(proc2)
 
 
 def test_experience_db_lands_in_dao_data_dir(tmp_path):
