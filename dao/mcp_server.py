@@ -325,6 +325,8 @@ def main():
             "gap_resolve",
             "experience_search",
             "memory_recall",
+            "memory_promote",
+            "memory_call",
             "experience_stats",
             "gap_to_task",
             "init_db",
@@ -530,6 +532,48 @@ def main():
         ])
 
     tool_handlers["ku_recall_memory"] = handle_recall_memory
+
+    tool_definitions.append({
+        "name": "ku_promote_memory",
+        "description": "Promote a persisted Dao memory record into a stable callable thought/tool candidate",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "experience_id": {"type": "string", "description": "Persisted memory/experience id to promote"},
+                "thought_name": {"type": "string", "description": "Stable promoted memory name"},
+                "description": {"type": "string", "description": "Human-readable promotion note"},
+            },
+            "required": ["experience_id", "thought_name"],
+        },
+    })
+
+    def handle_promote_memory(arguments):
+        return call_c_vm_memory_thought("memory_promote", [
+            arguments.get("experience_id"),
+            arguments.get("thought_name"),
+            arguments.get("description"),
+        ])
+
+    tool_handlers["ku_promote_memory"] = handle_promote_memory
+
+    tool_definitions.append({
+        "name": "ku_call_memory",
+        "description": "Call a promoted Dao memory by thought_name and return its bound memory record",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "thought_name": {"type": "string", "description": "Promoted memory name"},
+            },
+            "required": ["thought_name"],
+        },
+    })
+
+    def handle_call_memory(arguments):
+        return call_c_vm_memory_thought("memory_call", [
+            arguments.get("thought_name"),
+        ])
+
+    tool_handlers["ku_call_memory"] = handle_call_memory
 
     tool_definitions.append({
         "name": "ku_record_dataset",

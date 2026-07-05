@@ -35,6 +35,7 @@
   conn = sqlite_open(_exp_db())
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience (id TEXT PRIMARY KEY, kind TEXT NOT NULL, topic TEXT DEFAULT '', context TEXT DEFAULT '', input TEXT DEFAULT '', output TEXT DEFAULT '', missing TEXT DEFAULT '', next_action TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'open', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience_link (id TEXT PRIMARY KEY, experience_id TEXT NOT NULL, task_id TEXT DEFAULT '', thought_name TEXT DEFAULT '', dataset_id TEXT DEFAULT '', created_at TEXT NOT NULL)")
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS memory_promotion (id TEXT PRIMARY KEY, experience_id TEXT NOT NULL, thought_name TEXT NOT NULL UNIQUE, tool_name TEXT NOT NULL, description TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
   sqlite_exec(conn, "CREATE VIRTUAL TABLE IF NOT EXISTS experience_fts USING fts5(id UNINDEXED, kind, topic, context, input, output, missing, next_action, tags)")
   sqlite_exec(conn, "INSERT INTO experience_fts (id, kind, topic, context, input, output, missing, next_action, tags) SELECT id, kind, topic, context, input, output, missing, next_action, tags_json FROM experience WHERE NOT EXISTS (SELECT 1 FROM experience_fts WHERE experience_fts.id = experience.id)")
   sqlite_close(conn)
@@ -129,6 +130,20 @@
   out
 }
 
+思 _promotion_row(row, memory) {
+  out = {}
+  out["id"] = row["id"]
+  out["experience_id"] = row["experience_id"]
+  out["thought_name"] = row["thought_name"]
+  out["tool_name"] = row["tool_name"]
+  out["description"] = row["description"]
+  out["status"] = row["status"]
+  out["created_at"] = row["created_at"]
+  out["updated_at"] = row["updated_at"]
+  out["memory"] = memory
+  out
+}
+
 // ── 列出未解决缺口 ──
 思 gap_list_open(limit) {
   若 is_none(limit) { limit = 20 }
@@ -193,6 +208,62 @@
   }
   sqlite_close(conn)
   {"memories": _exp_rows(rows), "count": len(_exp_rows(rows)), "query": query, "kind": kind}
+}
+
+// ── 提升记忆：把一条持久化 memory 绑定成稳定 thought/tool 候选 ──
+思 memory_promote(experience_id, thought_name, description) {
+  若 is_none(experience_id) { experience_id = "" }
+  若 is_none(thought_name) { thought_name = "" }
+  若 is_none(description) { description = "" }
+
+  experience_init()
+  conn = sqlite_open(_exp_db())
+  rows = sqlite_query(conn, "SELECT * FROM experience WHERE id = ?", [experience_id])
+  若 == (len(rows), 0) {
+    sqlite_close(conn)
+    返 {"error": "memory not found", "experience_id": experience_id}
+  }
+
+  existing = sqlite_query(conn, "SELECT * FROM memory_promotion WHERE thought_name = ?", [thought_name])
+  ts = _exp_now()
+  tool_name = "ku_memory_" + thought_name
+
+  若 (> (len(existing), 0)) {
+    promotion_id = existing[0]["id"]
+    sqlite_exec(conn, "UPDATE memory_promotion SET experience_id = ?, tool_name = ?, description = ?, status = 'active', updated_at = ? WHERE id = ?", [experience_id, tool_name, description, ts, promotion_id])
+  } {
+    promotion_id = _exp_gen_id()
+    sqlite_exec(conn, "INSERT INTO memory_promotion (id, experience_id, thought_name, tool_name, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)", [promotion_id, experience_id, thought_name, tool_name, description, ts, ts])
+  }
+
+  link_id = _exp_gen_id()
+  sqlite_exec(conn, "INSERT INTO experience_link (id, experience_id, thought_name, created_at) VALUES (?, ?, ?, ?)", [link_id, experience_id, thought_name, ts])
+  promotion_rows = sqlite_query(conn, "SELECT * FROM memory_promotion WHERE id = ?", [promotion_id])
+  sqlite_close(conn)
+
+  _promotion_row(promotion_rows[0], _exp_row(rows[0]))
+}
+
+// ── 调用已提升记忆：按 thought_name 返回绑定的 memory record ──
+思 memory_call(thought_name) {
+  若 is_none(thought_name) { thought_name = "" }
+
+  experience_init()
+  conn = sqlite_open(_exp_db())
+  promotion_rows = sqlite_query(conn, "SELECT * FROM memory_promotion WHERE thought_name = ? AND status = 'active' LIMIT 1", [thought_name])
+  若 == (len(promotion_rows), 0) {
+    sqlite_close(conn)
+    返 {"error": "promoted memory not found", "thought_name": thought_name}
+  }
+
+  memory_rows = sqlite_query(conn, "SELECT * FROM experience WHERE id = ?", [promotion_rows[0]["experience_id"]])
+  若 == (len(memory_rows), 0) {
+    sqlite_close(conn)
+    返 {"error": "promoted memory target missing", "thought_name": thought_name}
+  }
+  sqlite_close(conn)
+
+  _promotion_row(promotion_rows[0], _exp_row(memory_rows[0]))
 }
 
 // ── 经验统计 ──
