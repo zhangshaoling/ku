@@ -2,6 +2,16 @@
 
 **Ku / Dao** is an AI-native language runtime for executable memory:
 
+<p align="center">
+  <a href="https://github.com/zhangshaoling/ku/actions/workflows/ci.yml"><img src="https://github.com/zhangshaoling/ku/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/version-0.9.0-blue" alt="Version 0.9.0">
+  <img src="https://img.shields.io/badge/runtime-C%20VM-2ea44f" alt="C VM runtime">
+  <img src="https://img.shields.io/badge/MCP-C%20VM%20default-6f42c1" alt="MCP C VM default">
+  <img src="https://img.shields.io/badge/memory-SQLite%20experience-f97316" alt="SQLite experience memory">
+  <img src="https://img.shields.io/badge/Python-harness%20only-64748b" alt="Python harness only">
+  <img src="https://img.shields.io/badge/license-MIT-yellow" alt="MIT license">
+</p>
+
 ```text
 thought = code = memory
 ```

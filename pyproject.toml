@@ -5,9 +5,26 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ku"
 version = "0.9.0"
-description = "Ku/Dao language runtime: executable memory, bytecode, and C VM bootstrap"
+description = "Ku/Dao executable-memory language runtime with a C VM, self-hosting frontend, and MCP gateway"
 requires-python = ">=3.9"
 license = {text = "MIT"}
+keywords = [
+    "ai-native",
+    "c-vm",
+    "dao-language",
+    "executable-memory",
+    "ku-language",
+    "mcp",
+    "self-hosting",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Topic :: Software Development :: Compilers",
+]
 
 [project.scripts]
 ku = "ku.runtime:main"
