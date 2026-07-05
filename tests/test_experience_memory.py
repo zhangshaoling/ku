@@ -197,6 +197,49 @@ def test_memory_recall_uses_fts_and_preserves_utf8(tmp_path):
     assert fts_table is not None
 
 
+def test_memory_promotion_makes_memory_callable(tmp_path):
+    data_dir = tmp_path / "dao_data"
+
+    proc = _spawn(data_dir)
+    try:
+        _init(proc)
+
+        recorded = _text(_req(proc, 2, "tools/call", {"name": "ku_record_data_memory", "arguments": {
+            "topic": "Dao 发展原则",
+            "key": "语义权威",
+            "value_json": "{\"rule\":\"Python 不能悄悄成为语义权威\"}",
+            "tags": "dao,principle,memory",
+        }}))
+
+        promoted = _text(_req(proc, 3, "tools/call", {"name": "ku_promote_memory", "arguments": {
+            "experience_id": recorded["id"],
+            "thought_name": "dao_semantic_authority",
+            "description": "Dao semantic authority principle",
+        }}))
+        assert promoted["experience_id"] == recorded["id"]
+        assert promoted["thought_name"] == "dao_semantic_authority"
+        assert promoted["tool_name"] == "ku_memory_dao_semantic_authority"
+        assert promoted["memory"]["topic"] == "Dao 发展原则"
+
+        called = _text(_req(proc, 4, "tools/call", {"name": "ku_call_memory", "arguments": {
+            "thought_name": "dao_semantic_authority",
+        }}))
+        assert called["thought_name"] == "dao_semantic_authority"
+        assert called["memory"]["id"] == recorded["id"]
+        assert called["memory"]["context"] == "语义权威"
+        assert called["memory"]["tags"] == ["dao", "principle", "memory"]
+    finally:
+        _close(proc)
+
+    with sqlite3.connect(data_dir / "experience.db") as conn:
+        conn.row_factory = sqlite3.Row
+        promotion = conn.execute("SELECT * FROM memory_promotion").fetchone()
+        link = conn.execute("SELECT * FROM experience_link WHERE thought_name = ?", ("dao_semantic_authority",)).fetchone()
+    assert promotion["experience_id"] == recorded["id"]
+    assert promotion["thought_name"] == "dao_semantic_authority"
+    assert link["experience_id"] == recorded["id"]
+
+
 def test_experience_db_lands_in_dao_data_dir(tmp_path):
     data_dir = tmp_path / "dao_data"
     proc = _spawn(data_dir)

@@ -139,13 +139,16 @@ Current state:
 - UTF-8 topic storage is covered.
 - Fast memory recall is backed by a SQLite FTS index and exposed through
   `ku_recall_memory`.
+- Persisted memory records can be promoted into stable callable thought/tool
+  candidates through C VM-backed memory promotion.
 
 Remaining:
 
 - Define retention, compaction, and migration rules for long-lived experience
   databases.
-- Make memory records directly callable as thought/tool surfaces, not just
-  stored rows.
+- Add policy and ranking around which memories deserve promotion.
+- Move from fixed promotion/call tools toward dynamic schemas for promoted
+  memories.
 
 Proof:
 
@@ -215,8 +218,9 @@ Proof:
 ## Near-Term Finish Order
 
 1. Lock current C VM/MCP/memory behavior with tests.
-2. Remove or gate Python semantic fallback.
-3. Audit C VM long-process memory ownership.
-4. Stabilize std module public APIs.
-5. Move bootstrap generation out of Python when Dao can own the path.
-6. Cut a release only after README, demos, tests, and MCP claims all match.
+2. Harden memory recall scoring, filters, and explainability.
+3. Add promotion policy and dynamic MCP exposure for promoted memories.
+4. Audit C VM long-process memory ownership.
+5. Stabilize std module public APIs.
+6. Move bootstrap generation out of Python when Dao can own the path.
+7. Cut a release only after README, demos, tests, and MCP claims all match.

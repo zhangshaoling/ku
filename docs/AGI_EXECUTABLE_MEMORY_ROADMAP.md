@@ -59,6 +59,9 @@ stage:
   under `DAO_DATA_DIR`.
 - C VM-backed memory recall is exposed through an FTS-backed
   `ku_recall_memory` MCP tool.
+- Selected memory records can be promoted into stable callable thought/tool
+  candidates through `ku_promote_memory` and called back through
+  `ku_call_memory`.
 - SQLite is the current durable store. It is acceptable as the first memory
   substrate and can later be joined by FTS, graph, vector, or distributed stores.
 
@@ -134,10 +137,10 @@ Required capabilities:
 The next implementation work should stay narrow:
 
 1. Harden memory recall scoring, filters, and explainability.
-2. Add MCP tools for memory promotion with clear schemas.
-3. Add memory promotion: record -> stable thought/tool candidate.
-4. Add callable-memory tests proving a persisted record can become a callable
-   surface.
+2. Add promotion policy: decide which memories should become callable and why.
+3. Expose promoted memories as dynamic MCP tool schemas, not only through the
+   generic `ku_call_memory` entry point.
+4. Add retention, compaction, and migration rules for long-lived memory stores.
 5. Only then expand syntax or higher-level AGI behavior.
 
 ## 6. Non-Goals For Now
