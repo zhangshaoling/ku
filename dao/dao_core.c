@@ -1384,6 +1384,9 @@ ExecResult builtin_sqlite_exec(Val **args, int argc) {
     }
     sqlite3 *db = db_conn_get((int)args[0]->num);
     if (!db) { r.val = val_num(-1); return r; }
+    /* SQL text is trusted Dao program source from .ku literals, not
+       model/user input; bound parameters use ? placeholders via
+       sqlite_bind_params and are never interpolated into the query string. */
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db, args[1]->str, -1, &stmt, NULL);
     if (rc != SQLITE_OK) return sqlite_exec_result(sqlite3_errmsg(db));
@@ -1409,6 +1412,9 @@ ExecResult builtin_sqlite_query(Val **args, int argc) {
     }
     sqlite3 *db = db_conn_get((int)args[0]->num);
     if (!db) { r.val = result; return r; }
+    /* SQL text is trusted Dao program source from .ku literals, not
+       model/user input; bound parameters use ? placeholders via
+       sqlite_bind_params and are never interpolated into the query string. */
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db, args[1]->str, -1, &stmt, NULL);
     if (rc != SQLITE_OK) return sqlite_exec_result(sqlite3_errmsg(db));
@@ -1546,6 +1552,17 @@ Val *builtin_system(Val **args, int argc) {
     dict_set(result, "stdout", val_str(""));
     dict_set(result, "stderr", val_str(""));
     dict_set(result, "code", val_num(1));
+    /* Shell capability is off by default to keep model/agent-generated
+       code from running arbitrary commands via ku_eval. Opt in with the
+       DAO_ALLOW_SYSTEM env flag for trusted debugging/parity work. */
+    const char *allow_system = getenv("DAO_ALLOW_SYSTEM");
+    if (!(allow_system && (strcmp(allow_system, "1") == 0 ||
+                           strcmp(allow_system, "true") == 0 ||
+                           strcmp(allow_system, "yes") == 0 ||
+                           strcmp(allow_system, "on") == 0))) {
+        dict_set(result, "stderr", val_str("system builtin disabled: set DAO_ALLOW_SYSTEM=1 to run shell commands"));
+        return result;
+    }
     if (argc < 1) return result;
     char *cmd = args[0]->type == V_STR ? strdup(args[0]->str) : val_to_string(args[0]);
     size_t shell_len = strlen(cmd) + strlen(" 2>&1") + 1;

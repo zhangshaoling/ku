@@ -291,6 +291,22 @@ def run_c_vm(cmd, bytecode):
     return stdout
 
 
+def run_c_vm_with_env(cmd, bytecode, extra_env):
+    env = os.environ.copy()
+    env.update(extra_env)
+    result = subprocess.run(
+        cmd,
+        input=json.dumps(bytecode, ensure_ascii=False).encode("utf-8"),
+        capture_output=True,
+        timeout=10,
+        env=env,
+    )
+    stderr = result.stderr.decode("utf-8", "replace")
+    stdout = result.stdout.decode("utf-8", "replace").strip()
+    assert result.returncode == 0, stderr
+    return stdout
+
+
 def run_c_vm_process(cmd, bytecode):
     return subprocess.run(
         cmd,
@@ -720,16 +736,23 @@ def test_c_vm_file_directory_time_and_system_builtins(c_vm_cmd, tmp_path):
         )
     )
 
-    result = run_c_vm(c_vm_cmd, bytecode)
+    # system is disabled by default; verify opt-in path separately.
+    default_result = run_c_vm(c_vm_cmd, bytecode)
+    optin_result = run_c_vm_with_env(c_vm_cmd, bytecode, {"DAO_ALLOW_SYSTEM": "1"})
 
-    assert '"wrote": true' in result
-    assert '"exists_before": true' in result
-    assert '"content": "天书"' in result
-    assert '"listed": true' in result
-    assert '"system_stdout": "dao' in result
-    assert '"now_positive": true' in result
-    assert '"deleted": true' in result
-    assert '"exists_after": false' in result
+    assert '"wrote": true' in default_result
+    assert '"exists_before": true' in default_result
+    assert '"content": "天书"' in default_result
+    assert '"listed": true' in default_result
+    # Default: system builtin is disabled; stderr explains why.
+    assert '"system_stdout": ""' in default_result
+    assert '"now_positive": true' in default_result
+    assert '"deleted": true' in default_result
+    assert '"exists_after": false' in default_result
+
+    # Opt-in: system builtin runs and returns expected output.
+    assert '"system_stdout": "dao' in optin_result
+    assert '"now_positive": true' in optin_result
 
 
 def test_c_vm_m3_now_fmt_sqlite_dao_data(c_vm_cmd, tmp_path):
