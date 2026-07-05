@@ -12,6 +12,9 @@ only when a thought can be written as Dao source, inspected as structured code,
 persisted as memory, executed by the C VM, exposed to agents through MCP, and
 verified without Python being the semantic authority.
 
+The long-term AGI memory direction is defined in
+`docs/AGI_EXECUTABLE_MEMORY_ROADMAP.md`.
+
 ## Completion Rule
 
 Every module below must name:
