@@ -632,8 +632,10 @@ Val *env_get(Env *e, const char *name) {
 
 #define STACK_MAX 1024
 #define TRY_MAX 64
+#define LOOP_MAX 16
 
 typedef struct Frame {
+    struct Frame *parent;
     Instr *instrs;
     int instr_count;
     Val **constants;
@@ -644,7 +646,8 @@ typedef struct Frame {
     int pc;
     int try_stack[TRY_MAX];
     int try_sp;
-    struct Frame *parent;
+    int loop_iter_sp[LOOP_MAX];
+    int loop_sp;
 } Frame;
 
 Frame *frame_new(Instr *instrs, int instr_count, Val **constants, int const_count, Env *env, Frame *parent) {
@@ -655,6 +658,7 @@ Frame *frame_new(Instr *instrs, int instr_count, Val **constants, int const_coun
     f->const_count = const_count;
     f->env = env;
     f->parent = parent;
+    f->loop_sp = -1;
     arena_register(&g_frame_arena, f);
     g_frame_allocated++;
     return f;
@@ -2769,37 +2773,52 @@ static ExecResult exec_frame(Frame *f) {
             f->pc++;
         }
         else if (strcmp(op, "GET_ITER") == 0) {
-            /* pop iterable, push iterator */
             Val *iterable = frame_pop(f);
             if (iterable->type == V_LIST) {
-                /* 创建简单迭代器：存储索引和列表 */
                 Val *iter = val_dict();
                 dict_set(iter, "__list__", iterable);
                 dict_set(iter, "__idx__", val_num(0));
                 frame_push(f, iter);
+                if (f->loop_sp < LOOP_MAX - 1) {
+                    f->loop_sp++;
+                    f->loop_iter_sp[f->loop_sp] = f->sp - 1;
+                }
             } else {
                 frame_push(f, val_nil());
+                if (f->loop_sp < LOOP_MAX - 1) {
+                    f->loop_sp++;
+                    f->loop_iter_sp[f->loop_sp] = f->sp - 1;
+                }
             }
             f->pc++;
         }
         else if (strcmp(op, "FOR_ITER") == 0) {
-            /* 迭代器取下一个元素 */
-            Val *iter = frame_top(f);
-            if (iter->type == V_DICT) {
+            if (f->loop_sp < 0) {
+                return exec_error("for loop iterator missing");
+            }
+            int idx = f->loop_iter_sp[f->loop_sp];
+            /* 每轮迭代恢复栈指针 */
+            f->sp = idx + 1;
+            Val *iter = f->stack[idx];
+            if (iter && iter->type == V_DICT) {
                 Val *list_val = dict_get(iter, "__list__");
                 Val *idx_val = dict_get(iter, "__idx__");
-                int idx = (int)idx_val->num;
-                if (list_val && idx < list_val->len) {
-                    frame_push(f, list_val->items[idx]);
-                    idx_val->num = idx + 1;
+                int cur = (int)idx_val->num;
+                if (list_val && cur < list_val->len) {
+                    frame_push(f, list_val->items[cur]);
+                    idx_val->num = cur + 1;
                     f->pc++;
                 } else {
-                    /* 迭代结束，弹出迭代器，跳转 */
-                    frame_pop(f);
+                    /* 迭代结束,移除迭代器 */
+                    for (int k = idx; k < f->sp - 1; k++) f->stack[k] = f->stack[k + 1];
+                    f->sp--;
+                    f->loop_sp--;
                     f->pc += (int)instr->num_arg;
                 }
             } else {
-                frame_pop(f);
+                for (int k = idx; k < f->sp - 1; k++) f->stack[k] = f->stack[k + 1];
+                f->sp--;
+                f->loop_sp--;
                 f->pc += (int)instr->num_arg;
             }
         }

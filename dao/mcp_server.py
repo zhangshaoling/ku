@@ -387,6 +387,45 @@ def main():
 
     tool_handlers["ku_golden_path"] = handle_golden_path
 
+    tool_definitions.append({
+        "name": "ku_tiandao",
+        "description": "Run Dao Tiandao meta-rule scheduling through the C VM",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "Question or task for Tiandao"},
+                "context": {"type": "object", "description": "Optional structured context", "additionalProperties": True},
+            },
+            "required": ["question"],
+        },
+    })
+
+    def handle_tiandao(arguments):
+        result = c_vm_runtime.call_thought(
+            "天道",
+            [arguments.get("question"), arguments.get("context") or {}],
+            profile="tiandao_mcp",
+        )
+        if not result.ok:
+            raise RuntimeError(result.error or result.stderr or result.stdout or "C VM execution failed")
+        return simplify_result(result.value)
+
+    tool_handlers["ku_tiandao"] = handle_tiandao
+
+    tool_definitions.append({
+        "name": "ku_tiandao_stats",
+        "description": "Read Dao Tiandao memory/tool statistics through the C VM",
+        "inputSchema": {"type": "object", "properties": {}},
+    })
+
+    def handle_tiandao_stats(arguments):
+        result = c_vm_runtime.call_thought("天道统计", [], profile="tiandao_fast")
+        if not result.ok:
+            raise RuntimeError(result.error or result.stderr or result.stdout or "C VM execution failed")
+        return simplify_result(result.value)
+
+    tool_handlers["ku_tiandao_stats"] = handle_tiandao_stats
+
     # ── 经验记忆网关工具 ──
     # 让运行中的智能体把“尝试了什么 / 缺什么 / 下一步补什么”落库，
     # 而不是只在对话里说。底层是 dao/std/experience.ku（SQLite）。

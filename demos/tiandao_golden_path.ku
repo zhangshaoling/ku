@@ -1,0 +1,7 @@
+// tiandao_golden_path.ku - direct C VM demo for dao/std/tiandao.ku
+
+first = 天道("道记忆", {})
+knowledge_add("dao", "道记忆: thought = code = memory", "tiandao_demo", ["dao", "memory"])
+second = 天道("道记忆", {})
+stats = 天道统计()
+{"first_action": first["action"], "second_action": second["action"], "second_count": second["count"], "stats": stats}

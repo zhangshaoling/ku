@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/version-0.9.0-blue" alt="Version 0.9.0">
   <img src="https://img.shields.io/badge/runtime-C%20VM-2ea44f" alt="C VM runtime">
   <img src="https://img.shields.io/badge/MCP-C%20VM%20default-6f42c1" alt="MCP C VM default">
-  <img src="https://img.shields.io/badge/memory-SQLite%20experience-f97316" alt="SQLite experience memory">
+  <img src="https://img.shields.io/badge/memory-SQLite%20six--table-f97316" alt="SQLite six-table memory">
   <img src="https://img.shields.io/badge/Python-harness%20only-64748b" alt="Python harness only">
   <img src="https://img.shields.io/badge/license-MIT-yellow" alt="MIT license">
 </p>
@@ -21,8 +21,8 @@ Its purpose is narrower: make a thought writable as source, inspectable as
 structured code, persistent as memory, executable by the C VM, and callable by
 agents through MCP.
 
-The long-term AGI memory direction is defined in
-`docs/AGI_EXECUTABLE_MEMORY_ROADMAP.md`.
+The canonical system map is `docs/DAO_SYSTEM_ARCHITECTURE.md`. The long-term
+AGI memory direction is defined in `docs/AGI_EXECUTABLE_MEMORY_ROADMAP.md`.
 
 ## Names
 
@@ -45,6 +45,10 @@ The project has moved beyond the early Python prototype:
   and MCP.
 - SQLite-backed experience memory, task queues, gaps, datasets, and data memory
   records persist under `DAO_DATA_DIR`.
+- `dao/std/memory.ku` defines the six-table Dao memory model:
+  Experience, Knowledge, Tool, Concept, Goal, and Relation.
+- `dao/std/tiandao_mcp.ku` provides the low-latency Tiandao MCP hot path for
+  agent scheduling and memory recording.
 - Selected memory records can be promoted into callable thought/tool candidates
   through the C VM-backed MCP path, and active promotions appear as dynamic
   `ku_memory_<thought_name>` tools.
@@ -113,6 +117,19 @@ Run module smoke checks:
 .\tools\verify_module.ps1 mcp
 ```
 
+Run a `.ku` file through the C VM gateway:
+
+```powershell
+uv run python -m dao run demos/golden_path.ku --profile frontend
+uv run python -m dao run demos/memory_6table_golden_path.ku --profile frontend --module dao/std/memory.ku
+```
+
+Start the minimal C VM-backed REPL:
+
+```powershell
+uv run python -m dao repl --profile frontend
+```
+
 Build the C VM:
 
 ```powershell
@@ -135,13 +152,30 @@ Run the MCP server:
 python -m dao.mcp_server
 ```
 
-The default `ku_eval`, `ku_call`, `ku_golden_path`, and experience-memory tools
-run through the C VM gateway. Memory recall and promotion are exposed through
-`ku_recall_memory`, `ku_recall_memory_explain`, `ku_promote_memory`,
-`ku_list_memory_promotions`, `ku_suggest_memory_promotions`, and
-`ku_call_memory`. Active promotions are also exposed as dynamic
-`ku_memory_<thought_name>` tools. If the C VM binary is missing, `ku_eval` fails
-loudly by default.
+A local MCP client can use this server definition:
+
+```json
+{
+  "mcpServers": {
+    "dao_tiandao": {
+      "command": "A:\\path\\to\\ku\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "dao.mcp_server"],
+      "env": {
+        "PYTHONPATH": "A:\\path\\to\\ku",
+        "DAO_DATA_DIR": "A:\\path\\to\\ku\\.dao_data"
+      }
+    }
+  }
+}
+```
+
+The default `ku_eval`, `ku_call`, `ku_golden_path`, `ku_tiandao`,
+`ku_tiandao_stats`, and experience-memory tools run through the C VM gateway.
+Memory recall and promotion are exposed through `ku_recall_memory`,
+`ku_recall_memory_explain`, `ku_promote_memory`, `ku_list_memory_promotions`,
+`ku_suggest_memory_promotions`, and `ku_call_memory`. Active promotions are also
+exposed as dynamic `ku_memory_<thought_name>` tools. If the C VM binary is
+missing, `ku_eval` fails loudly by default.
 
 Python fallback for `ku_eval` is reserved for debug/parity work:
 

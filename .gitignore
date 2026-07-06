@@ -18,7 +18,11 @@ pytest-cache-files-*/
 .ruff_cache/
 ku_search.db
 
-# Local backups and scratch files
+# Local backups, editor config, runtime data, and scratch files
+.zcode/
+.claude/
+.dao_data/
+dao_data/
 backups/
 scratch/
 
@@ -54,6 +58,7 @@ dao/_w*.py
 dao/_writer.py
 dao/_patch.txt
 dao/*.bak
+dao/_*.ku
 dao/test_if*.ku
 dao/test_parse.ku
 dao/test_dict.ku
@@ -62,6 +67,13 @@ dao/test_input.txt
 dao/think.py
 
 # One-off root experiments
+build.cmd
+build.py
+CLAUDE.md
 test_ai_core.ku
 test_real_ai.ku
 test_write.txt
+
+# Historical compatibility drafts not yet part of active Dao runtime
+ku/std/memory.ku
+ku/std/tiandao.ku

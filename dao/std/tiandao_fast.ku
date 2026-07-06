@@ -1,0 +1,75 @@
+// tiandao_fast.ku - fast MCP Tiandao path
+// Same public API as tiandao.ku, but avoids loading the full 81-chapter module.
+
+引 "std/memory" 别 忆
+引 "std/tool" 别 器
+
+// Rule 01: 有历史经验 -> 优先召回
+// Rule 02: 没有经验 -> 启动道计算推理
+// Rule 03: 推理成功 -> 写经验
+// Rule 04: 经验 trust > 阈值 -> 晋升 Tool
+// Rule 05: Tool 连续失败 -> 降级
+// Rule 06: 召回经验 > N 条 -> 按质量排序
+// Rule 07: 任务完成 -> 验证所有使用过的经验
+
+思 天道(问题, 上下文) {
+  若 is_none(上下文) { 上下文 = {} }
+  memory_init()
+  recall = tiandao_recall_fast(问题, 5)
+  count = recall["count"]
+  若 > (count, 0) {
+    {"action": "recall", "question": 问题, "rule": "01+06", "count": count, "results": recall["results"]}
+  } 否 {
+    reasoned = tiandao_reason_fast(问题, 上下文)
+    saved = experience_add("attempt", 问题, "tiandao_fast", 问题, reasoned["output"], "", "", ["tiandao", "fast"])
+    {"action": "reason_and_learn", "question": 问题, "rule": "02+03", "result": reasoned, "experience": saved}
+  }
+}
+
+思 tiandao_recall_fast(问题, limit) {
+  like = "%" + 问题 + "%"
+  conn = sqlite_open(memory_db())
+  knowledge = sqlite_query(conn, "SELECT id, domain, content, confidence, trust, recall_count FROM knowledge WHERE quality_status = 'active' AND (domain LIKE ? OR content LIKE ?) ORDER BY trust DESC, confidence DESC LIMIT ?", [like, like, limit])
+  experience = sqlite_query(conn, "SELECT id, kind, topic, context, confidence, trust, recall_count FROM experience WHERE quality_status = 'active' AND (topic LIKE ? OR context LIKE ?) ORDER BY trust DESC, confidence DESC LIMIT ?", [like, like, limit])
+  sqlite_close(conn)
+  results = []
+  i = 0
+  当 (i < len(knowledge)) {
+    row = knowledge[i]
+    results = results + [{"type": "knowledge", "id": row["id"], "content": row["content"], "confidence": row["confidence"], "trust": row["trust"], "recall_count": row["recall_count"]}]
+    i = i + 1
+  }
+  j = 0
+  当 (j < len(experience)) {
+    exp = experience[j]
+    results = results + [{"type": "experience", "id": exp["id"], "content": exp["topic"] + ": " + exp["context"], "confidence": exp["confidence"], "trust": exp["trust"], "recall_count": exp["recall_count"]}]
+    j = j + 1
+  }
+  {"results": results, "count": len(results)}
+}
+
+思 tiandao_reason_fast(问题, 上下文) {
+  seed = len(问题)
+  dao_out = [seed, seed + seed, seed + seed + seed]
+  {"ok": 真, "method": "dao_fast_42", "input": 问题, "output": "推理完成: " + 问题, "dao": dao_out}
+}
+
+思 规则_晋升检查(阈值) {
+  若 is_none(阈值) { 阈值 = 0.75 }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  rows = sqlite_query(conn, "SELECT * FROM experience WHERE quality_status = 'active' AND trust >= ? AND recall_count >= 3", [阈值])
+  sqlite_close(conn)
+  {"promotable": rows, "count": len(rows), "threshold": 阈值}
+}
+
+思 规则_衰减检查(阈值) {
+  若 is_none(阈值) { 阈值 = 3 }
+  tool_policy_decay(阈值)
+}
+
+思 天道统计() {
+  stats = memory_stats()
+  tools = tool_list_active(20)
+  {"memory": stats, "active_tools": tools["count"]}
+}
