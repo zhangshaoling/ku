@@ -33,10 +33,11 @@
 // ── 初始化 ──
 思 experience_init() {
   conn = sqlite_open(_exp_db())
-  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience (id TEXT PRIMARY KEY, kind TEXT NOT NULL, topic TEXT DEFAULT '', context TEXT DEFAULT '', input TEXT DEFAULT '', output TEXT DEFAULT '', missing TEXT DEFAULT '', next_action TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'open', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience (id TEXT PRIMARY KEY, kind TEXT NOT NULL, topic TEXT DEFAULT '', context TEXT DEFAULT '', input TEXT DEFAULT '', output TEXT DEFAULT '', missing TEXT DEFAULT '', next_action TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'open', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, success_count INTEGER DEFAULT 0, failure_count INTEGER DEFAULT 0, recall_count INTEGER DEFAULT 0, last_recalled_at TEXT, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, tool_generated INTEGER DEFAULT 0, quality_status TEXT DEFAULT 'active')")
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience_link (id TEXT PRIMARY KEY, experience_id TEXT NOT NULL, task_id TEXT DEFAULT '', thought_name TEXT DEFAULT '', dataset_id TEXT DEFAULT '', created_at TEXT NOT NULL)")
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS memory_promotion (id TEXT PRIMARY KEY, experience_id TEXT NOT NULL, thought_name TEXT NOT NULL UNIQUE, tool_name TEXT NOT NULL, description TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
-  sqlite_exec(conn, "CREATE VIRTUAL TABLE IF NOT EXISTS experience_fts USING fts5(id UNINDEXED, kind, topic, context, input, output, missing, next_action, tags)")
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS memory_promotion_meta (promotion_id TEXT PRIMARY KEY, reason TEXT DEFAULT '', policy TEXT DEFAULT '', updated_at TEXT NOT NULL)")
+  sqlite_exec(conn, "CREATE VIRTUAL TABLE IF NOT EXISTS experience_fts USING fts5(id UNINDEXED, kind, topic, context, input, output, missing, next_action, tags, tokenize='trigram')")
   sqlite_exec(conn, "INSERT INTO experience_fts (id, kind, topic, context, input, output, missing, next_action, tags) SELECT id, kind, topic, context, input, output, missing, next_action, tags_json FROM experience WHERE NOT EXISTS (SELECT 1 FROM experience_fts WHERE experience_fts.id = experience.id)")
   sqlite_close(conn)
   {"ok": 真, "db": _exp_db()}
@@ -137,11 +138,73 @@
   out["thought_name"] = row["thought_name"]
   out["tool_name"] = row["tool_name"]
   out["description"] = row["description"]
+  out["reason"] = row["reason"]
+  out["policy"] = row["policy"]
   out["status"] = row["status"]
   out["created_at"] = row["created_at"]
   out["updated_at"] = row["updated_at"]
   out["memory"] = memory
   out
+}
+
+思 _promotion_rows(rows) {
+  out = []
+  若 is_list(rows) {
+    遍 r 于 rows {
+      out = out + [_promotion_row(r, {})]
+    }
+  }
+  out
+}
+
+思 _memory_match_reason(row, query) {
+  若 str_is_empty(query) { 返 "recent memory" }
+  reason = "fts match"
+  tag_text = ""
+  若 has(row, "tags_json") { tag_text = row["tags_json"] }
+  若 has(row, "tags") { tag_text = str(row["tags"]) }
+  若 str_contains(row["topic"], query) { reason = "topic match" }
+  若 str_contains(row["context"], query) { reason = reason + "; context match" }
+  若 str_contains(row["input"], query) { reason = reason + "; input match" }
+  若 str_contains(row["output"], query) { reason = reason + "; output match" }
+  若 str_contains(row["missing"], query) { reason = reason + "; missing match" }
+  若 str_contains(row["next_action"], query) { reason = reason + "; next_action match" }
+  若 str_contains(tag_text, query) { reason = reason + "; tag match" }
+  reason
+}
+
+思 _promotion_policy(row) {
+  score = 0
+  reason = ""
+  若 == (row["kind"], "data_memory") {
+    score = score + 3
+    reason = reason + "data_memory is durable structured memory; "
+  }
+  若 == (row["kind"], "code_data_gap") {
+    score = score + 2
+    reason = reason + "code_data_gap links code and data work; "
+  }
+  tag_text = ""
+  若 has(row, "tags_json") { tag_text = row["tags_json"] }
+  若 has(row, "tags") { tag_text = str(row["tags"]) }
+  若 str_contains(tag_text, "principle") {
+    score = score + 3
+    reason = reason + "principle tag indicates reusable rule; "
+  }
+  若 str_contains(tag_text, "memory") {
+    score = score + 1
+    reason = reason + "memory tag indicates long-lived value; "
+  }
+  若 str_contains(tag_text, "dao") {
+    score = score + 1
+    reason = reason + "dao tag ties it to language identity; "
+  }
+  若 str_contains(tag_text, "longterm") {
+    score = score + 2
+    reason = reason + "longterm tag indicates persistence intent; "
+  }
+  若 str_is_empty(reason) { reason = "low-confidence candidate" }
+  {"policy": "promotion_policy_v1", "score": score, "reason": reason, "recommended": (> (score, 0))}
 }
 
 // ── 列出未解决缺口 ──
@@ -210,6 +273,26 @@
   {"memories": _exp_rows(rows), "count": len(_exp_rows(rows)), "query": query, "kind": kind}
 }
 
+// ── 可解释召回：返回记忆和命中原因，便于智能体知道为什么想起它 ──
+思 memory_recall_explain(query, kind, limit) {
+  若 is_none(query) { query = "" }
+  若 is_none(kind) { kind = "" }
+  若 is_none(limit) { limit = 10 }
+
+  recalled = memory_recall(query, kind, limit)
+  explanations = []
+  遍 memory 于 recalled["memories"] {
+    item = {}
+    item["memory_id"] = memory["id"]
+    item["reason"] = _memory_match_reason(memory, query)
+    item["kind"] = memory["kind"]
+    item["topic"] = memory["topic"]
+    item["tags"] = memory["tags"]
+    explanations = explanations + [item]
+  }
+  {"memories": recalled["memories"], "explanations": explanations, "count": recalled["count"], "query": query, "kind": kind}
+}
+
 // ── 提升记忆：把一条持久化 memory 绑定成稳定 thought/tool 候选 ──
 思 memory_promote(experience_id, thought_name, description) {
   若 is_none(experience_id) { experience_id = "" }
@@ -227,6 +310,9 @@
   existing = sqlite_query(conn, "SELECT * FROM memory_promotion WHERE thought_name = ?", [thought_name])
   ts = _exp_now()
   tool_name = "ku_memory_" + thought_name
+  policy = _promotion_policy(rows[0])
+  reason = policy["reason"]
+  policy_name = policy["policy"]
 
   若 (> (len(existing), 0)) {
     promotion_id = existing[0]["id"]
@@ -235,13 +321,23 @@
     promotion_id = _exp_gen_id()
     sqlite_exec(conn, "INSERT INTO memory_promotion (id, experience_id, thought_name, tool_name, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)", [promotion_id, experience_id, thought_name, tool_name, description, ts, ts])
   }
+  sqlite_exec(conn, "INSERT OR REPLACE INTO memory_promotion_meta (promotion_id, reason, policy, updated_at) VALUES (?, ?, ?, ?)", [promotion_id, reason, policy_name, ts])
 
   link_id = _exp_gen_id()
   sqlite_exec(conn, "INSERT INTO experience_link (id, experience_id, thought_name, created_at) VALUES (?, ?, ?, ?)", [link_id, experience_id, thought_name, ts])
-  promotion_rows = sqlite_query(conn, "SELECT * FROM memory_promotion WHERE id = ?", [promotion_id])
+  promotion_rows = sqlite_query(conn, "SELECT m.*, COALESCE(mm.reason, '') AS reason, COALESCE(mm.policy, '') AS policy FROM memory_promotion m LEFT JOIN memory_promotion_meta mm ON mm.promotion_id = m.id WHERE m.id = ?", [promotion_id])
   sqlite_close(conn)
 
   _promotion_row(promotion_rows[0], _exp_row(rows[0]))
+}
+
+// ── 列出已提升记忆，用于 MCP 动态工具发现 ──
+思 memory_promotion_list() {
+  experience_init()
+  conn = sqlite_open(_exp_db())
+  rows = sqlite_query(conn, "SELECT m.*, COALESCE(mm.reason, '') AS reason, COALESCE(mm.policy, '') AS policy FROM memory_promotion m LEFT JOIN memory_promotion_meta mm ON mm.promotion_id = m.id WHERE m.status = 'active' ORDER BY m.updated_at DESC", [])
+  sqlite_close(conn)
+  {"promotions": _promotion_rows(rows), "count": len(rows)}
 }
 
 // ── 调用已提升记忆：按 thought_name 返回绑定的 memory record ──
@@ -250,7 +346,7 @@
 
   experience_init()
   conn = sqlite_open(_exp_db())
-  promotion_rows = sqlite_query(conn, "SELECT * FROM memory_promotion WHERE thought_name = ? AND status = 'active' LIMIT 1", [thought_name])
+  promotion_rows = sqlite_query(conn, "SELECT m.*, COALESCE(mm.reason, '') AS reason, COALESCE(mm.policy, '') AS policy FROM memory_promotion m LEFT JOIN memory_promotion_meta mm ON mm.promotion_id = m.id WHERE m.thought_name = ? AND m.status = 'active' LIMIT 1", [thought_name])
   若 == (len(promotion_rows), 0) {
     sqlite_close(conn)
     返 {"error": "promoted memory not found", "thought_name": thought_name}
@@ -264,6 +360,32 @@
   sqlite_close(conn)
 
   _promotion_row(promotion_rows[0], _exp_row(memory_rows[0]))
+}
+
+// ── 推荐可提升记忆：简单本地规则，不调用外部模型 ──
+思 memory_suggest_promotions(query, kind, limit) {
+  若 is_none(query) { query = "" }
+  若 is_none(kind) { kind = "" }
+  若 is_none(limit) { limit = 10 }
+
+  recalled = memory_recall(query, kind, limit)
+  conn = sqlite_open(_exp_db())
+  candidates = []
+  遍 memory 于 recalled["memories"] {
+    policy = _promotion_policy(memory)
+    existing = sqlite_query(conn, "SELECT * FROM memory_promotion WHERE experience_id = ? AND status = 'active' LIMIT 1", [memory["id"]])
+    already = (> (len(existing), 0))
+    item = {}
+    item["memory"] = memory
+    item["reason"] = policy["reason"]
+    item["policy"] = policy["policy"]
+    item["score"] = policy["score"]
+    item["recommended"] = policy["recommended"]
+    item["already_promoted"] = already
+    candidates = candidates + [item]
+  }
+  sqlite_close(conn)
+  {"candidates": candidates, "count": len(candidates), "query": query, "kind": kind, "policy": "promotion_policy_v1"}
 }
 
 // ── 经验统计 ──
@@ -302,4 +424,189 @@
   sqlite_close(link_conn)
 
   {"gap_id": gap_id, "task_id": task_id, "status": "queued"}
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  经验质量系统 (Experience Quality Lifecycle)
+// ═══════════════════════════════════════════════════════════════
+
+// ── 质量列初始化 (幂等) ──
+思 quality_init() {
+  experience_init()
+  conn = sqlite_open(_exp_db())
+  // 检查是否已有质量列 (PRAGMA 返回列信息)
+  info = sqlite_query(conn, "PRAGMA table_info(experience)", [])
+  有质量列 = 假
+  i = 0
+  当 (i < len(info)) {
+    若 info[i]["name"] == "confidence" { 有质量列 = 真 }
+    i = i + 1
+  }
+  // 没有才添加 (旧库迁移)
+  若 有质量列 {
+    sqlite_close(conn)
+    {"ok": 真, "migrated": 假}
+  } 否 {
+    // 已在 experience_init 的 CREATE TABLE 中定义新列
+    // 此处仅做占位
+    sqlite_close(conn)
+    {"ok": 真, "migrated": 假}
+  }
+}
+
+// ── 任务完成后验证经验 ──
+思 experience_validate(id, success) {
+  experience_init()
+  conn = sqlite_open(_exp_db())
+  ts = _exp_now()
+
+  若 success {
+    sqlite_exec(conn, "UPDATE experience SET success_count = success_count + 1, updated_at = ? WHERE id = ?", [ts, id])
+  } 否 {
+    sqlite_exec(conn, "UPDATE experience SET failure_count = failure_count + 1, updated_at = ? WHERE id = ?", [ts, id])
+  }
+
+  rows = sqlite_query(conn, "SELECT success_count, failure_count FROM experience WHERE id = ?", [id])
+  sqlite_close(conn)
+
+  若 == (len(rows), 0) { {"error": "not found", "id": id} } 否 {
+    s = rows[0]["success_count"]
+    f = rows[0]["failure_count"]
+    total = s + f
+    置信 = 0.5
+    若 > (total, 0) { 置信 = s / total }
+    // 样本少时向 0.5 回归
+    若 < (total, 5) { 置信 = (置信 * total + 0.5 * (5 - total)) / 5 }
+
+    conn2 = sqlite_open(_exp_db())
+    sqlite_exec(conn2, "UPDATE experience SET confidence = ? WHERE id = ?", [置信, id])
+    sqlite_close(conn2)
+
+    {"id": id, "success": success, "confidence": 置信}
+  }
+}
+
+// ── 计算经验质量分 ──
+思 experience_quality(id) {
+  experience_init()
+  conn = sqlite_open(_exp_db())
+  rows = sqlite_query(conn, "SELECT success_count, failure_count, recall_count, confidence FROM experience WHERE id = ?", [id])
+  sqlite_close(conn)
+
+  若 == (len(rows), 0) { 0 } 否 {
+    s = rows[0]["success_count"]
+    f = rows[0]["failure_count"]
+    r = rows[0]["recall_count"]
+    conf = rows[0]["confidence"]
+    total = s + f
+    成功率 = 0.5
+    若 > (total, 0) { 成功率 = (s + 1) / (total + 2) }
+    召回因子 = 1.0
+    若 > (r, 0) { 召回因子 = 1.0 + _min(r, 5) / 5.0 }
+    成功率 * 召回因子 * conf
+  }
+}
+
+思 _min(a, b) { 若 < (a, b) { a } 否 { b } }
+
+// ── 质量感知召回 (FTS5 + 质量排序) ──
+思 experience_search_quality(query, kind, limit) {
+  若 is_none(query) { query = "" }
+  若 is_none(kind) { kind = "" }
+  若 is_none(limit) { limit = 10 }
+
+  experience_init()
+  conn = sqlite_open(_exp_db())
+
+  若 str_is_empty(query) {
+    // 无查询文本时按质量排序返回
+    若 str_is_empty(kind) {
+      rows = sqlite_query(conn, "SELECT * FROM experience WHERE quality_status = 'active' ORDER BY confidence DESC, created_at DESC LIMIT ?", [limit])
+    } 否 {
+      rows = sqlite_query(conn, "SELECT * FROM experience WHERE quality_status = 'active' AND kind = ? ORDER BY confidence DESC, created_at DESC LIMIT ?", [kind, limit])
+    }
+  } 否 {
+    // FTS5 全文搜索
+    若 str_is_empty(kind) {
+      rows = sqlite_query(conn, "SELECT e.* FROM experience_fts f JOIN experience e ON e.id = f.id WHERE experience_fts MATCH ? AND e.quality_status = 'active' ORDER BY bm25(experience_fts) LIMIT ?", [query, limit * 2])
+    } 否 {
+      rows = sqlite_query(conn, "SELECT e.* FROM experience_fts f JOIN experience e ON e.id = f.id WHERE experience_fts MATCH ? AND e.kind = ? AND e.quality_status = 'active' ORDER BY bm25(experience_fts) LIMIT ?", [query, kind, limit * 2])
+    }
+  }
+  sqlite_close(conn)
+  {"results": _exp_rows(rows), "count": len(rows)}
+}
+
+// ── 单条经验召回 (更新 recall_count + last_recalled_at) ──
+思 experience_recall_one(id) {
+  experience_init()
+  conn = sqlite_open(_exp_db())
+  ts = _exp_now()
+  sqlite_exec(conn, "UPDATE experience SET recall_count = recall_count + 1, last_recalled_at = ? WHERE id = ?", [ts, id])
+  rows = sqlite_query(conn, "SELECT * FROM experience WHERE id = ?", [id])
+  sqlite_close(conn)
+
+  若 == (len(rows), 0) {
+    {"error": "not found", "id": id}
+  } 否 {
+    r = _exp_row(rows[0])
+    r["quality"] = experience_quality(id)
+    r
+  }
+}
+
+// ── 时间衰减 (定期调用, 例如每次会话开始时) ──
+// 超过 threshold_days 天未使用的经验 trust *= decay_factor
+思 experience_decay(threshold_days) {
+  若 is_none(threshold_days) { threshold_days = 30 }
+  experience_init()
+  conn = sqlite_open(_exp_db())
+
+  // trust 衰减: 每天衰减 1%, 30天约 0.74
+  sqlite_exec(conn, "UPDATE experience SET trust = trust * 0.99 WHERE quality_status = 'active' AND last_recalled_at IS NOT NULL AND julianday('now') - julianday(last_recalled_at) > ?", [threshold_days])
+
+  // trust 低于 0.1 的标记为 decaying
+  sqlite_exec(conn, "UPDATE experience SET quality_status = 'decaying' WHERE quality_status = 'active' AND trust < 0.1")
+
+  sqlite_close(conn)
+  {"status": "decayed", "threshold_days": threshold_days}
+}
+
+// ── 归档低质量经验 (不再参与召回) ──
+思 experience_archive(min_confidence) {
+  若 is_none(min_confidence) { min_confidence = 0.15 }
+  experience_init()
+  conn = sqlite_open(_exp_db())
+  sqlite_exec(conn, "UPDATE experience SET quality_status = 'archived' WHERE quality_status IN ('active', 'decaying') AND confidence < ?", [min_confidence])
+  info = sqlite_query(conn, "SELECT changes() AS cnt", [])
+  sqlite_close(conn)
+  {"status": "archived", "min_confidence": min_confidence, "archived": _exp_rows(info)}
+}
+
+// ── 经验生命周期统计 ──
+思 experience_lifecycle_stats() {
+  experience_init()
+  conn = sqlite_open(_exp_db())
+
+  // 各状态计数
+  by_status = sqlite_query(conn, "SELECT quality_status, COUNT(*) AS cnt FROM experience GROUP BY quality_status", [])
+
+  // 总经验数
+  total_q = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM experience", [])
+
+  // 高质量经验数 (confidence > 0.7)
+  high_q = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM experience WHERE confidence > 0.7 AND quality_status = 'active'", [])
+
+  sqlite_close(conn)
+
+  总数 = 0
+  高质量 = 0
+  若 > (len(total_q), 0) { 总数 = total_q[0]["cnt"] }
+  若 > (len(high_q), 0) { 高质量 = high_q[0]["cnt"] }
+
+  {
+    "by_status": by_status,
+    "total": 总数,
+    "high_quality": 高质量
+  }
 }

@@ -1,0 +1,73 @@
+// tool.ku - Dao tool policy layer
+// A tool is promoted memory, not an external add-on.
+
+思 tool_promote(experience_id, thought_name, description) {
+  若 is_none(experience_id) { experience_id = "" }
+  若 is_none(thought_name) { thought_name = "" }
+  若 is_none(description) { description = "" }
+  tool_add(thought_name, description, {"experience_id": experience_id}, experience_id)
+}
+
+思 tool_demote(tool_name, reason) {
+  若 is_none(reason) { reason = "" }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  sqlite_exec(conn, "UPDATE tool_registry SET status = 'demoted', quality_status = 'decaying', updated_at = ? WHERE name = ?", [memory_now(), tool_name])
+  rows = sqlite_query(conn, "SELECT * FROM tool_registry WHERE name = ? LIMIT 1", [tool_name])
+  sqlite_close(conn)
+  若 == (len(rows), 0) { {"error": "not found", "tool": tool_name, "reason": reason} } 否 { {"tool": rows[0], "status": "demoted", "reason": reason} }
+}
+
+思 tool_record_success(tool_name) {
+  memory_init()
+  conn = sqlite_open(memory_db())
+  sqlite_exec(conn, "UPDATE tool_registry SET call_count = call_count + 1, success_count = success_count + 1, trust = trust + 0.05, confidence = confidence + 0.05, updated_at = ? WHERE name = ?", [memory_now(), tool_name])
+  rows = sqlite_query(conn, "SELECT * FROM tool_registry WHERE name = ? LIMIT 1", [tool_name])
+  sqlite_close(conn)
+  若 == (len(rows), 0) { {"error": "not found", "tool": tool_name} } 否 { rows[0] }
+}
+
+思 tool_record_failure(tool_name, error) {
+  若 is_none(error) { error = "" }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  sqlite_exec(conn, "UPDATE tool_registry SET call_count = call_count + 1, fail_count = fail_count + 1, trust = trust * 0.8, confidence = confidence * 0.9, updated_at = ? WHERE name = ?", [memory_now(), tool_name])
+  rows = sqlite_query(conn, "SELECT * FROM tool_registry WHERE name = ? LIMIT 1", [tool_name])
+  sqlite_close(conn)
+  若 == (len(rows), 0) { {"error": "not found", "tool": tool_name} } 否 { {"tool": rows[0], "error": error} }
+}
+
+思 tool_list_active(limit) {
+  若 is_none(limit) { limit = 20 }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  rows = sqlite_query(conn, "SELECT * FROM tool_registry WHERE status = 'active' AND quality_status = 'active' ORDER BY trust DESC, confidence DESC, call_count DESC LIMIT ?", [limit])
+  sqlite_close(conn)
+  {"tools": rows, "count": len(rows)}
+}
+
+思 tool_quality(tool_name) {
+  memory_init()
+  conn = sqlite_open(memory_db())
+  rows = sqlite_query(conn, "SELECT * FROM tool_registry WHERE name = ? LIMIT 1", [tool_name])
+  sqlite_close(conn)
+  若 == (len(rows), 0) { 0 } 否 {
+    row = rows[0]
+    calls = row["call_count"]
+    succ = row["success_count"]
+    fail = row["fail_count"]
+    rate = 0.5
+    若 > (calls, 0) { rate = (succ + 1) / (calls + 2) }
+    row["trust"] * row["confidence"] * rate
+  }
+}
+
+思 tool_policy_decay(max_failures) {
+  若 is_none(max_failures) { max_failures = 3 }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  sqlite_exec(conn, "UPDATE tool_registry SET status = 'demoted', quality_status = 'decaying', updated_at = ? WHERE fail_count >= ?", [memory_now(), max_failures])
+  rows = sqlite_query(conn, "SELECT * FROM tool_registry WHERE status = 'demoted'", [])
+  sqlite_close(conn)
+  {"demoted": rows, "count": len(rows), "max_failures": max_failures}
+}

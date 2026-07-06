@@ -60,7 +60,10 @@ def test_dao_mcp_server_lists_and_calls_tools():
             "ku_list_gaps",
             "ku_search_experience",
             "ku_recall_memory",
+            "ku_recall_memory_explain",
             "ku_promote_memory",
+            "ku_list_memory_promotions",
+            "ku_suggest_memory_promotions",
             "ku_call_memory",
             "ku_record_dataset",
             "ku_record_data_memory",
@@ -250,6 +253,66 @@ def test_ku_call_preserves_string_arguments():
             proc.kill()
 
 
+def test_promoted_memories_are_exposed_as_dynamic_mcp_tools(tmp_path):
+    env = dict(os.environ)
+    env["DAO_DATA_DIR"] = str(tmp_path / "dao_data")
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "dao.mcp_server"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    try:
+        send_request(
+            proc,
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "pytest", "version": "0"},
+            },
+        )
+        send_notification(proc, "notifications/initialized")
+
+        recorded = tool_text(send_request(proc, 2, "tools/call", {"name": "ku_record_data_memory", "arguments": {
+            "topic": "Dao 原生对象",
+            "key": "thought-memory",
+            "value_json": "{\"equation\":\"memory=code=data=thought\"}",
+            "tags": "dao,principle,memory",
+        }}))["result"]
+        tool_text(send_request(proc, 3, "tools/call", {"name": "ku_promote_memory", "arguments": {
+            "experience_id": recorded["id"],
+            "thought_name": "dao_thought_memory_identity",
+            "description": "Dao thought-memory identity",
+        }}))
+
+        listed = send_request(proc, 4, "tools/list")
+        tools = listed["result"]["tools"]
+        names = [tool["name"] for tool in tools]
+        assert names.count("ku_memory_dao_thought_memory_identity") == 1
+        dynamic_tool = next(tool for tool in tools if tool["name"] == "ku_memory_dao_thought_memory_identity")
+        assert dynamic_tool["inputSchema"]["properties"]["note"]["type"] == "string"
+        assert dynamic_tool["inputSchema"].get("required") is None
+
+        called = tool_text(send_request(proc, 5, "tools/call", {"name": "ku_memory_dao_thought_memory_identity", "arguments": {}}))["result"]
+        assert called["thought_name"] == "dao_thought_memory_identity"
+        assert called["memory"]["id"] == recorded["id"]
+        assert called["memory"]["topic"] == "Dao 原生对象"
+    finally:
+        if proc.stdin:
+            proc.stdin.close()
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
 def test_default_mcp_execution_does_not_call_python_thought(tmp_path):
     sitecustomize = tmp_path / "sitecustomize.py"
     sitecustomize.write_text(
@@ -267,6 +330,7 @@ dao.runtime.Thought.call = fail_if_called
     )
 
     env = dict(os.environ)
+    env["DAO_DATA_DIR"] = str(tmp_path / "dao_data")
     env.pop("DAO_MCP_ALLOW_PYTHON_FALLBACK", None)
     existing_pythonpath = env.get("PYTHONPATH")
     env["PYTHONPATH"] = (
@@ -313,6 +377,28 @@ dao.runtime.Thought.call = fail_if_called
             {"name": "ku_call", "arguments": {"name": "is_numeric", "arguments": {"s": "12345"}}},
         )
         assert tool_text(call_result) == {"result": True}
+
+        recorded = tool_text(send_request(proc, 4, "tools/call", {"name": "ku_record_data_memory", "arguments": {
+            "topic": "默认路径测试",
+            "key": "dynamic-memory",
+            "value_json": "{\"ok\":true}",
+            "tags": "dao,memory",
+        }}))["result"]
+        tool_text(send_request(proc, 5, "tools/call", {"name": "ku_promote_memory", "arguments": {
+            "experience_id": recorded["id"],
+            "thought_name": "default_path_dynamic_memory",
+            "description": "Default path dynamic memory",
+        }}))
+        listed = send_request(proc, 6, "tools/list")
+        names = {tool["name"] for tool in listed["result"]["tools"]}
+        assert "ku_memory_default_path_dynamic_memory" in names
+        dynamic_result = send_request(
+            proc,
+            7,
+            "tools/call",
+            {"name": "ku_memory_default_path_dynamic_memory", "arguments": {}},
+        )
+        assert tool_text(dynamic_result)["result"]["memory"]["id"] == recorded["id"]
     finally:
         if proc.stdin:
             proc.stdin.close()

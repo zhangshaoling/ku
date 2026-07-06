@@ -1,0 +1,219 @@
+// memory.ku - Dao six-table memory system
+// Types: experience, knowledge, tool_registry, concept, goal, relation.
+// Canonical path: dao/std/memory.ku
+
+思 memory_db() {
+  dao_data_path("memory.db")
+}
+
+思 memory_now() {
+  now_fmt("%Y-%m-%dT%H:%M:%S")
+}
+
+思 memory_id(prefix) {
+  prefix + "_" + str(int(now() * 1000) % 1000000000)
+}
+
+思 memory_tags_json(tags) {
+  若 is_none(tags) { "[]" } 否 {
+    若 is_list(tags) { json_stringify(tags) } 否 {
+      若 is_str(tags) {
+        若 str_is_empty(tags) { "[]" } 否 { json_stringify(str_split(tags, ",")) }
+      } 否 { json_stringify([str(tags)]) }
+    }
+  }
+}
+
+思 memory_tags_text(tags) {
+  若 is_none(tags) { "" } 否 {
+    若 is_list(tags) { memory_join(tags, ",") } 否 { str(tags) }
+  }
+}
+
+思 memory_join(xs, sep) {
+  若 == (len(xs), 0) { "" } 否 {
+    out = str(xs[0])
+    i = 1
+    当 (i < len(xs)) {
+      out = out + sep + str(xs[i])
+      i = i + 1
+    }
+    out
+  }
+}
+
+思 memory_init() {
+  conn = sqlite_open(memory_db())
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience (id TEXT PRIMARY KEY, kind TEXT NOT NULL, topic TEXT DEFAULT '', context TEXT DEFAULT '', input TEXT DEFAULT '', output TEXT DEFAULT '', missing TEXT DEFAULT '', next_action TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'open', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, success_count INTEGER DEFAULT 0, failure_count INTEGER DEFAULT 0, recall_count INTEGER DEFAULT 0, last_recalled_at TEXT, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, tool_generated INTEGER DEFAULT 0, quality_status TEXT DEFAULT 'active')", [])
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS knowledge (id TEXT PRIMARY KEY, domain TEXT NOT NULL, content TEXT NOT NULL, source TEXT DEFAULT '', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, recall_count INTEGER DEFAULT 0, last_recalled_at TEXT, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, quality_status TEXT DEFAULT 'active')", [])
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS tool_registry (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT DEFAULT '', params_json TEXT DEFAULT '{}', source_experience_id TEXT DEFAULT '', call_count INTEGER DEFAULT 0, success_count INTEGER DEFAULT 0, fail_count INTEGER DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, status TEXT NOT NULL DEFAULT 'active', quality_status TEXT DEFAULT 'active')", [])
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS concept (id TEXT PRIMARY KEY, name TEXT NOT NULL, definition TEXT NOT NULL, examples_json TEXT DEFAULT '[]', domain TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, recall_count INTEGER DEFAULT 0, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, quality_status TEXT DEFAULT 'active')", [])
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS goal (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '', priority INTEGER DEFAULT 5, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, progress REAL DEFAULT 0.0, trust REAL DEFAULT 0.5, quality_status TEXT DEFAULT 'active')", [])
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS relation (id TEXT PRIMARY KEY, rel_type TEXT NOT NULL, from_type TEXT NOT NULL, from_id TEXT NOT NULL, to_type TEXT NOT NULL, to_id TEXT NOT NULL, properties_json TEXT DEFAULT '{}', confidence REAL DEFAULT 0.5, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)", [])
+  sqlite_exec(conn, "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(id UNINDEXED, type, name, content, tags, tokenize='trigram')", [])
+  sqlite_close(conn)
+  {"ok": 真, "db": memory_db(), "tables": ["experience", "knowledge", "tool_registry", "concept", "goal", "relation"]}
+}
+
+思 experience_add(kind, topic, context, input, output, missing, next_action, tags) {
+  若 is_none(kind) { kind = "observation" }
+  若 is_none(topic) { topic = "" }
+  若 is_none(context) { context = "" }
+  若 is_none(input) { input = "" }
+  若 is_none(output) { output = "" }
+  若 is_none(missing) { missing = "" }
+  若 is_none(next_action) { next_action = "" }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  ts = memory_now()
+  eid = memory_id("exp")
+  tags_json = memory_tags_json(tags)
+  sqlite_exec(conn, "INSERT INTO experience (id, kind, topic, context, input, output, missing, next_action, tags_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [eid, kind, topic, context, input, output, missing, next_action, tags_json, ts, ts])
+  sqlite_exec(conn, "INSERT INTO memory_fts (id, type, name, content, tags) VALUES (?, 'experience', ?, ?, ?)", [eid, topic, context + " " + input + " " + output + " " + missing + " " + next_action, tags_json])
+  sqlite_close(conn)
+  {"id": eid, "kind": kind, "topic": topic}
+}
+
+思 knowledge_add(domain, content, source, tags) {
+  若 is_none(source) { source = "" }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  ts = memory_now()
+  kid = memory_id("kw")
+  tags_json = memory_tags_json(tags)
+  sqlite_exec(conn, "INSERT INTO knowledge (id, domain, content, source, tags_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [kid, domain, content, source, tags_json, ts, ts])
+  sqlite_exec(conn, "INSERT INTO memory_fts (id, type, name, content, tags) VALUES (?, 'knowledge', ?, ?, ?)", [kid, domain, content, tags_json])
+  sqlite_close(conn)
+  {"id": kid, "domain": domain}
+}
+
+思 knowledge_search(query, limit) {
+  若 is_none(limit) { limit = 10 }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  rows = sqlite_query(conn, "SELECT k.* FROM memory_fts f JOIN knowledge k ON k.id = f.id WHERE memory_fts MATCH ? AND k.quality_status = 'active' ORDER BY k.confidence DESC, k.recall_count DESC LIMIT ?", [query, limit])
+  sqlite_close(conn)
+  {"results": rows, "count": len(rows)}
+}
+
+思 tool_add(name, description, params, source_exp_id) {
+  若 is_none(params) { params = {} }
+  若 is_none(source_exp_id) { source_exp_id = "" }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  ts = memory_now()
+  tid = memory_id("tool")
+  sqlite_exec(conn, "INSERT INTO tool_registry (id, name, description, params_json, source_experience_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [tid, name, description, json_stringify(params), source_exp_id, ts, ts])
+  sqlite_exec(conn, "INSERT INTO memory_fts (id, type, name, content, tags) VALUES (?, 'tool', ?, ?, ?)", [tid, name, description, "tool"])
+  sqlite_close(conn)
+  {"id": tid, "name": name}
+}
+
+思 tool_call(name) {
+  memory_init()
+  conn = sqlite_open(memory_db())
+  sqlite_exec(conn, "UPDATE tool_registry SET call_count = call_count + 1, updated_at = ? WHERE name = ?", [memory_now(), name])
+  rows = sqlite_query(conn, "SELECT * FROM tool_registry WHERE name = ? AND status = 'active' LIMIT 1", [name])
+  sqlite_close(conn)
+  若 == (len(rows), 0) { {"error": "not found", "name": name} } 否 { rows[0] }
+}
+
+思 concept_add(name, definition, examples, domain) {
+  若 is_none(examples) { examples = [] }
+  若 is_none(domain) { domain = "" }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  ts = memory_now()
+  cid = memory_id("cpt")
+  examples_json = json_stringify(examples)
+  sqlite_exec(conn, "INSERT INTO concept (id, name, definition, examples_json, domain, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [cid, name, definition, examples_json, domain, ts, ts])
+  sqlite_exec(conn, "INSERT INTO memory_fts (id, type, name, content, tags) VALUES (?, 'concept', ?, ?, ?)", [cid, name, definition, domain])
+  sqlite_close(conn)
+  {"id": cid, "name": name}
+}
+
+思 concept_search(query, limit) {
+  若 is_none(limit) { limit = 10 }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  rows = sqlite_query(conn, "SELECT c.* FROM memory_fts f JOIN concept c ON c.id = f.id WHERE memory_fts MATCH ? AND c.quality_status = 'active' ORDER BY c.confidence DESC LIMIT ?", [query, limit])
+  sqlite_close(conn)
+  {"results": rows, "count": len(rows)}
+}
+
+思 goal_add(name, description, priority) {
+  若 is_none(priority) { priority = 5 }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  ts = memory_now()
+  gid = memory_id("goal")
+  sqlite_exec(conn, "INSERT INTO goal (id, name, description, priority, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?)", [gid, name, description, priority, ts, ts])
+  sqlite_exec(conn, "INSERT INTO memory_fts (id, type, name, content, tags) VALUES (?, 'goal', ?, ?, ?)", [gid, name, description, "goal"])
+  sqlite_close(conn)
+  {"id": gid, "name": name}
+}
+
+思 goal_list(status) {
+  若 is_none(status) { status = "active" }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  rows = sqlite_query(conn, "SELECT * FROM goal WHERE status = ? ORDER BY priority ASC", [status])
+  sqlite_close(conn)
+  {"goals": rows, "count": len(rows)}
+}
+
+思 relation_add(rel_type, from_type, from_id, to_type, to_id, props) {
+  若 is_none(props) { props = {} }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  ts = memory_now()
+  rid = memory_id("rel")
+  sqlite_exec(conn, "INSERT INTO relation (id, rel_type, from_type, from_id, to_type, to_id, properties_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [rid, rel_type, from_type, from_id, to_type, to_id, json_stringify(props), ts, ts])
+  sqlite_close(conn)
+  {"id": rid, "type": rel_type}
+}
+
+思 relation_find(from_type, from_id, rel_type) {
+  若 is_none(rel_type) { rel_type = "" }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  若 str_is_empty(rel_type) {
+    rows = sqlite_query(conn, "SELECT * FROM relation WHERE from_type = ? AND from_id = ? ORDER BY confidence DESC", [from_type, from_id])
+  } 否 {
+    rows = sqlite_query(conn, "SELECT * FROM relation WHERE from_type = ? AND from_id = ? AND rel_type = ? ORDER BY confidence DESC", [from_type, from_id, rel_type])
+  }
+  sqlite_close(conn)
+  {"relations": rows, "count": len(rows)}
+}
+
+思 memory_recall(table, id, query) {
+  memory_init()
+  conn = sqlite_open(memory_db())
+  ts = memory_now()
+  若 == (table, "experience") {
+    sqlite_exec(conn, "UPDATE experience SET recall_count = recall_count + 1, last_recalled_at = ? WHERE id = ?", [ts, id])
+  } 否 {
+    若 == (table, "knowledge") {
+      sqlite_exec(conn, "UPDATE knowledge SET recall_count = recall_count + 1, last_recalled_at = ? WHERE id = ?", [ts, id])
+    } 否 {
+      若 == (table, "concept") {
+        sqlite_exec(conn, "UPDATE concept SET recall_count = recall_count + 1 WHERE id = ?", [id])
+      }
+    }
+  }
+  sqlite_close(conn)
+  {"ok": 真, "table": table, "id": id, "query": query}
+}
+
+思 memory_stats() {
+  memory_init()
+  conn = sqlite_open(memory_db())
+  e = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM experience", [])
+  k = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM knowledge", [])
+  t = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM tool_registry", [])
+  c = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM concept", [])
+  g = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM goal", [])
+  r = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM relation", [])
+  sqlite_close(conn)
+  {"experience": e[0]["cnt"], "knowledge": k[0]["cnt"], "tool": t[0]["cnt"], "concept": c[0]["cnt"], "goal": g[0]["cnt"], "relation": r[0]["cnt"]}
+}

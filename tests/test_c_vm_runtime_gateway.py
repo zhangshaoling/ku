@@ -112,6 +112,21 @@ def test_memory_profile_preserves_utf8_through_sqlite(runtime, tmp_path):
     assert any(row["topic"] == topic for row in gaps["gaps"])
 
 
+def test_tiandao_mcp_profile_runs_meta_rule_scheduler(runtime, tmp_path):
+    data_dir = tmp_path / "dao_data"
+
+    first = runtime.call_thought("天道", ["道记忆", {}], profile="tiandao_mcp", data_dir=data_dir)
+    value = assert_ok(first)
+    assert value["action"] == "reason_and_learn"
+    assert value["rule"] == "02+03"
+    assert value["result"]["method"] == "tiandao_mcp_fast"
+    assert (data_dir / "memory.db").exists()
+
+    stats = runtime.call_thought("天道统计", [], profile="tiandao_mcp", data_dir=data_dir)
+    stats_value = assert_ok(stats)
+    assert stats_value["memory"]["experience"] == 1
+
+
 def test_runtime_error_shape_for_unknown_thought(runtime):
     result = runtime.call_thought("不存在的思", [], params=[], profile="frontend")
     assert not result.ok

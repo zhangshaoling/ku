@@ -1,0 +1,77 @@
+// tiandao_mcp.ku - ultra-fast MCP Tiandao hot path
+// Single-file entry. No imports. Keeps tool latency low.
+
+思 _td_db() { dao_data_path("memory.db") }
+思 _td_now() { now_fmt("%Y-%m-%dT%H:%M:%S") }
+思 _td_id(prefix) { prefix + "_" + str(int(now() * 1000) % 1000000000) }
+
+思 _td_init() {
+  conn = sqlite_open(_td_db())
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience (id TEXT PRIMARY KEY, kind TEXT NOT NULL, topic TEXT DEFAULT '', context TEXT DEFAULT '', input TEXT DEFAULT '', output TEXT DEFAULT '', missing TEXT DEFAULT '', next_action TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'open', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, success_count INTEGER DEFAULT 0, failure_count INTEGER DEFAULT 0, recall_count INTEGER DEFAULT 0, last_recalled_at TEXT, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, tool_generated INTEGER DEFAULT 0, quality_status TEXT DEFAULT 'active')", [])
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS knowledge (id TEXT PRIMARY KEY, domain TEXT NOT NULL, content TEXT NOT NULL, source TEXT DEFAULT '', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, recall_count INTEGER DEFAULT 0, last_recalled_at TEXT, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, quality_status TEXT DEFAULT 'active')", [])
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS tool_registry (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT DEFAULT '', params_json TEXT DEFAULT '{}', source_experience_id TEXT DEFAULT '', call_count INTEGER DEFAULT 0, success_count INTEGER DEFAULT 0, fail_count INTEGER DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, status TEXT NOT NULL DEFAULT 'active', quality_status TEXT DEFAULT 'active')", [])
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS concept (id TEXT PRIMARY KEY, name TEXT NOT NULL, definition TEXT NOT NULL, examples_json TEXT DEFAULT '[]', domain TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, recall_count INTEGER DEFAULT 0, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, quality_status TEXT DEFAULT 'active')", [])
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS goal (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '', priority INTEGER DEFAULT 5, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, progress REAL DEFAULT 0.0, trust REAL DEFAULT 0.5, quality_status TEXT DEFAULT 'active')", [])
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS relation (id TEXT PRIMARY KEY, rel_type TEXT NOT NULL, from_type TEXT NOT NULL, from_id TEXT NOT NULL, to_type TEXT NOT NULL, to_id TEXT NOT NULL, properties_json TEXT DEFAULT '{}', confidence REAL DEFAULT 0.5, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)", [])
+  sqlite_close(conn)
+  {"ok": 真, "db": _td_db()}
+}
+
+思 _td_record_experience(topic, output) {
+  _td_init()
+  conn = sqlite_open(_td_db())
+  ts = _td_now()
+  eid = _td_id("exp")
+  sqlite_exec(conn, "INSERT INTO experience (id, kind, topic, context, input, output, tags_json, created_at, updated_at) VALUES (?, 'attempt', ?, 'tiandao_mcp', ?, ?, '[\"tiandao\",\"mcp\"]', ?, ?)", [eid, topic, topic, output, ts, ts])
+  sqlite_close(conn)
+  {"id": eid, "kind": "attempt", "topic": topic}
+}
+
+思 _td_recall(question, limit) {
+  _td_init()
+  like = "%" + question + "%"
+  conn = sqlite_open(_td_db())
+  knowledge = sqlite_query(conn, "SELECT id, content, confidence, trust, recall_count FROM knowledge WHERE quality_status = 'active' AND (domain LIKE ? OR content LIKE ?) ORDER BY trust DESC, confidence DESC LIMIT ?", [like, like, limit])
+  experience = sqlite_query(conn, "SELECT id, topic, context, confidence, trust, recall_count FROM experience WHERE quality_status = 'active' AND (topic LIKE ? OR context LIKE ?) ORDER BY trust DESC, confidence DESC LIMIT ?", [like, like, limit])
+  sqlite_close(conn)
+  out = []
+  i = 0
+  当 (i < len(knowledge)) {
+    row = knowledge[i]
+    out = out + [{"type": "knowledge", "id": row["id"], "content": row["content"], "confidence": row["confidence"], "trust": row["trust"], "recall_count": row["recall_count"]}]
+    i = i + 1
+  }
+  j = 0
+  当 (j < len(experience)) {
+    row2 = experience[j]
+    out = out + [{"type": "experience", "id": row2["id"], "content": row2["topic"] + ": " + row2["context"], "confidence": row2["confidence"], "trust": row2["trust"], "recall_count": row2["recall_count"]}]
+    j = j + 1
+  }
+  {"results": out, "count": len(out)}
+}
+
+思 天道(问题, 上下文) {
+  recall = _td_recall(问题, 5)
+  若 > (recall["count"], 0) {
+    {"action": "recall", "question": 问题, "rule": "01+06", "count": recall["count"], "results": recall["results"]}
+  } 否 {
+    seed = len(问题)
+    dao = [seed, seed + seed, seed + seed + seed]
+    output = "推理完成: " + 问题
+    saved = _td_record_experience(问题, output)
+    {"action": "reason_and_learn", "question": 问题, "rule": "02+03", "result": {"ok": 真, "method": "tiandao_mcp_fast", "input": 问题, "output": output, "dao": dao}, "experience": saved}
+  }
+}
+
+思 天道统计() {
+  _td_init()
+  conn = sqlite_open(_td_db())
+  e = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM experience", [])
+  k = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM knowledge", [])
+  t = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM tool_registry", [])
+  c = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM concept", [])
+  g = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM goal", [])
+  r = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM relation", [])
+  sqlite_close(conn)
+  {"memory": {"experience": e[0]["cnt"], "knowledge": k[0]["cnt"], "tool": t[0]["cnt"], "concept": c[0]["cnt"], "goal": g[0]["cnt"], "relation": r[0]["cnt"]}, "active_tools": t[0]["cnt"]}
+}

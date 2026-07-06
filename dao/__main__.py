@@ -2,6 +2,9 @@ import sys
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in {"run", "repl"}:
+        from .cli import main as cli_main
+        return cli_main(sys.argv[1:])
     if len(sys.argv) > 1 and sys.argv[1] == "mcp":
         sys.argv = [sys.argv[0]] + sys.argv[2:]
         from .mcp_server import main as mcp_main

@@ -1,0 +1,129 @@
+// tiandao.ku - Dao operating law / meta-rule scheduler
+// Dao is the origin. Tiandao is the law that decides how Dao is used.
+
+引 "std/daodejing" 别 道
+引 "std/memory" 别 忆
+引 "std/tool" 别 器
+
+// Rule 01: 有历史经验 -> 优先召回
+// Rule 02: 没有经验 -> 启动道计算推理
+// Rule 03: 推理成功 -> 写经验
+// Rule 04: 经验 trust > 阈值 -> 晋升 Tool
+// Rule 05: Tool 连续失败 -> 降级
+// Rule 06: 召回经验 > N 条 -> 按质量排序
+// Rule 07: 任务完成 -> 验证所有使用过的经验
+
+思 天道(问题, 上下文) {
+  若 is_none(上下文) { 上下文 = {} }
+  memory_init()
+  recall = tiandao_recall(问题, 5)
+  count = recall["count"]
+  若 > (count, 0) {
+    sorted = tiandao_quality_sort(recall["results"])
+    {"action": "recall", "question": 问题, "rule": "01+06", "count": len(sorted), "results": sorted}
+  } 否 {
+    reasoned = tiandao_reason(问题, 上下文)
+    若 reasoned["ok"] {
+      saved = tiandao_record_experience(问题, reasoned)
+      {"action": "reason_and_learn", "question": 问题, "rule": "02+03", "result": reasoned, "experience": saved}
+    } 否 {
+      {"action": "failed", "question": 问题, "rule": "05", "error": reasoned}
+    }
+  }
+}
+
+思 tiandao_recall(问题, limit) {
+  knowledge = knowledge_search(问题, limit)
+  like = "%" + 问题 + "%"
+  conn = sqlite_open(memory_db())
+  experience = sqlite_query(conn, "SELECT id, kind, topic, context, confidence, trust, recall_count FROM experience WHERE quality_status = 'active' AND (topic LIKE ? OR context LIKE ?) ORDER BY trust DESC, confidence DESC LIMIT ?", [like, like, limit])
+  sqlite_close(conn)
+  results = []
+  i = 0
+  krows = knowledge["results"]
+  当 (i < len(krows)) {
+    row = krows[i]
+    results = results + [{"type": "knowledge", "id": row["id"], "content": row["content"], "confidence": row["confidence"], "trust": row["trust"], "recall_count": row["recall_count"]}]
+    i = i + 1
+  }
+  j = 0
+  当 (j < len(experience)) {
+    exp = experience[j]
+    results = results + [{"type": "experience", "id": exp["id"], "content": exp["topic"] + ": " + exp["context"], "confidence": exp["confidence"], "trust": exp["trust"], "recall_count": exp["recall_count"]}]
+    j = j + 1
+  }
+  {"results": results, "count": len(results)}
+}
+
+思 tiandao_reason(问题, 上下文) {
+  seed = len(问题)
+  dao_out = 第42章(seed)
+  {"ok": 真, "method": "daodejing_42", "input": 问题, "output": "推理完成: " + 问题, "dao": dao_out}
+}
+
+思 tiandao_record_experience(问题, 结果) {
+  experience_add("attempt", 问题, "tiandao", 问题, 结果["output"], "", "", ["tiandao", "reasoning"])
+}
+
+思 tiandao_quality_sort(rows) {
+  tiandao_select_sort(rows, 0, len(rows))
+}
+
+思 tiandao_select_sort(rows, start, end) {
+  若 >= (start, end) {
+    rows
+  } 否 {
+    max_i = start
+    j = start + 1
+    当 (j < end) {
+      a = rows[j]["trust"] * rows[j]["confidence"]
+      b = rows[max_i]["trust"] * rows[max_i]["confidence"]
+      若 > (a, b) { max_i = j }
+      j = j + 1
+    }
+    next = tiandao_swap(rows, start, max_i)
+    tiandao_select_sort(next, start + 1, end)
+  }
+}
+
+思 tiandao_swap(rows, a, b) {
+  若 == (a, b) {
+    rows
+  } 否 {
+    out = []
+    i = 0
+    当 (i < len(rows)) {
+      若 == (i, a) {
+        out = out + [rows[b]]
+      } 否 {
+        若 == (i, b) {
+          out = out + [rows[a]]
+        } 否 {
+          out = out + [rows[i]]
+        }
+      }
+      i = i + 1
+    }
+    out
+  }
+}
+
+思 规则_晋升检查(阈值) {
+  若 is_none(阈值) { 阈值 = 0.75 }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  rows = sqlite_query(conn, "SELECT * FROM experience WHERE quality_status = 'active' AND trust >= ? AND recall_count >= 3", [阈值])
+  sqlite_close(conn)
+  {"promotable": rows, "count": len(rows), "threshold": 阈值}
+}
+
+思 规则_衰减检查(阈值) {
+  若 is_none(阈值) { 阈值 = 3 }
+  tool_policy_decay(阈值)
+}
+
+思 天道统计() {
+  stats = memory_stats()
+  tools = tool_list_active(20)
+  {"memory": stats, "active_tools": tools["count"]}
+}

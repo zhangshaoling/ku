@@ -111,6 +111,7 @@ explicitly about the packaged `ku` CLI.
 
 ```text
 docs/
+  DAO_SYSTEM_ARCHITECTURE.md   Canonical Dao/Tiandao/memory/runtime path map
   C_VM_接管审计.md
   AGI母语语义内核规范.md
   MODULE_COMPLETION_PLAN.md

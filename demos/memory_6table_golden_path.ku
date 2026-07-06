@@ -1,0 +1,11 @@
+// memory_6table_golden_path.ku - direct C VM demo for dao/std/memory.ku
+
+k = knowledge_add("dao", "thought = code = memory", "golden", ["dao", "memory"])
+c = concept_add("天道", "道的运行法则", ["召回", "推理", "晋升"], "dao")
+g = goal_add("清晰架构", "dao/std 是唯一核心路径", 1)
+t = tool_add("ku_memory_probe", "probe promoted memory shape", {}, "")
+r = relation_add("supports", "concept", c["id"], "goal", g["id"], {"why": "architecture"})
+e = experience_add("observation", "C VM 直接执行", "memory_6table_golden_path", "", "ok", "", "", ["c-vm", "memory"])
+found = knowledge_search("memory", 5)
+stats = memory_stats()
+{"knowledge_id": k["id"], "concept_id": c["id"], "goal_id": g["id"], "tool_id": t["id"], "relation_id": r["id"], "experience_id": e["id"], "found": found["count"], "stats": stats}

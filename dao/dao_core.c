@@ -58,10 +58,18 @@ typedef struct {
 
 static PtrArena g_val_arena = {0};
 static PtrArena g_env_arena = {0};
+static PtrArena g_frame_arena = {0};
+static PtrArena g_instr_arena = {0};
+static PtrArena g_env_aux_arena = {0};   /* env_set 的 names/vals 数组 */
+static PtrArena g_dict_entry_arena = {0}; /* dict_set 的 DictEntry */
 static long g_val_allocated = 0;
 static long g_val_freed = 0;
 static long g_env_allocated = 0;
 static long g_env_freed = 0;
+static long g_frame_allocated = 0;
+static long g_frame_freed = 0;
+static long g_instr_allocated = 0;
+static long g_instr_freed = 0;
 static int g_arena_enabled = 1;  /* 默认开启竞技场登记；teardown 仅在 main 末尾触发 */
 
 static void arena_register(PtrArena *a, void *p) {
@@ -624,8 +632,10 @@ Val *env_get(Env *e, const char *name) {
 
 #define STACK_MAX 1024
 #define TRY_MAX 64
+#define LOOP_MAX 16
 
 typedef struct Frame {
+    struct Frame *parent;
     Instr *instrs;
     int instr_count;
     Val **constants;
@@ -636,7 +646,8 @@ typedef struct Frame {
     int pc;
     int try_stack[TRY_MAX];
     int try_sp;
-    struct Frame *parent;
+    int loop_iter_sp[LOOP_MAX];
+    int loop_sp;
 } Frame;
 
 Frame *frame_new(Instr *instrs, int instr_count, Val **constants, int const_count, Env *env, Frame *parent) {
@@ -647,6 +658,9 @@ Frame *frame_new(Instr *instrs, int instr_count, Val **constants, int const_coun
     f->const_count = const_count;
     f->env = env;
     f->parent = parent;
+    f->loop_sp = -1;
+    arena_register(&g_frame_arena, f);
+    g_frame_allocated++;
     return f;
 }
 
@@ -1185,12 +1199,12 @@ Val *builtin_type(Val **args, int argc) {
     if (argc < 1) return val_str("nil");
     switch (args[0]->type) {
         case V_NIL: return val_str("nil");
-        case V_NUM: return val_str("number");
+        case V_NUM: return val_str("num");
         case V_STR: return val_str("str");
         case V_BOOL: return val_str("bool");
         case V_LIST: return val_str("list");
         case V_DICT: return val_str("dict");
-        case V_FN: return val_str("function");
+        case V_FN: return val_str("fn");
     }
     return val_str("unknown");
 }
@@ -1384,6 +1398,9 @@ ExecResult builtin_sqlite_exec(Val **args, int argc) {
     }
     sqlite3 *db = db_conn_get((int)args[0]->num);
     if (!db) { r.val = val_num(-1); return r; }
+    /* SQL text is trusted Dao program source from .ku literals, not
+       model/user input; bound parameters use ? placeholders via
+       sqlite_bind_params and are never interpolated into the query string. */
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db, args[1]->str, -1, &stmt, NULL);
     if (rc != SQLITE_OK) return sqlite_exec_result(sqlite3_errmsg(db));
@@ -1409,6 +1426,9 @@ ExecResult builtin_sqlite_query(Val **args, int argc) {
     }
     sqlite3 *db = db_conn_get((int)args[0]->num);
     if (!db) { r.val = result; return r; }
+    /* SQL text is trusted Dao program source from .ku literals, not
+       model/user input; bound parameters use ? placeholders via
+       sqlite_bind_params and are never interpolated into the query string. */
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db, args[1]->str, -1, &stmt, NULL);
     if (rc != SQLITE_OK) return sqlite_exec_result(sqlite3_errmsg(db));
@@ -1546,6 +1566,17 @@ Val *builtin_system(Val **args, int argc) {
     dict_set(result, "stdout", val_str(""));
     dict_set(result, "stderr", val_str(""));
     dict_set(result, "code", val_num(1));
+    /* Shell capability is off by default to keep model/agent-generated
+       code from running arbitrary commands via ku_eval. Opt in with the
+       DAO_ALLOW_SYSTEM env flag for trusted debugging/parity work. */
+    const char *allow_system = getenv("DAO_ALLOW_SYSTEM");
+    if (!(allow_system && (strcmp(allow_system, "1") == 0 ||
+                           strcmp(allow_system, "true") == 0 ||
+                           strcmp(allow_system, "yes") == 0 ||
+                           strcmp(allow_system, "on") == 0))) {
+        dict_set(result, "stderr", val_str("system builtin disabled: set DAO_ALLOW_SYSTEM=1 to run shell commands"));
+        return result;
+    }
     if (argc < 1) return result;
     char *cmd = args[0]->type == V_STR ? strdup(args[0]->str) : val_to_string(args[0]);
     size_t shell_len = strlen(cmd) + strlen(" 2>&1") + 1;
@@ -1777,6 +1808,12 @@ Val *builtin_run_bytecode(Val **args, int argc, Env *global) {
     }
     Frame *frame = frame_new(parts.instrs, parts.instr_count, parts.constants, parts.const_count, global, NULL);
     ExecResult result = exec_frame(frame);
+    /* parts.constants 被 MAKE_FUNCTION 持有的 val_fn 共享，不可释放 */
+    for (int i = 0; i < parts.instr_count; i++) {
+        free(parts.instrs[i].op);
+        free(parts.instrs[i].str_arg);
+    }
+    free(parts.instrs);
     if (result.is_error) return val_str(result.error);
     return result.val ? result.val : val_nil();
 }
@@ -2203,7 +2240,14 @@ static Val *parse_json_value(const char *input) {
 static ExecResult execute_bytecode_val(Val *bc, Env *global) {
     BytecodeParts parts = bytecode_from_val(bc);
     Frame *frame = frame_new(parts.instrs, parts.instr_count, parts.constants, parts.const_count, global, NULL);
-    return exec_frame(frame);
+    ExecResult result = exec_frame(frame);
+    /* parts.constants 被 MAKE_FUNCTION 持有的 val_fn 共享，不可释放 */
+    for (int i = 0; i < parts.instr_count; i++) {
+        free(parts.instrs[i].op);
+        free(parts.instrs[i].str_arg);
+    }
+    free(parts.instrs);
+    return result;
 }
 
 static Instr instr0(const char *op) {
@@ -2252,7 +2296,11 @@ static ExecResult execute_source_with_bootstrap(Env *global, const char *source)
     instrs[pc++] = instr0("RETURN");
 
     Frame *frame = frame_new(instrs, pc, constants, 1, global, NULL);
-    return exec_frame(frame);
+    ExecResult result = exec_frame(frame);
+    /* constants 被 MAKE_FUNCTION 持有的 val_fn 共享，不可释放 */
+    for (int i = 0; i < pc; i++) { free(instrs[i].op); free(instrs[i].str_arg); }
+    free(instrs);
+    return result;
 }
 
 static void print_usage(const char *argv0) {
@@ -2474,6 +2522,9 @@ static ExecResult exec_frame(Frame *f) {
             }
 
             frame_push(f, val_fn(params, param_count, body_copy, body_len, f->constants, f->const_count, f->env));
+            /* body 临时副本的使命已完成：body_copy 所有权已转入 val_fn，释放 body */
+            for (int i = 0; i < body_len; i++) { free(body[i].op); free(body[i].str_arg); }
+            free(body);
             f->pc++;
         }
         else if (strcmp(op, "CALL") == 0) {
@@ -2722,37 +2773,52 @@ static ExecResult exec_frame(Frame *f) {
             f->pc++;
         }
         else if (strcmp(op, "GET_ITER") == 0) {
-            /* pop iterable, push iterator */
             Val *iterable = frame_pop(f);
             if (iterable->type == V_LIST) {
-                /* 创建简单迭代器：存储索引和列表 */
                 Val *iter = val_dict();
                 dict_set(iter, "__list__", iterable);
                 dict_set(iter, "__idx__", val_num(0));
                 frame_push(f, iter);
+                if (f->loop_sp < LOOP_MAX - 1) {
+                    f->loop_sp++;
+                    f->loop_iter_sp[f->loop_sp] = f->sp - 1;
+                }
             } else {
                 frame_push(f, val_nil());
+                if (f->loop_sp < LOOP_MAX - 1) {
+                    f->loop_sp++;
+                    f->loop_iter_sp[f->loop_sp] = f->sp - 1;
+                }
             }
             f->pc++;
         }
         else if (strcmp(op, "FOR_ITER") == 0) {
-            /* 迭代器取下一个元素 */
-            Val *iter = frame_top(f);
-            if (iter->type == V_DICT) {
+            if (f->loop_sp < 0) {
+                return exec_error("for loop iterator missing");
+            }
+            int idx = f->loop_iter_sp[f->loop_sp];
+            /* 每轮迭代恢复栈指针 */
+            f->sp = idx + 1;
+            Val *iter = f->stack[idx];
+            if (iter && iter->type == V_DICT) {
                 Val *list_val = dict_get(iter, "__list__");
                 Val *idx_val = dict_get(iter, "__idx__");
-                int idx = (int)idx_val->num;
-                if (list_val && idx < list_val->len) {
-                    frame_push(f, list_val->items[idx]);
-                    idx_val->num = idx + 1;
+                int cur = (int)idx_val->num;
+                if (list_val && cur < list_val->len) {
+                    frame_push(f, list_val->items[cur]);
+                    idx_val->num = cur + 1;
                     f->pc++;
                 } else {
-                    /* 迭代结束，弹出迭代器，跳转 */
-                    frame_pop(f);
+                    /* 迭代结束,移除迭代器 */
+                    for (int k = idx; k < f->sp - 1; k++) f->stack[k] = f->stack[k + 1];
+                    f->sp--;
+                    f->loop_sp--;
                     f->pc += (int)instr->num_arg;
                 }
             } else {
-                frame_pop(f);
+                for (int k = idx; k < f->sp - 1; k++) f->stack[k] = f->stack[k + 1];
+                f->sp--;
+                f->loop_sp--;
                 f->pc += (int)instr->num_arg;
             }
         }
@@ -2793,16 +2859,39 @@ static ExecResult exec_frame(Frame *f) {
 
 /* ═══════════════════════════════════════════
  *  M4: 竞技场批量回收
- *  仅释放各对象“严格自有”的标量缓冲：
- *    Val.str / Val.items 数组 / dict entries+keys
- *  绝不释放共享或有界缓冲：constants / params / body / closure
- *  （constants 指向 frame 的共享常量池，params/body 按函数定义有界）。
- *  两个竞技场都是扁平列表，回收顺序与引用无关，天然免疫 env<->closure 环。
+ *  释放各对象”严格自有”的标量缓冲：
+ *    Frame 结构体
+ *    V_FN 的 body（Instr 数组 + 每个 Instr 的 op/str_arg）— MAKE_FUNCTION 分配的 body_copy
+ *    V_FN 的 params（字符串数组）— MAKE_FUNCTION 时 strdup 的副本
+ *    env_set 的 names 字符串 + names/vals 数组
+ *  绝不释放共享字段：
+ *    V_FN.constants 指向 frame 的共享常量池（其它 Frame/V_FN 可能仍在引用）
+ *    V_FN.closure 指向另一个 Env，由 env_arena 自己回收
+ *  四个竞技场都是扁平列表，回收顺序与引用无关，天然免疫 env<->closure 环。
  * ═══════════════════════════════════════════ */
 static void arena_freeall(void) {
     if (!g_arena_enabled) return;
-    /* 先释放 Val 自有缓冲，再释放结构体本身。
-     * 元素 Val（items/entries->val）各自登记在竞技场里，不在此处递归释放。 */
+
+    /* 第一遍：释放 V_FN 的 body 和 params（MAKE_FUNCTION 的独有副本） */
+    for (long i = 0; i < g_val_arena.count; i++) {
+        Val *v = (Val *)g_val_arena.items[i];
+        if (!v || v->type != V_FN) continue;
+        if (v->body) {
+            for (int j = 0; j < v->body_len; j++) {
+                if (v->body[j].op) free(v->body[j].op);
+                if (v->body[j].str_arg) free(v->body[j].str_arg);
+            }
+            free(v->body);
+        }
+        if (v->params) {
+            for (int j = 0; j < v->param_count; j++) {
+                if (v->params[j]) free(v->params[j]);
+            }
+            free(v->params);
+        }
+        /* 不释放 v->constants（frame 共享）和 v->closure（env_arena 管理） */
+    }
+    /* 第二遍：释放 Val 的标量字段 */
     for (long i = 0; i < g_val_arena.count; i++) {
         Val *v = (Val *)g_val_arena.items[i];
         if (!v) continue;
@@ -2822,6 +2911,7 @@ static void arena_freeall(void) {
     g_val_arena.items = NULL;
     g_val_arena.count = g_val_arena.cap = 0;
 
+    /* env_set 批次：释放 Env 内的 names 字符串和指针数组 */
     for (long i = 0; i < g_env_arena.count; i++) {
         Env *e = (Env *)g_env_arena.items[i];
         if (!e) continue;
@@ -2836,15 +2926,27 @@ static void arena_freeall(void) {
     free(g_env_arena.items);
     g_env_arena.items = NULL;
     g_env_arena.count = g_env_arena.cap = 0;
+
+    /* Frame 批次：Frame 不含自有堆字段 */
+    for (long i = 0; i < g_frame_arena.count; i++) {
+        Frame *f = (Frame *)g_frame_arena.items[i];
+        if (!f) continue;
+        free(f);
+        g_frame_freed++;
+    }
+    free(g_frame_arena.items);
+    g_frame_arena.items = NULL;
+    g_frame_arena.count = g_frame_arena.cap = 0;
 }
 
 static void arena_report_stats(void) {
     const char *flag = getenv("DAO_GC_STATS");
     if (!flag || flag[0] == '\0' || flag[0] == '0') return;
     fprintf(stderr,
-            "[dao-gc] val: allocated=%ld freed=%ld leaked=%ld | env: allocated=%ld freed=%ld leaked=%ld\n",
+            "[dao-gc] val: alloc=%ld free=%ld leak=%ld | env: alloc=%ld free=%ld leak=%ld | frame: alloc=%ld free=%ld leak=%ld\n",
             g_val_allocated, g_val_freed, g_val_allocated - g_val_freed,
-            g_env_allocated, g_env_freed, g_env_allocated - g_env_freed);
+            g_env_allocated, g_env_freed, g_env_allocated - g_env_freed,
+            g_frame_allocated, g_frame_freed, g_frame_allocated - g_frame_freed);
 }
 
 /* ═══════════════════════════════════════════

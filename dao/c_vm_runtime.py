@@ -39,6 +39,28 @@ PROFILES: dict[str, tuple[Path, ...]] = {
         STD_DIR / "task_queue.ku",
         STD_DIR / "experience.ku",
     ),
+    "tiandao_mcp": (
+        STD_DIR / "tiandao_mcp.ku",
+    ),
+    "tiandao_fast": (
+        STD_DIR / "math.ku",
+        STD_DIR / "string.ku",
+        STD_DIR / "list.ku",
+        STD_DIR / "type.ku",
+        STD_DIR / "memory.ku",
+        STD_DIR / "tool.ku",
+        STD_DIR / "tiandao_fast.ku",
+    ),
+    "tiandao": (
+        STD_DIR / "math.ku",
+        STD_DIR / "string.ku",
+        STD_DIR / "list.ku",
+        STD_DIR / "type.ku",
+        STD_DIR / "memory.ku",
+        STD_DIR / "tool.ku",
+        STD_DIR / "daodejing.ku",
+        STD_DIR / "tiandao.ku",
+    ),
     "semantic": (
         STD_DIR / "math.ku",
         STD_DIR / "string.ku",
