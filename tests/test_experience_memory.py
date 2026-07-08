@@ -206,6 +206,54 @@ def test_memory_recall_uses_fts_and_preserves_utf8(tmp_path):
     assert fts_table is not None
 
 
+def test_memory_locate_returns_stable_address_and_promoted_route(tmp_path):
+    data_dir = tmp_path / "dao_data"
+
+    proc = _spawn(data_dir)
+    try:
+        _init(proc)
+
+        recorded = _text(_req(proc, 2, "tools/call", {"name": "ku_record_data_memory", "arguments": {
+            "topic": "Executable Memory Route",
+            "key": "data-code-memory-tool",
+            "value_json": "{\"rule\":\"data equals code equals memory equals tool\"}",
+            "tags": "dao,memory,capability",
+        }}))
+
+        located = _text(_req(proc, 3, "tools/call", {"name": "ku_locate_memory", "arguments": {
+            "query": "Executable Memory Route",
+            "kind": "data_memory",
+            "limit": 5,
+        }}))
+        assert located["count"] == 1
+        locator = located["locators"][0]
+        assert locator["id"] == recorded["id"]
+        assert locator["address"] == f"dao://experience/{recorded['id']}"
+        assert locator["route"]["store"] == "experience"
+        assert locator["route"]["table"] == "experience"
+        assert locator["route"]["id"] == recorded["id"]
+        assert locator["promoted"] is False
+        assert locator["tool_name"] == ""
+
+        _text(_req(proc, 4, "tools/call", {"name": "ku_promote_memory", "arguments": {
+            "experience_id": recorded["id"],
+            "thought_name": "executable_memory_route",
+            "description": "Executable memory route locator",
+        }}))
+
+        promoted_located = _text(_req(proc, 5, "tools/call", {"name": "ku_locate_memory", "arguments": {
+            "query": "Executable Memory Route",
+            "kind": "data_memory",
+            "limit": 5,
+        }}))
+        promoted_locator = promoted_located["locators"][0]
+        assert promoted_locator["promoted"] is True
+        assert promoted_locator["thought_name"] == "executable_memory_route"
+        assert promoted_locator["tool_name"] == "ku_memory_executable_memory_route"
+    finally:
+        _close(proc)
+
+
 def test_memory_promotion_makes_memory_callable(tmp_path):
     data_dir = tmp_path / "dao_data"
 
