@@ -1,0 +1,48 @@
+// dao/std/agent_test.ku — 测试 agent.ku
+// 因 C VM 函数嵌套 if 有 bug, 采用内联测试逻辑
+
+引 "std/agent"
+
+print("=== Agent 模块测试 ===")
+print("")
+
+通过数 = 0
+失败数 = 0
+
+// 测试 1: 初始化
+描述 = "初始化Agent"; 实际 = agent_init("测试Agent", "数据分析助手"); 
+若 实际["name"] == "测试Agent" { print("PASS " + 描述); 通过数 = 通过数 + 1 } 否 { print("FAIL " + 描述); 失败数 = 失败数 + 1 }
+
+// 测试 2: 自描述
+描述 = "Agent自描述"; 实际 = agent_describe(); 
+若 实际["name"] == "测试Agent" { print("PASS " + 描述); 通过数 = 通过数 + 1 } 否 { print("FAIL " + 描述); 失败数 = 失败数 + 1 }
+
+// 测试 3: 记录任务
+描述 = "记录任务"; 实际 = agent_task("分析数据", "拆分成3个子任务", ["清洗", "统计", "报告"]); 
+若 实际["task"]["name"] == "分析数据" { print("PASS " + 描述); 通过数 = 通过数 + 1 } 否 { print("FAIL " + 描述); 失败数 = 失败数 + 1 }
+
+// 测试 4: 记录决策
+描述 = "记录决策"; 实际 = agent_decide("选择方法", ["均值", "方差", "回归"], "方差"); 
+若 实际["decision"]["choice"] == "方差" { print("PASS " + 描述); 通过数 = 通过数 + 1 } 否 { print("FAIL " + 描述); 失败数 = 失败数 + 1 }
+
+// 测试 5: 记录执行
+描述 = "记录执行"; 实际 = agent_execute("执行方差分析", "调用scientific.ku", {"input": [1,2,3,4,5], "output": 2}); 
+若 实际["execution"]["name"] == "执行方差分析" { print("PASS " + 描述); 通过数 = 通过数 + 1 } 否 { print("FAIL " + 描述); 失败数 = 失败数 + 1 }
+
+// 测试 6: 任务完成
+描述 = "任务完成"; 实际 = agent_complete_task("分析数据", {"result": "成功"}); 
+若 实际["status"] == "completed" { print("PASS " + 描述); 通过数 = 通过数 + 1 } 否 { print("FAIL " + 描述); 失败数 = 失败数 + 1 }
+
+// 测试 7: Agent状态
+描述 = "Agent状态"; 实际 = agent_status(); 
+若 实际["name"] == "测试Agent" { print("PASS " + 描述); 通过数 = 通过数 + 1 } 否 { print("FAIL " + 描述); 失败数 = 失败数 + 1 }
+
+// 测试 8: 清空状态
+描述 = "清空Agent状态"; 实际 = agent_clear(); 
+若 长度(实际["tasks"]) == 0 { print("PASS " + 描述); 通过数 = 通过数 + 1 } 否 { print("FAIL " + 描述); 失败数 = 失败数 + 1 }
+
+print("")
+print("=== 报告 ===")
+print("总任务: " + str(通过数 + 失败数))
+print("通过:   " + str(通过数))
+print("失败:   " + str(失败数))

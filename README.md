@@ -52,8 +52,13 @@ The project has moved beyond the early Python prototype:
 - Selected memory records can be promoted into callable thought/tool candidates
   through the C VM-backed MCP path, and active promotions appear as dynamic
   `ku_memory_<thought_name>` tools.
-- Memory recall can return explainability metadata, and promotion suggestions
-  use local Dao policy rules without calling an external model.
+- Memory recall can return explainability metadata, stable `dao://experience/<id>`
+  addresses, and callable routes through `ku_locate_memory`.
+- `dao/std/memory_graph.ku` adds a lightweight graph-memory layer: persisted
+  memories become graph nodes, tags become keyword indexes, and shared tags
+  create one-hop expansion edges.
+- Promotion suggestions use local Dao policy rules without calling an external
+  model.
 - MCP tools use the C VM by default; Python semantic fallback is opt-in only for
   parity/debug work.
 
@@ -98,6 +103,8 @@ Maintained maps:
 - `docs/PROJECT_STRUCTURE.md`
 - `docs/MODULE_COMPLETION_PLAN.md`
 - `docs/PROJECT_CONSTITUTION.md`
+- `docs/AGENT_MCP_ONBOARDING.md`
+- `docs/CODEX_MCP_TIANDAO.md`
 
 ## Quick Verification
 
@@ -151,6 +158,16 @@ Run the MCP server:
 ```powershell
 python -m dao.mcp_server
 ```
+
+Verify the local Codex shared Tiandao MCP configuration:
+
+```powershell
+uv run python tools/verify_codex_mcp_tiandao.py
+```
+
+The path-neutral agent onboarding guide is `docs/AGENT_MCP_ONBOARDING.md`.
+The local Codex setup note is `docs/CODEX_MCP_TIANDAO.md`. Use the same
+`DAO_DATA_DIR` for every local agent that should share Dao/Tiandao memory.
 
 A local MCP client can use this server definition:
 

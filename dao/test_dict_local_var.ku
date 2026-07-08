@@ -1,0 +1,16 @@
+// 测试使用局部变量作为字典值
+思 test_local_var() {
+  name = "测试名"
+  d = {"name": name}
+  print("字典: " + 转JSON(d))
+  print("name: " + str(d["name"]))
+}
+
+思 test_return_dict() {
+  n = "返回名"
+  return {"name": n, "value": 42}
+}
+
+test_local_var()
+result = test_return_dict()
+print("返回的字典: " + 转JSON(result))

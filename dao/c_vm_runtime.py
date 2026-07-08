@@ -38,6 +38,7 @@ PROFILES: dict[str, tuple[Path, ...]] = {
         STD_DIR / "type.ku",
         STD_DIR / "task_queue.ku",
         STD_DIR / "experience.ku",
+        STD_DIR / "memory_graph.ku",
     ),
     "tiandao_mcp": (
         STD_DIR / "tiandao_mcp.ku",
@@ -232,7 +233,7 @@ class CVMRuntime:
         timeout: float | None = None,
     ) -> DaoResult:
         ordered_args = normalize_args(args, params)
-        args_json = json.dumps(ordered_args, ensure_ascii=False)
+        args_json = json.dumps(ordered_args, ensure_ascii=True)
         escaped = json.dumps(args_json, ensure_ascii=False)
         call_args = ", ".join(f"__dao_args[{i}]" for i in range(len(ordered_args)))
         source = f"__dao_args = json_parse({escaped})\n{name}({call_args})\n"

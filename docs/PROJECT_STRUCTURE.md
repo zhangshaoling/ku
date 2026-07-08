@@ -63,6 +63,7 @@ generator is also updated.
 tools/
   test.ps1
   verify_module.ps1
+  verify_codex_mcp_tiandao.py
   generate_frontend_bootstrap.py
   generate_frontend_compile_demo.py
   generate_semantic_std_combo_demo.py
@@ -112,6 +113,7 @@ explicitly about the packaged `ku` CLI.
 ```text
 docs/
   DAO_SYSTEM_ARCHITECTURE.md   Canonical Dao/Tiandao/memory/runtime path map
+  CODEX_MCP_TIANDAO.md         Local Codex MCP shared-memory setup
   C_VM_接管审计.md
   AGI母语语义内核规范.md
   MODULE_COMPLETION_PLAN.md

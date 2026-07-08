@@ -12,6 +12,8 @@ Usage:
 import sys
 import os
 import json
+import sqlite3
+import math
 import glob as _glob
 import contextlib
 
@@ -165,6 +167,8 @@ def main():
     tool_definitions = []
     tool_handlers = {}
     dynamic_memory_tool_names = set()
+    dynamic_memory_tools_loaded = False
+    dynamic_memory_tools_dirty = True
     c_vm_runtime = CVMRuntime(
         binary=os.environ.get("DAO_CVM_BINARY") or None,
         bootstrap=os.environ.get("DAO_CVM_BOOTSTRAP") or None,
@@ -327,10 +331,15 @@ def main():
             "experience_search",
             "memory_recall",
             "memory_recall_explain",
+            "memory_locate",
             "memory_promote",
             "memory_promotion_list",
             "memory_call",
             "memory_suggest_promotions",
+            "memory_graph_from_experience",
+            "memory_graph_search",
+            "memory_graph_expand",
+            "memory_graph_stats",
             "experience_stats",
             "gap_to_task",
             "init_db",
@@ -344,9 +353,85 @@ def main():
         }
         profile = arguments.get("profile") or ("memory" if name in memory_thoughts else "core")
         result = c_vm_runtime.call_thought(name, call_args, params=thought.params, profile=profile)
+        
+        # ── MCP 反馈环：trust 更新 + 反向传播 ──
+        mcp_call_id = call_args.get("_mcp_call_id", "")
+        source_experience_id = call_args.get("_source_experience_id", "")
+        is_success = result.ok
+        mcp_feedback(name, is_success, source_experience_id)
+        
         if not result.ok:
             raise RuntimeError(result.error or result.stderr or result.stdout or "C VM execution failed")
         return simplify_result(result.value)
+
+    def mcp_feedback(tool_name, is_success, experience_id=None):
+        """
+        MCP 反馈环：根据调用结果更新 tool_registry 和反向传播 trust 到 source_experience。
+        - tool_registry: success_count / fail_count / call_count
+        - 反向传播: 如果有 experience_id，更新对应 experience 的贝叶斯 trust
+        """
+        data_dir = os.environ.get("DAO_DATA_DIR", "")
+        db_path = os.path.join(data_dir, "memory.db") if data_dir else os.path.join(KU_DIR, "memory.db")
+        
+        try:
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            conn.execute("PRAGMA journal_mode=WAL")
+            
+            if is_success:
+                conn.execute(
+                    "UPDATE tool_registry SET call_count = call_count + 1, success_count = success_count + 1 WHERE name = ?",
+                    (tool_name,)
+                )
+                # 贝叶斯信任更新：α = success_count + 1, β = fail_count + 1
+                # trust = α / (α + β) = success_count / (success_count + fail_count)
+                row = conn.execute(
+                    "SELECT success_count, fail_count FROM tool_registry WHERE name = ?", (tool_name,)
+                ).fetchone()
+                if row:
+                    s, f = row[0] or 1, row[1] or 1
+                    new_trust = max(0.01, min(0.99, s / (s + f)))
+                    conn.execute(
+                        "UPDATE tool_registry SET trust = ?, updated_at = datetime('now') WHERE name = ?",
+                        (new_trust, tool_name)
+                    )
+            else:
+                conn.execute(
+                    "UPDATE tool_registry SET call_count = call_count + 1, fail_count = fail_count + 1 WHERE name = ?",
+                    (tool_name,)
+                )
+                row = conn.execute(
+                    "SELECT success_count, fail_count FROM tool_registry WHERE name = ?", (tool_name,)
+                ).fetchone()
+                if row:
+                    s, f = row[0] or 1, row[1] or 1
+                    new_trust = max(0.01, min(0.99, s / (s + f)))
+                    conn.execute(
+                        "UPDATE tool_registry SET trust = ?, updated_at = datetime('now') WHERE name = ?",
+                        (new_trust, tool_name)
+                    )
+            
+            # ── 反向传播 trust 到 source experience ──
+            if experience_id:
+                row = conn.execute(
+                    "SELECT success_count, fail_count FROM experience WHERE id = ?", (experience_id,)
+                ).fetchone()
+                if row:
+                    s, f = row[0] or 1, row[1] or 1
+                    if is_success:
+                        s = s + 1
+                    else:
+                        f = f + 1
+                    new_trust = max(0.01, min(0.99, s / (s + f)))
+                    new_conf = new_trust  # confidence 跟随 trust
+                    conn.execute(
+                        "UPDATE experience SET success_count = ?, failure_count = ?, trust = ?, confidence = ?, updated_at = datetime('now') WHERE id = ?",
+                        (s, f, new_trust, new_conf, experience_id)
+                    )
+            
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"[mcp_feedback] error: {e}", file=sys.stderr)
 
     tool_handlers["ku_call"] = handle_ku_call
 
@@ -460,6 +545,11 @@ def main():
         return handle_promoted_memory
 
     def refresh_promoted_memory_tools():
+        nonlocal dynamic_memory_tools_dirty, dynamic_memory_tools_loaded
+
+        if dynamic_memory_tools_loaded and not dynamic_memory_tools_dirty:
+            return
+
         for name in list(dynamic_memory_tool_names):
             tool_handlers.pop(name, None)
         tool_definitions[:] = [
@@ -469,6 +559,8 @@ def main():
         dynamic_memory_tool_names.clear()
 
         if not c_vm_runtime.binary.exists():
+            dynamic_memory_tools_loaded = True
+            dynamic_memory_tools_dirty = False
             return
 
         result = c_vm_runtime.call_thought("memory_promotion_list", [], profile="memory")
@@ -477,6 +569,8 @@ def main():
                 result.error or result.stderr or result.stdout or "failed to refresh promoted memory tools",
                 file=sys.stderr,
             )
+            dynamic_memory_tools_loaded = True
+            dynamic_memory_tools_dirty = False
             return
 
         value = result.value or {}
@@ -500,6 +594,9 @@ def main():
                 },
             })
             tool_handlers[tool_name] = make_promoted_memory_handler(thought_name)
+
+        dynamic_memory_tools_loaded = True
+        dynamic_memory_tools_dirty = False
 
     tool_definitions.append({
         "name": "ku_record_experience",
@@ -664,6 +761,28 @@ def main():
     tool_handlers["ku_recall_memory_explain"] = handle_recall_memory_explain
 
     tool_definitions.append({
+        "name": "ku_locate_memory",
+        "description": "Locate Dao memories by stable address and callable route instead of global search",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Locate query; empty returns recent memories"},
+                "kind": {"type": "string", "description": "Optional kind filter"},
+                "limit": {"type": "integer", "description": "Maximum locators to return, default 10"},
+            },
+        },
+    })
+
+    def handle_locate_memory(arguments):
+        return call_c_vm_memory_thought("memory_locate", [
+            arguments.get("query"),
+            arguments.get("kind"),
+            coerce_arg(arguments.get("limit", 10)),
+        ])
+
+    tool_handlers["ku_locate_memory"] = handle_locate_memory
+
+    tool_definitions.append({
         "name": "ku_promote_memory",
         "description": "Promote a persisted Dao memory record into a stable callable thought/tool candidate",
         "inputSchema": {
@@ -678,11 +797,14 @@ def main():
     })
 
     def handle_promote_memory(arguments):
-        return call_c_vm_memory_thought("memory_promote", [
+        nonlocal dynamic_memory_tools_dirty
+        result = call_c_vm_memory_thought("memory_promote", [
             arguments.get("experience_id"),
             arguments.get("thought_name"),
             arguments.get("description"),
         ])
+        dynamic_memory_tools_dirty = True
+        return result
 
     tool_handlers["ku_promote_memory"] = handle_promote_memory
 
@@ -789,6 +911,76 @@ def main():
         ])
 
     tool_handlers["ku_record_data_memory"] = handle_record_data_memory
+
+    tool_definitions.append({
+        "name": "ku_graph_from_experience",
+        "description": "Create or refresh a graph memory node from a persisted experience record",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "experience_id": {"type": "string", "description": "Experience/data memory id to index as a graph node"},
+            },
+            "required": ["experience_id"],
+        },
+    })
+
+    def handle_graph_from_experience(arguments):
+        return call_c_vm_memory_thought("memory_graph_from_experience", [
+            arguments.get("experience_id"),
+        ])
+
+    tool_handlers["ku_graph_from_experience"] = handle_graph_from_experience
+
+    tool_definitions.append({
+        "name": "ku_graph_search_memory",
+        "description": "Search Dao graph memory nodes by keyword, title, or content",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Graph memory search query"},
+                "limit": {"type": "integer", "description": "Maximum graph nodes to return, default 10"},
+            },
+        },
+    })
+
+    def handle_graph_search_memory(arguments):
+        return call_c_vm_memory_thought("memory_graph_search", [
+            arguments.get("query"),
+            coerce_arg(arguments.get("limit", 10)),
+        ])
+
+    tool_handlers["ku_graph_search_memory"] = handle_graph_search_memory
+
+    tool_definitions.append({
+        "name": "ku_graph_expand_memory",
+        "description": "Expand Dao graph memory from matching seed nodes to one-hop neighbors",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Seed query for graph expansion"},
+                "limit": {"type": "integer", "description": "Maximum seeds and neighbors to return, default 10"},
+            },
+        },
+    })
+
+    def handle_graph_expand_memory(arguments):
+        return call_c_vm_memory_thought("memory_graph_expand", [
+            arguments.get("query"),
+            coerce_arg(arguments.get("limit", 10)),
+        ])
+
+    tool_handlers["ku_graph_expand_memory"] = handle_graph_expand_memory
+
+    tool_definitions.append({
+        "name": "ku_graph_memory_stats",
+        "description": "Read Dao graph memory node, edge, and keyword counts",
+        "inputSchema": {"type": "object", "properties": {}},
+    })
+
+    def handle_graph_memory_stats(arguments):
+        return call_c_vm_memory_thought("memory_graph_stats", [])
+
+    tool_handlers["ku_graph_memory_stats"] = handle_graph_memory_stats
 
     if expose_thought_tools:
         # 兼容模式：显式要求时，才把每个 thought 展成 MCP tool。

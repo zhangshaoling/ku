@@ -1,0 +1,232 @@
+// memory_graph.ku - lightweight Dao graph memory layer
+// Inspired by left-brain node/edge recall: write memory -> node -> keyword index -> auto edges.
+
+思 graph_db() {
+  dao_data_path("experience.db")
+}
+
+思 graph_now() {
+  now_fmt()
+}
+
+思 graph_id(prefix) {
+  conn = sqlite_open(graph_db())
+  rows = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM memory_graph_node", [])
+  edge_rows = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM memory_graph_edge", [])
+  sqlite_close(conn)
+  node_count = 0
+  edge_count = 0
+  若 (> (len(rows), 0)) { node_count = rows[0]["cnt"] }
+  若 (> (len(edge_rows), 0)) { edge_count = edge_rows[0]["cnt"] }
+  prefix + "_" + str(int(now())) + "_" + str(node_count) + "_" + str(edge_count)
+}
+
+思 graph_tags_json(tags) {
+  若 is_none(tags) { 返 "[]" }
+  若 is_list(tags) { 返 json_stringify(tags) }
+  若 is_str(tags) {
+    若 str_is_empty(tags) { 返 "[]" }
+    返 json_stringify(str_split(tags, ","))
+  }
+  json_stringify([str(tags)])
+}
+
+思 graph_tags_list(tags) {
+  若 is_none(tags) { 返 [] }
+  若 is_list(tags) { 返 tags }
+  若 is_str(tags) {
+    若 str_is_empty(tags) { 返 [] }
+    返 str_split(tags, ",")
+  }
+  [str(tags)]
+}
+
+思 graph_init() {
+  conn = sqlite_open(graph_db())
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS memory_graph_node (id TEXT PRIMARY KEY, memory_id TEXT NOT NULL UNIQUE, kind TEXT DEFAULT '', title TEXT DEFAULT '', content TEXT DEFAULT '', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, access_count INTEGER DEFAULT 0, confidence REAL DEFAULT 0.5, quality_status TEXT DEFAULT 'active')", [])
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS memory_graph_edge (id TEXT PRIMARY KEY, from_node_id TEXT NOT NULL, to_node_id TEXT NOT NULL, rel_type TEXT DEFAULT 'related', weight REAL DEFAULT 1.0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(from_node_id, to_node_id, rel_type))", [])
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS memory_graph_keyword (keyword TEXT NOT NULL, node_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(keyword, node_id))", [])
+  sqlite_exec(conn, "CREATE INDEX IF NOT EXISTS idx_memory_graph_keyword ON memory_graph_keyword(keyword)", [])
+  sqlite_exec(conn, "CREATE INDEX IF NOT EXISTS idx_memory_graph_edge_from ON memory_graph_edge(from_node_id)", [])
+  sqlite_exec(conn, "CREATE INDEX IF NOT EXISTS idx_memory_graph_edge_to ON memory_graph_edge(to_node_id)", [])
+  sqlite_close(conn)
+  {"ok": 真, "db": graph_db(), "tables": ["memory_graph_node", "memory_graph_edge", "memory_graph_keyword"]}
+}
+
+思 graph_node_row(row) {
+  out = {}
+  out["address"] = "dao://graph/node/" + row["id"]
+  out["memory_address"] = "dao://experience/" + row["memory_id"]
+  out["id"] = row["id"]
+  out["memory_id"] = row["memory_id"]
+  out["kind"] = row["kind"]
+  out["title"] = row["title"]
+  out["content"] = row["content"]
+  out["tags"] = json_parse(row["tags_json"])
+  out["access_count"] = row["access_count"]
+  out["confidence"] = row["confidence"]
+  out["created_at"] = row["created_at"]
+  out["updated_at"] = row["updated_at"]
+  out
+}
+
+思 graph_node_rows(rows) {
+  out = []
+  若 is_list(rows) {
+    遍 node_row 于 rows {
+      out = out + [graph_node_row(node_row)]
+    }
+  }
+  out
+}
+
+思 graph_edge_row(row) {
+  out = {}
+  out["id"] = row["id"]
+  out["from_node_id"] = row["from_node_id"]
+  out["to_node_id"] = row["to_node_id"]
+  out["rel_type"] = row["rel_type"]
+  out["weight"] = row["weight"]
+  out["created_at"] = row["created_at"]
+  out["updated_at"] = row["updated_at"]
+  out
+}
+
+思 graph_edge_rows(rows) {
+  out = []
+  若 is_list(rows) {
+    遍 edge_row 于 rows {
+      out = out + [graph_edge_row(edge_row)]
+    }
+  }
+  out
+}
+
+思 graph_add_keyword(conn, keyword, node_id, ts) {
+  word = str_trim(str(keyword))
+  若 str_is_empty(word) { 返 {"skipped": 真} }
+  sqlite_exec(conn, "INSERT OR IGNORE INTO memory_graph_keyword (keyword, node_id, created_at) VALUES (?, ?, ?)", [word, node_id, ts])
+  {"keyword": word, "node_id": node_id}
+}
+
+思 graph_add_edge(conn, from_node_id, to_node_id, rel_type, weight, ts) {
+  若 == (from_node_id, to_node_id) { 返 {"skipped": 真} }
+  edge_id = graph_id("edge")
+  sqlite_exec(conn, "INSERT OR IGNORE INTO memory_graph_edge (id, from_node_id, to_node_id, rel_type, weight, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [edge_id, from_node_id, to_node_id, rel_type, weight, ts, ts])
+  sqlite_exec(conn, "INSERT OR IGNORE INTO memory_graph_edge (id, from_node_id, to_node_id, rel_type, weight, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [edge_id + "_r", to_node_id, from_node_id, rel_type, weight, ts, ts])
+  {"from_node_id": from_node_id, "to_node_id": to_node_id, "rel_type": rel_type, "weight": weight}
+}
+
+思 graph_auto_edges(conn, node_id, tags, ts) {
+  edge_count = 0
+  tag_list = graph_tags_list(tags)
+  遍 tag 于 tag_list {
+    word = str_trim(str(tag))
+    若 not (str_is_empty(word)) {
+      rows = sqlite_query(conn, "SELECT node_id FROM memory_graph_keyword WHERE keyword = ? AND node_id != ? LIMIT 20", [word, node_id])
+      遍 existing 于 rows {
+        graph_add_edge(conn, node_id, existing["node_id"], "tag:" + word, 1.0, ts)
+        edge_count = edge_count + 1
+      }
+    }
+  }
+  edge_count
+}
+
+思 memory_graph_remember(memory_id, kind, title, content, tags) {
+  若 is_none(memory_id) { memory_id = "" }
+  若 is_none(kind) { kind = "" }
+  若 is_none(title) { title = "" }
+  若 is_none(content) { content = "" }
+  graph_init()
+  conn = sqlite_open(graph_db())
+  ts = graph_now()
+  tags_json = graph_tags_json(tags)
+  existing = sqlite_query(conn, "SELECT * FROM memory_graph_node WHERE memory_id = ? LIMIT 1", [memory_id])
+  若 (> (len(existing), 0)) {
+    node_id = existing[0]["id"]
+    sqlite_exec(conn, "UPDATE memory_graph_node SET kind = ?, title = ?, content = ?, tags_json = ?, updated_at = ? WHERE id = ?", [kind, title, content, tags_json, ts, node_id])
+  } {
+    node_id = graph_id("node")
+    sqlite_exec(conn, "INSERT INTO memory_graph_node (id, memory_id, kind, title, content, tags_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [node_id, memory_id, kind, title, content, tags_json, ts, ts])
+  }
+  tag_list = graph_tags_list(tags)
+  遍 tag 于 tag_list {
+    graph_add_keyword(conn, tag, node_id, ts)
+  }
+  graph_add_keyword(conn, title, node_id, ts)
+  edge_count = graph_auto_edges(conn, node_id, tag_list, ts)
+  rows = sqlite_query(conn, "SELECT * FROM memory_graph_node WHERE id = ? LIMIT 1", [node_id])
+  sqlite_close(conn)
+  {"node": graph_node_row(rows[0]), "auto_edges": edge_count}
+}
+
+思 memory_graph_from_experience(experience_id) {
+  若 is_none(experience_id) { experience_id = "" }
+  graph_init()
+  conn = sqlite_open(graph_db())
+  rows = sqlite_query(conn, "SELECT * FROM experience WHERE id = ? LIMIT 1", [experience_id])
+  若 == (len(rows), 0) {
+    sqlite_close(conn)
+    返 {"error": "experience not found", "experience_id": experience_id}
+  }
+  memory = rows[0]
+  sqlite_close(conn)
+  content = memory["context"] + " " + memory["input"] + " " + memory["output"] + " " + memory["missing"] + " " + memory["next_action"]
+  memory_graph_remember(memory["id"], memory["kind"], memory["topic"], content, json_parse(memory["tags_json"]))
+}
+
+思 memory_graph_search(query, limit) {
+  若 is_none(query) { query = "" }
+  若 is_none(limit) { limit = 10 }
+  graph_init()
+  conn = sqlite_open(graph_db())
+  若 str_is_empty(query) {
+    rows = sqlite_query(conn, "SELECT * FROM memory_graph_node WHERE quality_status = 'active' ORDER BY updated_at DESC LIMIT ?", [limit])
+  } {
+    like = "%" + query + "%"
+    rows = sqlite_query(conn, "SELECT DISTINCT n.* FROM memory_graph_node n LEFT JOIN memory_graph_keyword k ON k.node_id = n.id WHERE n.quality_status = 'active' AND (n.title LIKE ? OR n.content LIKE ? OR k.keyword LIKE ?) ORDER BY n.access_count DESC, n.updated_at DESC LIMIT ?", [like, like, like, limit])
+  }
+  遍 node_row 于 rows {
+    sqlite_exec(conn, "UPDATE memory_graph_node SET access_count = access_count + 1, updated_at = ? WHERE id = ?", [graph_now(), node_row["id"]])
+  }
+  sqlite_close(conn)
+  {"nodes": graph_node_rows(rows), "count": len(rows), "query": query}
+}
+
+思 memory_graph_neighbors(node_id, limit) {
+  若 is_none(node_id) { node_id = "" }
+  若 is_none(limit) { limit = 10 }
+  graph_init()
+  conn = sqlite_open(graph_db())
+  edge_rows = sqlite_query(conn, "SELECT * FROM memory_graph_edge WHERE from_node_id = ? ORDER BY weight DESC, updated_at DESC LIMIT ?", [node_id, limit])
+  node_rows = sqlite_query(conn, "SELECT DISTINCT n.* FROM memory_graph_edge e JOIN memory_graph_node n ON n.id = e.to_node_id WHERE e.from_node_id = ? ORDER BY e.weight DESC, e.updated_at DESC LIMIT ?", [node_id, limit])
+  sqlite_close(conn)
+  {"node_id": node_id, "neighbors": graph_node_rows(node_rows), "edges": graph_edge_rows(edge_rows), "count": len(node_rows)}
+}
+
+思 memory_graph_expand(query, limit) {
+  若 is_none(query) { query = "" }
+  若 is_none(limit) { limit = 10 }
+  seeds = memory_graph_search(query, limit)
+  expanded = []
+  遍 seed 于 seeds["nodes"] {
+    hop = memory_graph_neighbors(seed["id"], limit)
+    item = {}
+    item["seed"] = seed
+    item["neighbors"] = hop["neighbors"]
+    item["edges"] = hop["edges"]
+    expanded = expanded + [item]
+  }
+  {"query": query, "seeds": seeds["nodes"], "expanded": expanded, "count": len(expanded)}
+}
+
+思 memory_graph_stats() {
+  graph_init()
+  conn = sqlite_open(graph_db())
+  nodes = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM memory_graph_node", [])
+  edges = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM memory_graph_edge", [])
+  keywords = sqlite_query(conn, "SELECT COUNT(*) AS cnt FROM memory_graph_keyword", [])
+  sqlite_close(conn)
+  {"nodes": nodes[0]["cnt"], "edges": edges[0]["cnt"], "keywords": keywords[0]["cnt"], "db": graph_db()}
+}

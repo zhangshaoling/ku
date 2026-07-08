@@ -139,6 +139,9 @@ Current state:
 - UTF-8 topic storage is covered.
 - Fast memory recall is backed by a SQLite FTS index and exposed through
   `ku_recall_memory`.
+- Memory records expose stable `dao://experience/<id>` addresses and storage
+  routes through `ku_locate_memory`, so agents can ask where a memory lives
+  instead of falling back to broad search.
 - Persisted memory records can be promoted into stable callable thought/tool
   candidates through C VM-backed memory promotion.
 - Recall explainability and local promotion suggestions are available through

@@ -1,0 +1,10 @@
+思 f() {
+  x = "hello"
+  y = 123
+  返({
+    "key1": x,
+    "key2": y
+  })
+}
+result = f()
+result

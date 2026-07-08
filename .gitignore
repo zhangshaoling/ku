@@ -46,6 +46,24 @@ inspect_wechat_sqlite.py
 scan_wechat_xlog.py
 wechat_login_diag.ps1
 
+# Temporary Dao build/run scripts (one-off diagnostic builds)
+dao/build*.bat
+dao/run*.bat
+
+# Temporary Dao diagnostic logs / output dumps
+dao/*.log
+dao/errors.txt
+dao/gcc_errors.txt
+dao/gcc_output.txt
+dao/load_out.txt
+dao/test_out.txt
+dao/test_err.txt
+dao/test_output.log
+parity_bootstrap.log
+parity_run.log
+test_zh.txt
+build_err.log
+
 # Temporary Dao runtime scratch files
 dao/dao_core
 dao/dao_core.exe
