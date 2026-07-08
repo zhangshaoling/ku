@@ -3,10 +3,12 @@
 
 思 _td_db() { dao_data_path("memory.db") }
 思 _td_now() { now_fmt("%Y-%m-%dT%H:%M:%S") }
-思 _td_id(prefix) { prefix + "_" + str(int(now() * 1000) % 1000000000) }
+思 _td_id(prefix, salt) { prefix + "_" + str(int(now() * 1000000) % 1000000000) + "_" + str(len(str(salt))) }
 
 思 _td_init() {
   conn = sqlite_open(_td_db())
+  sqlite_exec(conn, "PRAGMA busy_timeout=5000", [])
+  sqlite_exec(conn, "PRAGMA journal_mode=WAL", [])
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience (id TEXT PRIMARY KEY, kind TEXT NOT NULL, topic TEXT DEFAULT '', context TEXT DEFAULT '', input TEXT DEFAULT '', output TEXT DEFAULT '', missing TEXT DEFAULT '', next_action TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'open', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, success_count INTEGER DEFAULT 0, failure_count INTEGER DEFAULT 0, recall_count INTEGER DEFAULT 0, last_recalled_at TEXT, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, tool_generated INTEGER DEFAULT 0, quality_status TEXT DEFAULT 'active')", [])
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS knowledge (id TEXT PRIMARY KEY, domain TEXT NOT NULL, content TEXT NOT NULL, source TEXT DEFAULT '', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, recall_count INTEGER DEFAULT 0, last_recalled_at TEXT, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, quality_status TEXT DEFAULT 'active')", [])
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS tool_registry (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT DEFAULT '', params_json TEXT DEFAULT '{}', source_experience_id TEXT DEFAULT '', call_count INTEGER DEFAULT 0, success_count INTEGER DEFAULT 0, fail_count INTEGER DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, status TEXT NOT NULL DEFAULT 'active', quality_status TEXT DEFAULT 'active')", [])
@@ -21,7 +23,7 @@
   _td_init()
   conn = sqlite_open(_td_db())
   ts = _td_now()
-  eid = _td_id("exp")
+  eid = _td_id("exp", topic)
   sqlite_exec(conn, "INSERT INTO experience (id, kind, topic, context, input, output, tags_json, created_at, updated_at) VALUES (?, 'attempt', ?, 'tiandao_mcp', ?, ?, '[\"tiandao\",\"mcp\"]', ?, ?)", [eid, topic, topic, output, ts, ts])
   sqlite_close(conn)
   {"id": eid, "kind": "attempt", "topic": topic}

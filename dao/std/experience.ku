@@ -73,7 +73,8 @@
   sqlite_exec(conn, "INSERT INTO experience_fts (id, kind, topic, context, input, output, missing, next_action, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [rec_id, kind, topic, context, input, output, missing, next_action, tags_json])
   sqlite_close(conn)
 
-  {"id": rec_id, "kind": kind, "status": "open", "created_at": ts}
+  graph = memory_graph_remember(rec_id, kind, topic, context + " " + input + " " + output + " " + missing + " " + next_action, tags)
+  {"id": rec_id, "kind": kind, "status": "open", "created_at": ts, "graph": graph}
 }
 
 // ── 记录一个缺口（gap）──
@@ -106,6 +107,14 @@
 // ── 行转 dict ──
 思 _exp_row(row) {
   out = {}
+  route = {}
+  route["store"] = "experience"
+  route["db"] = _exp_db()
+  route["table"] = "experience"
+  route["id"] = row["id"]
+  route["kind"] = row["kind"]
+  out["address"] = "dao://experience/" + row["id"]
+  out["route"] = route
   out["id"] = row["id"]
   out["kind"] = row["kind"]
   out["topic"] = row["topic"]
@@ -291,6 +300,37 @@
     explanations = explanations + [item]
   }
   {"memories": recalled["memories"], "explanations": explanations, "count": recalled["count"], "query": query, "kind": kind}
+}
+
+// ── 定位记忆：返回稳定地址和可调用路由，让智能体知道去哪找、怎么调 ──
+思 memory_locate(query, kind, limit) {
+  若 is_none(query) { query = "" }
+  若 is_none(kind) { kind = "" }
+  若 is_none(limit) { limit = 10 }
+
+  recalled = memory_recall(query, kind, limit)
+  conn = sqlite_open(_exp_db())
+  locators = []
+  遍 memory 于 recalled["memories"] {
+    promotions = sqlite_query(conn, "SELECT thought_name, tool_name FROM memory_promotion WHERE experience_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1", [memory["id"]])
+    item = {}
+    item["address"] = memory["address"]
+    item["route"] = memory["route"]
+    item["id"] = memory["id"]
+    item["kind"] = memory["kind"]
+    item["topic"] = memory["topic"]
+    item["tags"] = memory["tags"]
+    item["promoted"] = (> (len(promotions), 0))
+    item["thought_name"] = ""
+    item["tool_name"] = ""
+    若 (> (len(promotions), 0)) {
+      item["thought_name"] = promotions[0]["thought_name"]
+      item["tool_name"] = promotions[0]["tool_name"]
+    }
+    locators = locators + [item]
+  }
+  sqlite_close(conn)
+  {"locators": locators, "count": len(locators), "query": query, "kind": kind}
 }
 
 // ── 提升记忆：把一条持久化 memory 绑定成稳定 thought/tool 候选 ──

@@ -1372,6 +1372,7 @@ Val *builtin_sqlite_open(Val **args, int argc) {
         if (db) sqlite3_close(db);
         return val_nil();
     }
+    sqlite3_busy_timeout(db, 5000);
     int idx = db_conn_alloc(db);
     if (idx == 0) {
         sqlite3_close(db);
@@ -1434,7 +1435,8 @@ ExecResult builtin_sqlite_query(Val **args, int argc) {
     if (rc != SQLITE_OK) return sqlite_exec_result(sqlite3_errmsg(db));
     if (argc >= 3) sqlite_bind_params(stmt, args[2]);
     int col_count = sqlite3_column_count(stmt);
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
+    int step_rc;
+    while ((step_rc = sqlite3_step(stmt)) == SQLITE_ROW) {
         Val *row = val_dict();
         for (int c = 0; c < col_count; c++) {
             const char *col_name = sqlite3_column_name(stmt, c);
@@ -1453,6 +1455,11 @@ ExecResult builtin_sqlite_query(Val **args, int argc) {
             dict_set(row, col_name ? col_name : "", cell);
         }
         list_push(result, row);
+    }
+    if (step_rc != SQLITE_DONE) {
+        ExecResult err = sqlite_exec_result(sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return err;
     }
     sqlite3_finalize(stmt);
     r.val = result;

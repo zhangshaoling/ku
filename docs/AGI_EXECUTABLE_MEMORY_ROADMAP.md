@@ -64,6 +64,9 @@ stage:
   under `DAO_DATA_DIR`.
 - C VM-backed memory recall is exposed through an FTS-backed
   `ku_recall_memory` MCP tool.
+- Recalled memories now carry stable `dao://experience/<id>` addresses and
+  storage routes; `ku_locate_memory` returns those locators without forcing an
+  agent to rediscover them through broad file or database search.
 - Selected memory records can be promoted into stable callable thought/tool
   candidates through `ku_promote_memory` and called back through
   `ku_call_memory`.

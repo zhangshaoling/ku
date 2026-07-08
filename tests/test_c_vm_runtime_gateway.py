@@ -58,6 +58,12 @@ def test_call_thought_preserves_string_args(runtime):
     assert assert_ok(result) is True
 
 
+def test_call_thought_preserves_utf8_string_args(runtime):
+    text = "\u4e2d\u6587\u8bb0\u5fc6"
+    result = runtime.call_thought("str", [text], params=["x"], profile="core")
+    assert assert_ok(result) == text
+
+
 def test_memory_profile_experience_roundtrip(runtime, tmp_path):
     data_dir = tmp_path / "dao_data"
 
@@ -77,6 +83,73 @@ def test_memory_profile_experience_roundtrip(runtime, tmp_path):
     gaps = assert_ok(listed)
     assert gaps["count"] >= 1
     assert any(row["topic"] == "M4.5" for row in gaps["gaps"])
+
+
+def test_memory_profile_graph_indexes_and_expands_related_memories(runtime, tmp_path):
+    data_dir = tmp_path / "dao_data"
+
+    first = runtime.call_thought(
+        "experience_record",
+        ["data_memory", "Graph Memory Alpha", "alpha-key", "alpha-value", "", "", "", "dao,graph"],
+        params=["kind", "topic", "context", "input", "output", "missing", "next_action", "tags"],
+        profile="memory",
+        data_dir=data_dir,
+    )
+    first_value = assert_ok(first)
+    assert first_value["graph"]["node"]["memory_id"] == first_value["id"]
+    assert first_value["graph"]["auto_edges"] == 0
+
+    second = runtime.call_thought(
+        "experience_record",
+        ["data_memory", "Graph Memory Beta", "beta-key", "beta-value", "", "", "", "dao,graph"],
+        params=["kind", "topic", "context", "input", "output", "missing", "next_action", "tags"],
+        profile="memory",
+        data_dir=data_dir,
+    )
+    second_value = assert_ok(second)
+    assert second_value["graph"]["node"]["memory_id"] == second_value["id"]
+    assert second_value["graph"]["auto_edges"] >= 1
+
+    first_node = runtime.call_thought(
+        "memory_graph_from_experience",
+        [first_value["id"]],
+        params=["experience_id"],
+        profile="memory",
+        data_dir=data_dir,
+    )
+    assert_ok(first_node)
+
+    second_node = runtime.call_thought(
+        "memory_graph_from_experience",
+        [second_value["id"]],
+        params=["experience_id"],
+        profile="memory",
+        data_dir=data_dir,
+    )
+    second_node_value = assert_ok(second_node)
+    assert second_node_value["auto_edges"] >= 1
+
+    expanded = runtime.call_thought(
+        "memory_graph_expand",
+        ["Graph Memory Beta", 5],
+        params=["query", "limit"],
+        profile="memory",
+        data_dir=data_dir,
+    )
+    expanded_value = assert_ok(expanded)
+    assert expanded_value["count"] == 1
+    neighbor_memory_ids = {
+        neighbor["memory_id"]
+        for item in expanded_value["expanded"]
+        for neighbor in item["neighbors"]
+    }
+    assert first_value["id"] in neighbor_memory_ids
+
+    stats = runtime.call_thought("memory_graph_stats", [], profile="memory", data_dir=data_dir)
+    stats_value = assert_ok(stats)
+    assert stats_value["nodes"] == 2
+    assert stats_value["edges"] >= 2
+    assert stats_value["keywords"] >= 4
 
 
 def test_memory_profile_preserves_utf8_through_sqlite(runtime, tmp_path):
