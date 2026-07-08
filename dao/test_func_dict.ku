@@ -1,0 +1,6 @@
+思 f() {
+  x = "hello"
+  返({"key": x})
+}
+result = f()
+result

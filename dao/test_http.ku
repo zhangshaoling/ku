@@ -1,0 +1,2 @@
+res = http_get("http://www.example.com")
+print(res)

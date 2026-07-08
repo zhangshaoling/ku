@@ -1,0 +1,9 @@
+// 简单测试 dict 字面量
+思 test_dict() {
+  d = {"key1": "value1", "key2": 123}
+  print("字典: " + 转JSON(d))
+  print("键: " + str(键(d)))
+  print("key1: " + str(d["key1"]))
+  print("key2: " + str(d["key2"]))
+}
+test_dict()
