@@ -612,6 +612,45 @@
   {"status": "decayed", "threshold_days": threshold_days}
 }
 
+// ── 全局衰减（贝叶斯逐条更新）：trust *= pow(0.99, days_since_last_recalled) ──
+思 experience_decay_all() {
+  experience_init()
+  conn = sqlite_open(_exp_db())
+  rows = sqlite_query(conn, "SELECT id, trust, last_recalled_at FROM experience WHERE quality_status = 'active'", [])
+
+  i = 0
+  当 (i < len(rows)) {
+    row = rows[i]
+    若非 is_none(row["last_recalled_at"]) {
+      raw_days = sqlite_query(conn, "SELECT CAST(julianday('now') - julianday(?) AS INTEGER) AS d", [row["last_recalled_at"]])
+      days = raw_days[0]["d"]
+      若 > (days, 0) {
+        new_trust = row["trust"] * _td_pow(0.99, days)
+        sqlite_exec(conn, "UPDATE experience SET trust = ?, updated_at = ? WHERE id = ?", [new_trust, _exp_now(), row["id"]])
+      }
+    }
+    i = i + 1
+  }
+
+  // trust 低于 0.1 的标记为 decaying
+  sqlite_exec(conn, "UPDATE experience SET quality_status = 'decaying' WHERE quality_status = 'active' AND trust < 0.1")
+
+  sqlite_close(conn)
+  {"status": "decayed_all", "threshold_days": 0}
+}
+
+// ── 整数幂运算辅助（道语言原生不支持 pow）；exp >= 0 ──
+思 _td_pow(base, exp) {
+  若 == (exp, 0) { 1.0 } 否 {
+    half = _td_pow(base, floor(exp / 2))
+    若 == (exp - floor(exp / 2) * 2, 0) {
+      half * half
+    } 否 {
+      half * half * base
+    }
+  }
+}
+
 // ── 归档低质量经验 (不再参与召回) ──
 思 experience_archive(min_confidence) {
   若 is_none(min_confidence) { min_confidence = 0.15 }

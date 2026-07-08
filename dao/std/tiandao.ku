@@ -13,62 +13,168 @@
 // Rule 06: 召回经验 > N 条 -> 按质量排序
 // Rule 07: 任务完成 -> 验证所有使用过的经验
 
+// ── 当前模型标识（用于 model_version 字段） ──
+思 _td_current_model() {
+  env_model = getenv("DAO_MODEL_VERSION")
+  若 is_none(env_model) { "unknown" } 否 { env_model }
+}
+
+// ── 全局入口 ──
 思 天道(问题, 上下文) {
   若 is_none(上下文) { 上下文 = {} }
   memory_init()
-  recall = tiandao_recall(问题, 5)
+  recall = tiandao_recall(问题, 10)
   count = recall["count"]
   若 > (count, 0) {
-    sorted = tiandao_quality_sort(recall["results"])
+    sorted = tiandao_weighted_sort(recall["results"])
     {"action": "recall", "question": 问题, "rule": "01+06", "count": len(sorted), "results": sorted}
   } 否 {
     reasoned = tiandao_reason(问题, 上下文)
-    若 reasoned["ok"] {
-      saved = tiandao_record_experience(问题, reasoned)
-      {"action": "reason_and_learn", "question": 问题, "rule": "02+03", "result": reasoned, "experience": saved}
+    若 == (reasoned["action"], "reason_and_learned") {
+      {"action": "reason_and_learn", "question": 问题, "rule": "02+03", "result": reasoned}
     } 否 {
       {"action": "failed", "question": 问题, "rule": "05", "error": reasoned}
     }
   }
 }
 
+// ── 召回（knowledge + experience，貝叶斯 trust + confidence） ──
 思 tiandao_recall(问题, limit) {
   knowledge = knowledge_search(问题, limit)
   like = "%" + 问题 + "%"
   conn = sqlite_open(memory_db())
-  experience = sqlite_query(conn, "SELECT id, kind, topic, context, confidence, trust, recall_count FROM experience WHERE quality_status = 'active' AND (topic LIKE ? OR context LIKE ?) ORDER BY trust DESC, confidence DESC LIMIT ?", [like, like, limit])
+  experience = sqlite_query(conn, "SELECT id, kind, topic, context, confidence, trust, recall_count, last_recalled_at FROM experience WHERE quality_status = 'active' AND (topic LIKE ? OR context LIKE ?) ORDER BY trust DESC, confidence DESC LIMIT ?", [like, like, limit])
   sqlite_close(conn)
   results = []
   i = 0
   krows = knowledge["results"]
   当 (i < len(krows)) {
     row = krows[i]
-    results = results + [{"type": "knowledge", "id": row["id"], "content": row["content"], "confidence": row["confidence"], "trust": row["trust"], "recall_count": row["recall_count"]}]
+    results = results + [{"type": "knowledge", "id": row["id"], "content": row["content"], "confidence": row["confidence"], "trust": row["trust"], "recall_count": row["recall_count"], "last_recalled_at": row["last_recalled_at"]}]
     i = i + 1
   }
   j = 0
   当 (j < len(experience)) {
     exp = experience[j]
-    results = results + [{"type": "experience", "id": exp["id"], "content": exp["topic"] + ": " + exp["context"], "confidence": exp["confidence"], "trust": exp["trust"], "recall_count": exp["recall_count"]}]
+    results = results + [{"type": "experience", "id": exp["id"], "content": exp["topic"] + ": " + exp["context"], "confidence": exp["confidence"], "trust": exp["trust"], "recall_count": exp["recall_count"], "last_recalled_at": exp["last_recalled_at"]}]
     j = j + 1
   }
   {"results": results, "count": len(results)}
 }
 
+// ── 道计算推理（無召回时）+ 记录经验 ──
 思 tiandao_reason(问题, 上下文) {
   seed = len(问题)
   dao_out = 第42章(seed)
-  {"ok": 真, "method": "daodejing_42", "input": 问题, "output": "推理完成: " + 问题, "dao": dao_out}
+  output = "推理完成: " + 问题
+  saved = tiandao_record_experience_with_meta(问题, output, "reason", 0.5, _td_current_model())
+  {"action": "reason_and_learned", "method": "daodejing_42", "input": 问题, "output": output, "dao": dao_out, "experience": saved}
 }
 
+// ── 冷启动保护：confidence < 0.1 且 success_count = 0 的经验不写入 ──
+思 memory_write_filter(kind, topic, confidence, success_count) {
+  若 == (kind, "attempt") {
+    若 且(< (confidence, 0.1), == (success_count, 0)) {
+      返 假
+    }
+  }
+  返 真
+}
+
+// ── 去重：重复 topic+context 合并而非追加（返回已有 ID 表示合并） ──
+思 memory_dedup_check(topic, context) {
+  若 且(str_is_empty(topic), str_is_empty(context)) { 返 "" }
+  like = "%" + topic + "%"
+  conn = sqlite_open(memory_db())
+  rows = sqlite_query(conn, "SELECT id FROM experience WHERE topic LIKE ? AND context = ? AND quality_status = 'active' ORDER BY updated_at DESC LIMIT 1", [like, context])
+  sqlite_close(conn)
+  若 > (len(rows), 0) { rows[0]["id"] } 否 { "" }
+}
+
+// ── 记录经验（含元数据 + 冷启动保护 + 去重） ──
+思 tiandao_record_experience_with_meta(问题, 输出, 来源类型, 来源权重, 模型版本) {
+  若非 is_none(来源类型) { 来源类型 = "reason" }
+  若非 is_none(来源权重) { 来源权重 = 0.5 }
+  若非 is_none(模型版本) { 模型版本 = "unknown" }
+  
+  // ── 冷启动保护 ──
+  若非 memory_write_filter("attempt", 问题, 0.5, 0) {
+    返 {"id": "", "kind": "filtered", "topic": 问题, "reason": "cold_start_protection"}
+  }
+  
+  // ── 去重 ──
+  existing_id = memory_dedup_check(问题, 输出)
+  若非 str_is_empty(existing_id) {
+    // 合并：递增 recall_count + 更新时间
+    conn = sqlite_open(memory_db())
+    ts = memory_now()
+    sqlite_exec(conn, "UPDATE experience SET recall_count = recall_count + 1, updated_at = ? WHERE id = ?", [ts, existing_id])
+    sqlite_close(conn)
+    返 {"id": existing_id, "kind": "merged", "topic": 问题}
+  }
+  
+  // ── 写入 ──
+  memory_init()
+  conn = sqlite_open(memory_db())
+  ts = memory_now()
+  eid = memory_id("exp")
+  sqlite_exec(conn, "INSERT INTO experience (id, kind, topic, context, output, tags_json, created_at, updated_at, success_count, failure_count, source_weight, model_version) VALUES (?, 'attempt', ?, 'tiandao', ?, '[\"tiandao\",\"reasoning\"]', ?, ?, 1, 1, ?, ?)", [eid, 问题, 输出, ts, ts, 来源权重, 模型版本])
+  sqlite_exec(conn, "INSERT INTO memory_fts (id, type, name, content, tags) VALUES (?, 'experience', ?, ?, ?)", [eid, 问题, "tiandao: " + 输出, "[\"tiandao\",\"reasoning\"]"])
+  sqlite_close(conn)
+  {"id": eid, "kind": "attempt", "topic": 问题}
+}
+
+// ── 加权排序：score = trust × confidence × exp(-0.05 × days_since) × (1 + min(recall,5)/5) ──
+思 tiandao_weighted_sort(rows) {
+  // 计算 score = trust × confidence × exp(-0.05 × days_since) × (1 + min(recall,5)/5)
+  // days_since_last_recalled 通过 SQL julianday 表达式计算
+  scored = []
+  i = 0
+  当 (i < len(rows)) {
+    row = rows[i]
+    days = 0
+    若非 is_none(row["last_recalled_at"]) {
+      raw = sqlite_query(sqlite_open(memory_db()), "SELECT CAST(julianday('now') - julianday(?) AS INTEGER) AS d", [row["last_recalled_at"]])
+      days = raw[0]["d"]
+      sqlite_close()
+    }
+    decay = _td_exp_approx(0.05, days)
+    recall_bonus = 1.0 + _td_min(row["recall_count"], 5) / 5.0
+    score = row["trust"] * row["confidence"] * decay * recall_bonus
+    row["_score"] = score
+    scored = scored + [row]
+    i = i + 1
+  }
+  tiandao_select_sort(scored, 0, len(scored))
+}
+
+// ── 近似 e^(-rate × days)：泰勒展开前 8 项 ──
+思 _td_exp_approx(rate, days) {
+  // exp(-rate × days) ≈ Σ (-rate × days)^k / k!
+  x = 0 - rate * days
+  sum = 1.0
+  term = 1.0
+  k = 1
+  当 <= (k, 8) {
+    term = term * x / k
+    sum = sum + term
+    k = k + 1
+  }
+  若 < (sum, 0) { 0.0 } 否 { sum }
+}
+
+思 _td_min(a, b) { 若 < (a, b) { a } 否 { b } }
+
+// ── 兼容旧接口（不再调用，保留不破坏 import） ──
 思 tiandao_record_experience(问题, 结果) {
-  experience_add("attempt", 问题, "tiandao", 问题, 结果["output"], "", "", ["tiandao", "reasoning"])
+  tiandao_record_experience_with_meta(问题, 结果["output"], "reason", 0.5, "unknown")
 }
 
 思 tiandao_quality_sort(rows) {
-  tiandao_select_sort(rows, 0, len(rows))
+  tiandao_weighted_sort(rows)
 }
 
+// ── 按 _score 字段选择排序（倒序） ──
 思 tiandao_select_sort(rows, start, end) {
   若 >= (start, end) {
     rows
@@ -76,8 +182,10 @@
     max_i = start
     j = start + 1
     当 (j < end) {
-      a = rows[j]["trust"] * rows[j]["confidence"]
-      b = rows[max_i]["trust"] * rows[max_i]["confidence"]
+      a_has = has(rows[j], "_score")
+      b_has = has(rows[max_i], "_score")
+      a = 若 a_has { rows[j]["_score"] } 否 { rows[j]["trust"] * rows[j]["confidence"] }
+      b = 若 b_has { rows[max_i]["_score"] } 否 { rows[max_i]["trust"] * rows[max_i]["confidence"] }
       若 > (a, b) { max_i = j }
       j = j + 1
     }
@@ -108,22 +216,39 @@
   }
 }
 
+// ── 增强版晋升判据：trust≥阈值 AND recall_count≥3 AND success_rate≥0.6 AND confidence≥0.6 ──
 思 规则_晋升检查(阈值) {
   若 is_none(阈值) { 阈值 = 0.75 }
   memory_init()
   conn = sqlite_open(memory_db())
-  rows = sqlite_query(conn, "SELECT * FROM experience WHERE quality_status = 'active' AND trust >= ? AND recall_count >= 3", [阈值])
+  rows = sqlite_query(conn, "SELECT * FROM experience WHERE quality_status = 'active' AND trust >= ? AND recall_count >= 3 AND success_count * 1.0 / (success_count + failure_count) >= 0.6 AND confidence >= 0.6", [阈值])
   sqlite_close(conn)
   {"promotable": rows, "count": len(rows), "threshold": 阈值}
 }
 
+// ── 降级判据：连续失败≥阈值 或 confidence < 0.2 ──
 思 规则_衰减检查(阈值) {
   若 is_none(阈值) { 阈值 = 3 }
+  memory_init()
+  conn = sqlite_open(memory_db())
+  // Tool 层降级
   tool_policy_decay(阈值)
+  // Experience 层降级：confidence < 0.2 且 recall_count > 0
+  sqlite_exec(conn, "UPDATE experience SET quality_status = 'demoting' WHERE quality_status = 'active' AND confidence < 0.2 AND recall_count > 0", [])
+  sqlite_close(conn)
+  {"status": "decayed", "max_failures": 阈值}
+}
+
+// ── 自动生命周期入口：先衰减 → 再晋升 → 统计 ──
+思 auto_lifecycle() {
+  experience_decay_all()
+  promotable = 规则_晋升检查(0.75)
+  规则_衰减检查(3)
+  {"promoted": promotable["count"], "promotions": promotable["promotable"], "timestamp": memory_now()}
 }
 
 思 天道统计() {
   stats = memory_stats()
   tools = tool_list_active(20)
-  {"memory": stats, "active_tools": tools["count"]}
+  {"memory": stats, "active_tools": tools["count"], "promotable": 规则_晋升检查(0.75)["count"]}
 }

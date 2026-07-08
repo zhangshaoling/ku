@@ -12,6 +12,8 @@ Usage:
 import sys
 import os
 import json
+import sqlite3
+import math
 import glob as _glob
 import contextlib
 
@@ -351,9 +353,85 @@ def main():
         }
         profile = arguments.get("profile") or ("memory" if name in memory_thoughts else "core")
         result = c_vm_runtime.call_thought(name, call_args, params=thought.params, profile=profile)
+        
+        # ── MCP 反馈环：trust 更新 + 反向传播 ──
+        mcp_call_id = call_args.get("_mcp_call_id", "")
+        source_experience_id = call_args.get("_source_experience_id", "")
+        is_success = result.ok
+        mcp_feedback(name, is_success, source_experience_id)
+        
         if not result.ok:
             raise RuntimeError(result.error or result.stderr or result.stdout or "C VM execution failed")
         return simplify_result(result.value)
+
+    def mcp_feedback(tool_name, is_success, experience_id=None):
+        """
+        MCP 反馈环：根据调用结果更新 tool_registry 和反向传播 trust 到 source_experience。
+        - tool_registry: success_count / fail_count / call_count
+        - 反向传播: 如果有 experience_id，更新对应 experience 的贝叶斯 trust
+        """
+        data_dir = os.environ.get("DAO_DATA_DIR", "")
+        db_path = os.path.join(data_dir, "memory.db") if data_dir else os.path.join(KU_DIR, "memory.db")
+        
+        try:
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            conn.execute("PRAGMA journal_mode=WAL")
+            
+            if is_success:
+                conn.execute(
+                    "UPDATE tool_registry SET call_count = call_count + 1, success_count = success_count + 1 WHERE name = ?",
+                    (tool_name,)
+                )
+                # 贝叶斯信任更新：α = success_count + 1, β = fail_count + 1
+                # trust = α / (α + β) = success_count / (success_count + fail_count)
+                row = conn.execute(
+                    "SELECT success_count, fail_count FROM tool_registry WHERE name = ?", (tool_name,)
+                ).fetchone()
+                if row:
+                    s, f = row[0] or 1, row[1] or 1
+                    new_trust = max(0.01, min(0.99, s / (s + f)))
+                    conn.execute(
+                        "UPDATE tool_registry SET trust = ?, updated_at = datetime('now') WHERE name = ?",
+                        (new_trust, tool_name)
+                    )
+            else:
+                conn.execute(
+                    "UPDATE tool_registry SET call_count = call_count + 1, fail_count = fail_count + 1 WHERE name = ?",
+                    (tool_name,)
+                )
+                row = conn.execute(
+                    "SELECT success_count, fail_count FROM tool_registry WHERE name = ?", (tool_name,)
+                ).fetchone()
+                if row:
+                    s, f = row[0] or 1, row[1] or 1
+                    new_trust = max(0.01, min(0.99, s / (s + f)))
+                    conn.execute(
+                        "UPDATE tool_registry SET trust = ?, updated_at = datetime('now') WHERE name = ?",
+                        (new_trust, tool_name)
+                    )
+            
+            # ── 反向传播 trust 到 source experience ──
+            if experience_id:
+                row = conn.execute(
+                    "SELECT success_count, fail_count FROM experience WHERE id = ?", (experience_id,)
+                ).fetchone()
+                if row:
+                    s, f = row[0] or 1, row[1] or 1
+                    if is_success:
+                        s = s + 1
+                    else:
+                        f = f + 1
+                    new_trust = max(0.01, min(0.99, s / (s + f)))
+                    new_conf = new_trust  # confidence 跟随 trust
+                    conn.execute(
+                        "UPDATE experience SET success_count = ?, failure_count = ?, trust = ?, confidence = ?, updated_at = datetime('now') WHERE id = ?",
+                        (s, f, new_trust, new_conf, experience_id)
+                    )
+            
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"[mcp_feedback] error: {e}", file=sys.stderr)
 
     tool_handlers["ku_call"] = handle_ku_call
 

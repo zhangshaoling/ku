@@ -15,34 +15,37 @@
 思 天道(问题, 上下文) {
   若 is_none(上下文) { 上下文 = {} }
   memory_init()
-  recall = tiandao_recall_fast(问题, 5)
+  recall = tiandao_recall_fast(问题, 10)
   count = recall["count"]
   若 > (count, 0) {
     {"action": "recall", "question": 问题, "rule": "01+06", "count": count, "results": recall["results"]}
   } 否 {
     reasoned = tiandao_reason_fast(问题, 上下文)
-    saved = experience_add("attempt", 问题, "tiandao_fast", 问题, reasoned["output"], "", "", ["tiandao", "fast"])
-    {"action": "reason_and_learn", "question": 问题, "rule": "02+03", "result": reasoned, "experience": saved}
+    若 == (reasoned["action"], "reason_and_learned") {
+      {"action": "reason_and_learn", "question": 问题, "rule": "02+03", "result": reasoned}
+    } 否 {
+      {"action": "failed", "question": 问题, "rule": "05", "error": reasoned}
+    }
   }
 }
 
 思 tiandao_recall_fast(问题, limit) {
   like = "%" + 问题 + "%"
   conn = sqlite_open(memory_db())
-  knowledge = sqlite_query(conn, "SELECT id, domain, content, confidence, trust, recall_count FROM knowledge WHERE quality_status = 'active' AND (domain LIKE ? OR content LIKE ?) ORDER BY trust DESC, confidence DESC LIMIT ?", [like, like, limit])
-  experience = sqlite_query(conn, "SELECT id, kind, topic, context, confidence, trust, recall_count FROM experience WHERE quality_status = 'active' AND (topic LIKE ? OR context LIKE ?) ORDER BY trust DESC, confidence DESC LIMIT ?", [like, like, limit])
+  knowledge = sqlite_query(conn, "SELECT id, domain, content, confidence, trust, recall_count, last_recalled_at FROM knowledge WHERE quality_status = 'active' AND (domain LIKE ? OR content LIKE ?) ORDER BY trust DESC, confidence DESC LIMIT ?", [like, like, limit])
+  experience = sqlite_query(conn, "SELECT id, kind, topic, context, confidence, trust, recall_count, last_recalled_at FROM experience WHERE quality_status = 'active' AND (topic LIKE ? OR context LIKE ?) ORDER BY trust DESC, confidence DESC LIMIT ?", [like, like, limit])
   sqlite_close(conn)
   results = []
   i = 0
   当 (i < len(knowledge)) {
     row = knowledge[i]
-    results = results + [{"type": "knowledge", "id": row["id"], "content": row["content"], "confidence": row["confidence"], "trust": row["trust"], "recall_count": row["recall_count"]}]
+    results = results + [{"type": "knowledge", "id": row["id"], "content": row["content"], "confidence": row["confidence"], "trust": row["trust"], "recall_count": row["recall_count"], "last_recalled_at": row["last_recalled_at"]}]
     i = i + 1
   }
   j = 0
   当 (j < len(experience)) {
     exp = experience[j]
-    results = results + [{"type": "experience", "id": exp["id"], "content": exp["topic"] + ": " + exp["context"], "confidence": exp["confidence"], "trust": exp["trust"], "recall_count": exp["recall_count"]}]
+    results = results + [{"type": "experience", "id": exp["id"], "content": exp["topic"] + ": " + exp["context"], "confidence": exp["confidence"], "trust": exp["trust"], "recall_count": exp["recall_count"], "last_recalled_at": exp["last_recalled_at"]}]
     j = j + 1
   }
   {"results": results, "count": len(results)}
@@ -51,7 +54,19 @@
 思 tiandao_reason_fast(问题, 上下文) {
   seed = len(问题)
   dao_out = [seed, seed + seed, seed + seed + seed]
-  {"ok": 真, "method": "dao_fast_42", "input": 问题, "output": "推理完成: " + 问题, "dao": dao_out}
+  output = "推理完成: " + 问题
+  memory_init()
+  conn = sqlite_open(memory_db())
+  ts = memory_now()
+  eid = memory_id("exp")
+  sqlite_exec(conn, "INSERT INTO experience (id, kind, topic, context, output, tags_json, created_at, updated_at, success_count, failure_count, source_weight, model_version) VALUES (?, 'attempt', ?, 'tiandao_fast', ?, '[\"tiandao\",\"fast\"]', ?, ?, 1, 1, 0.5, ?)", [eid, 问题, output, ts, ts, _td_current_model()])
+  sqlite_close(conn)
+  {"action": "reason_and_learned", "method": "dao_fast_42", "input": 问题, "output": output, "dao": dao_out, "experience": {"id": eid, "kind": "attempt"}}
+}
+
+思 _td_current_model() {
+  env_model = getenv("DAO_MODEL_VERSION")
+  若 is_none(env_model) { "unknown" } 否 { env_model }
 }
 
 思 规则_晋升检查(阈值) {

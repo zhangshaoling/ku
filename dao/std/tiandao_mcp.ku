@@ -9,8 +9,11 @@
   conn = sqlite_open(_td_db())
   sqlite_exec(conn, "PRAGMA busy_timeout=5000", [])
   sqlite_exec(conn, "PRAGMA journal_mode=WAL", [])
-  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience (id TEXT PRIMARY KEY, kind TEXT NOT NULL, topic TEXT DEFAULT '', context TEXT DEFAULT '', input TEXT DEFAULT '', output TEXT DEFAULT '', missing TEXT DEFAULT '', next_action TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'open', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, success_count INTEGER DEFAULT 0, failure_count INTEGER DEFAULT 0, recall_count INTEGER DEFAULT 0, last_recalled_at TEXT, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, tool_generated INTEGER DEFAULT 0, quality_status TEXT DEFAULT 'active')", [])
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience (id TEXT PRIMARY KEY, kind TEXT NOT NULL, topic TEXT DEFAULT '', context TEXT DEFAULT '', input TEXT DEFAULT '', output TEXT DEFAULT '', missing TEXT DEFAULT '', next_action TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'open', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, success_count INTEGER DEFAULT 1, failure_count INTEGER DEFAULT 1, recall_count INTEGER DEFAULT 0, last_recalled_at TEXT, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, tool_generated INTEGER DEFAULT 0, quality_status TEXT DEFAULT 'active')", [])
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS knowledge (id TEXT PRIMARY KEY, domain TEXT NOT NULL, content TEXT NOT NULL, source TEXT DEFAULT '', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, recall_count INTEGER DEFAULT 0, last_recalled_at TEXT, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, quality_status TEXT DEFAULT 'active')", [])
+  // 幂等迁移：加 model_version / source_weight
+  若非 _td_has_column(conn, "experience", "model_version") { sqlite_exec(conn, "ALTER TABLE experience ADD COLUMN model_version TEXT DEFAULT 'unknown'", []) }
+  若非 _td_has_column(conn, "experience", "source_weight") { sqlite_exec(conn, "ALTER TABLE experience ADD COLUMN source_weight REAL DEFAULT 0.5", []) }
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS tool_registry (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT DEFAULT '', params_json TEXT DEFAULT '{}', source_experience_id TEXT DEFAULT '', call_count INTEGER DEFAULT 0, success_count INTEGER DEFAULT 0, fail_count INTEGER DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, status TEXT NOT NULL DEFAULT 'active', quality_status TEXT DEFAULT 'active')", [])
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS concept (id TEXT PRIMARY KEY, name TEXT NOT NULL, definition TEXT NOT NULL, examples_json TEXT DEFAULT '[]', domain TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, recall_count INTEGER DEFAULT 0, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, quality_status TEXT DEFAULT 'active')", [])
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS goal (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '', priority INTEGER DEFAULT 5, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, progress REAL DEFAULT 0.0, trust REAL DEFAULT 0.5, quality_status TEXT DEFAULT 'active')", [])
@@ -19,12 +22,24 @@
   {"ok": 真, "db": _td_db()}
 }
 
+思 _td_has_column(conn, table, col) {
+  info = sqlite_query(conn, "PRAGMA table_info(" + table + ")", [])
+  i = 0
+  当 (i < len(info)) {
+    若 == (info[i]["name"], col) { 返 真 }
+    i = i + 1
+  }
+  假
+}
+
 思 _td_record_experience(topic, output) {
   _td_init()
   conn = sqlite_open(_td_db())
   ts = _td_now()
   eid = _td_id("exp", topic)
-  sqlite_exec(conn, "INSERT INTO experience (id, kind, topic, context, input, output, tags_json, created_at, updated_at) VALUES (?, 'attempt', ?, 'tiandao_mcp', ?, ?, '[\"tiandao\",\"mcp\"]', ?, ?)", [eid, topic, topic, output, ts, ts])
+  model = getenv("DAO_MODEL_VERSION")
+  若 is_none(model) { model = "unknown" }
+  sqlite_exec(conn, "INSERT INTO experience (id, kind, topic, context, input, output, tags_json, created_at, updated_at, success_count, failure_count, source_weight, model_version) VALUES (?, 'attempt', ?, 'tiandao_mcp', ?, ?, '[\"tiandao\",\"mcp\"]', ?, ?, 1, 1, 0.5, ?)", [eid, topic, topic, output, ts, ts, model])
   sqlite_close(conn)
   {"id": eid, "kind": "attempt", "topic": topic}
 }
@@ -53,15 +68,22 @@
 }
 
 思 天道(问题, 上下文) {
-  recall = _td_recall(问题, 5)
+  recall = _td_recall(问题, 10)
   若 > (recall["count"], 0) {
     {"action": "recall", "question": 问题, "rule": "01+06", "count": recall["count"], "results": recall["results"]}
   } 否 {
     seed = len(问题)
     dao = [seed, seed + seed, seed + seed + seed]
     output = "推理完成: " + 问题
-    saved = _td_record_experience(问题, output)
-    {"action": "reason_and_learn", "question": 问题, "rule": "02+03", "result": {"ok": 真, "method": "tiandao_mcp_fast", "input": 问题, "output": output, "dao": dao}, "experience": saved}
+    _td_init()
+    conn = sqlite_open(_td_db())
+    ts = _td_now()
+    eid = _td_id("exp", 问题)
+    model = getenv("DAO_MODEL_VERSION")
+    若 is_none(model) { model = "unknown" }
+    sqlite_exec(conn, "INSERT INTO experience (id, kind, topic, context, output, tags_json, created_at, updated_at, success_count, failure_count, source_weight, model_version) VALUES (?, 'attempt', ?, 'tiandao_mcp', ?, '[\"tiandao\",\"mcp\"]', ?, ?, 1, 1, 0.3, ?)", [eid, 问题, output, ts, ts, model])
+    sqlite_close(conn)
+    {"action": "reason_and_learn", "question": 问题, "rule": "02+03", "result": {"ok": 真, "method": "tiandao_mcp_fast", "input": 问题, "output": output, "dao": dao}, "experience": {"id": eid, "kind": "attempt"}}
   }
 }
 

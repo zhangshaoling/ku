@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -81,6 +83,48 @@ def repl(args):
         _print_value(result.value)
 
 
+def status(_):
+    data_dir = os.environ.get("DAO_DATA_DIR", ".")
+    db_path = os.path.join(data_dir, "memory.db")
+    if not Path(db_path).exists():
+        print(f"[status] memory.db not found at {db_path}")
+        return 1
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        exp_cnt = conn.execute("SELECT COUNT(*) FROM experience").fetchone()[0]
+        exp_active = conn.execute("SELECT COUNT(*) FROM experience WHERE quality_status='active'").fetchone()[0]
+        kw_cnt = conn.execute("SELECT COUNT(*) FROM knowledge").fetchone()[0]
+        tool_cnt = conn.execute("SELECT COUNT(*) FROM tool_registry").fetchone()[0]
+        tool_active = conn.execute("SELECT COUNT(*) FROM tool_registry WHERE status='active' AND quality_status='active'").fetchone()[0]
+        tool_promotable = conn.execute("SELECT COUNT(*) FROM tool_registry WHERE trust >= 0.75 AND call_count >= 3").fetchone()[0]
+        cpt_cnt = conn.execute("SELECT COUNT(*) FROM concept").fetchone()[0]
+        goal_cnt = conn.execute("SELECT COUNT(*) FROM goal WHERE status='active'").fetchone()[0]
+        rel_cnt = conn.execute("SELECT COUNT(*) FROM relation").fetchone()[0]
+        conn.close()
+    except Exception as e:
+        print(f"[status] db error: {e}")
+        return 1
+
+    # ── 终端简易 bar 图表 ──
+    def bar(label, value, max_val=256, width=16):
+        filled = int(min(value, max_val) / max_val * width)
+        bar_str = "█" * filled + "░" * (width - filled)
+        return f" {label} {bar_str} {value}"
+
+    print("┌─────────────────────────────────────┐")
+    print("│         天 道 统 计 面 板          │")
+    print("├─────────────────────────────────────┤")
+    print(f"│ 经验 {bar('active', exp_active, exp_cnt if exp_cnt > 0 else 1).ljust(34)} / {exp_cnt:>4} total │")
+    print(f"│ 知识 {bar('total', kw_cnt).ljust(34)}          │")
+    print(f"│ 工具 {bar('active', tool_active, tool_cnt if tool_cnt > 0 else 1).ljust(34)} ({tool_promotable:>2} promotable) │")
+    print(f"│ 概念 {bar('total', cpt_cnt).ljust(34)}          │")
+    print(f"│ 目标 {bar('active', goal_cnt).ljust(34)}          │")
+    print(f"│ 关系 {bar('edges', rel_cnt).ljust(34)}          │")
+    print("└─────────────────────────────────────┘")
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="dao", description="Dao C VM command line tools")
     sub = parser.add_subparsers(dest="command")
@@ -95,6 +139,9 @@ def main(argv=None):
     _add_common_runtime_args(repl_parser)
     repl_parser.add_argument("--timeout", type=float, default=60.0, help="Execution timeout in seconds")
     repl_parser.set_defaults(func=repl)
+
+    status_parser = sub.add_parser("status", help="显示天道统计面板：经验/知识/工具/概念/目标/关系")
+    status_parser.set_defaults(func=status)
 
     args = parser.parse_args(argv)
     if not hasattr(args, "func"):
