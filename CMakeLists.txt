@@ -86,6 +86,18 @@ target_link_libraries(dao_assembly PUBLIC dao_module_builder)
 dao_enable_strict_warnings(dao_assembly)
 dao_enable_sanitizers(dao_assembly)
 
+
+add_library(dao_ku_migration STATIC kernel/src/ku_migration.cpp)
+target_include_directories(dao_ku_migration PUBLIC kernel/include)
+target_link_libraries(dao_ku_migration PUBLIC dao_module_builder)
+dao_enable_strict_warnings(dao_ku_migration)
+dao_enable_sanitizers(dao_ku_migration)
+
+add_executable(ku_migration_tests kernel/tests/ku_migration_tests.cpp)
+target_link_libraries(ku_migration_tests PRIVATE dao_kernel dao_module_builder dao_disassembly dao_ku_migration)
+dao_enable_strict_warnings(ku_migration_tests)
+dao_enable_sanitizers(ku_migration_tests)
+
 add_executable(assemble_tests kernel/tests/assemble_tests.cpp)
 target_link_libraries(assemble_tests PRIVATE dao_kernel dao_module_builder dao_disassembly dao_assembly)
 dao_enable_strict_warnings(assemble_tests)
@@ -132,3 +144,4 @@ add_test(NAME dynamic_cpp_abi COMMAND abi_smoke)
 add_test(NAME pure_c_abi COMMAND c_header_smoke)
 add_test(NAME disassemble COMMAND disassemble_tests)
 add_test(NAME assemble COMMAND assemble_tests)
+add_test(NAME ku_migration COMMAND ku_migration_tests)
