@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.25)
+﻿cmake_minimum_required(VERSION 3.25)
 project(dao_kernel VERSION 0.1.0 LANGUAGES C CXX)
 
 option(DAO_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
@@ -49,6 +49,12 @@ target_include_directories(dao_module_builder PUBLIC kernel/include)
 dao_enable_strict_warnings(dao_module_builder)
 dao_enable_sanitizers(dao_module_builder)
 
+
+add_library(dao_disassembly STATIC kernel/src/disassemble.cpp)
+target_include_directories(dao_disassembly PUBLIC kernel/include)
+dao_enable_strict_warnings(dao_disassembly)
+dao_enable_sanitizers(dao_disassembly)
+
 add_executable(kernel_tests kernel/tests/kernel_tests.cpp)
 target_link_libraries(kernel_tests PRIVATE dao_kernel dao_module_builder)
 dao_enable_strict_warnings(kernel_tests)
@@ -68,6 +74,11 @@ add_executable(kernel_bench kernel/benchmarks/kernel_bench.cpp)
 target_link_libraries(kernel_bench PRIVATE dao_kernel dao_module_builder)
 dao_enable_strict_warnings(kernel_bench)
 dao_enable_sanitizers(kernel_bench)
+
+add_executable(disassemble_tests kernel/tests/disassemble_tests.cpp)
+target_link_libraries(disassemble_tests PRIVATE dao_kernel dao_module_builder dao_disassembly dao_module_builder)
+dao_enable_strict_warnings(disassemble_tests)
+dao_enable_sanitizers(disassemble_tests)
 
 if(DAO_BUILD_FUZZER)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -108,3 +119,8 @@ enable_testing()
 add_test(NAME kernel_conformance COMMAND kernel_tests)
 add_test(NAME dynamic_cpp_abi COMMAND abi_smoke)
 add_test(NAME pure_c_abi COMMAND c_header_smoke)
+add_test(NAME disassemble COMMAND disassemble_tests)
+
+
+
+
