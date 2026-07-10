@@ -135,18 +135,85 @@ bool checked_mul(int64_t left, int64_t right, int64_t& out) {
 
 dao_value null_value() { return dao_value{DAO_VALUE_NULL, 0, 0}; }
 
+const uint8_t* view_data(const dao_value& value) {
+    return reinterpret_cast<const uint8_t*>(static_cast<intptr_t>(value.payload));
+}
+
+bool is_valid_utf8(const uint8_t* data, size_t size) {
+    size_t index = 0;
+    while (index < size) {
+        const uint8_t first = data[index++];
+        if (first <= 0x7f)
+            continue;
+
+        size_t continuation_count = 0;
+        uint8_t second_min = 0x80;
+        uint8_t second_max = 0xbf;
+        if (first >= 0xc2 && first <= 0xdf) {
+            continuation_count = 1;
+        } else if (first >= 0xe0 && first <= 0xef) {
+            continuation_count = 2;
+            if (first == 0xe0)
+                second_min = 0xa0;
+            if (first == 0xed)
+                second_max = 0x9f;
+        } else if (first >= 0xf0 && first <= 0xf4) {
+            continuation_count = 3;
+            if (first == 0xf0)
+                second_min = 0x90;
+            if (first == 0xf4)
+                second_max = 0x8f;
+        } else {
+            return false;
+        }
+
+        if (continuation_count > size - index)
+            return false;
+        const uint8_t second = data[index++];
+        if (second < second_min || second > second_max)
+            return false;
+        for (size_t continuation = 1; continuation < continuation_count; ++continuation) {
+            const uint8_t byte = data[index++];
+            if (byte < 0x80 || byte > 0xbf)
+                return false;
+        }
+    }
+    return true;
+}
+
 bool is_trit(const dao_value& value) {
     return value.type == DAO_VALUE_TRIT && value.payload >= -1 && value.payload <= 1;
 }
 
 bool is_valid_value(const dao_value& value) {
-    if (value.reserved != 0)
-        return false;
     if (value.type == DAO_VALUE_NULL)
-        return value.payload == 0;
+        return value.reserved == 0 && value.payload == 0;
     if (value.type == DAO_VALUE_I64)
+        return value.reserved == 0;
+    if (value.type == DAO_VALUE_TRIT)
+        return value.reserved == 0 && is_trit(value);
+    if (value.type != DAO_VALUE_BYTES && value.type != DAO_VALUE_STRING)
+        return false;
+
+    const uint8_t* data = view_data(value);
+    const size_t size = value.reserved;
+    if (size != 0 && data == nullptr)
+        return false;
+    if (value.type == DAO_VALUE_BYTES || size == 0)
         return true;
-    return is_trit(value);
+    return is_valid_utf8(data, size);
+}
+
+dao_status make_view(dao_bytes bytes, uint32_t type, dao_value* out_value) {
+    if (out_value == nullptr || (bytes.size != 0 && bytes.data == nullptr) ||
+        bytes.size > std::numeric_limits<uint32_t>::max()) {
+        return DAO_INVALID_ARGUMENT;
+    }
+    if (type == DAO_VALUE_STRING && bytes.size != 0 && !is_valid_utf8(bytes.data, bytes.size))
+        return DAO_TYPE_ERROR;
+    *out_value = dao_value{type, static_cast<uint32_t>(bytes.size),
+                           static_cast<int64_t>(reinterpret_cast<intptr_t>(bytes.data))};
+    return DAO_OK;
 }
 
 } // namespace
@@ -179,7 +246,7 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
                               const dao::Instruction& instruction, uint32_t function_index,
                               uint32_t pc, dao_error* error) {
     if (instruction.flags != 0) {
-        return fail(error, DAO_VERIFY_ERROR, "instruction flags must be zero in VM ABI v2",
+        return fail(error, DAO_VERIFY_ERROR, "instruction flags must be zero in VM ABI v3",
                     function_index, pc);
     }
 
@@ -440,6 +507,25 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
 } // namespace
 
 extern "C" {
+
+dao_status dao_value_make_bytes_view(dao_bytes bytes, dao_value* out_value) {
+    return make_view(bytes, DAO_VALUE_BYTES, out_value);
+}
+
+dao_status dao_value_make_string_view(dao_bytes utf8, dao_value* out_value) {
+    return make_view(utf8, DAO_VALUE_STRING, out_value);
+}
+
+dao_status dao_value_get_view(const dao_value* value, dao_bytes* out_bytes) {
+    if (value == nullptr || out_bytes == nullptr)
+        return DAO_INVALID_ARGUMENT;
+    if ((value->type != DAO_VALUE_BYTES && value->type != DAO_VALUE_STRING) ||
+        !is_valid_value(*value)) {
+        return DAO_TYPE_ERROR;
+    }
+    *out_bytes = dao_bytes{view_data(*value), value->reserved};
+    return DAO_OK;
+}
 
 dao_vm_config dao_vm_config_default(void) {
     dao_vm_config config{};

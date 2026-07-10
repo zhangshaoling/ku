@@ -23,6 +23,7 @@ The clean implementation lives in [`kernel/`](kernel/README.md):
 - balanced Trit `-1 / 0 / +1`
 - explicit negative/zero/positive branches
 - internal function calls and instruction budgets
+- zero-copy borrowed bytes and UTF-8 string views
 - dynamically linked C ABI and pure C header smoke test
 - native conformance and performance benchmarks
 

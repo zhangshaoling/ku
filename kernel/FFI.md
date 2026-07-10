@@ -36,6 +36,24 @@ dao_status status = dao_vm_register_host_function(vm, &function);
 
 The callback receives a read-only contiguous argument view and writes one result. Dao validates the declared signature, callback status, result type, Trit range, and reserved fields.
 
+## Borrowed Bytes And Strings
+
+`DAO_VALUE_BYTES` and `DAO_VALUE_STRING` are zero-copy borrowed views. Construct and inspect them through the C ABI helpers:
+
+```c
+const uint8_t payload[] = {1, 2, 3};
+dao_value value;
+dao_status status = dao_value_make_bytes_view(
+    (dao_bytes){payload, sizeof(payload)}, &value);
+
+dao_bytes view;
+status = dao_value_get_view(&value, &view);
+```
+
+`dao_value_make_string_view` accepts UTF-8 bytes and rejects malformed encodings. Both value types preserve the original pointer across register moves, internal calls, returns, and host callbacks. The 16-byte `dao_value` stores the byte length in `reserved` for view types, so one view is limited to 4 GiB. Scalar values still require `reserved == 0`.
+
+These APIs create borrowed views only. Owned buffers require an allocator and ownership handle contract and are intentionally deferred instead of hiding allocation behind the C ABI.
+
 ## Lifetime And Concurrency
 
 - `user_data` remains host-owned and must stay valid until the function is unregistered and all active calls have returned.
@@ -44,5 +62,8 @@ The callback receives a read-only contiguous argument view and writes one result
 - After registration is frozen, immutable modules and a VM may be used for concurrent calls; callback code and `user_data` must provide their own thread safety.
 - A callback must not throw across the C boundary. The C++ runtime catches an accidental exception and returns `DAO_RUNTIME_ERROR`, but bindings must not rely on exceptions for control flow.
 - A callback must not retain the argument pointer or output pointer after returning.
+- View storage remains owned by the caller or host. It must stay readable for the entire VM call and for as long as the returned view is consumed.
+- A host must not return a view into callback stack storage. Returning static, arena, module, or explicitly host-owned storage is valid when its lifetime is documented.
+- The VM does not mutate view bytes. Hosts must synchronize mutable backing storage if calls can run concurrently.
 
 The registry belongs to the VM, not the module. The same verified module can therefore run against different host capability sets without changing its bytes or fingerprint.

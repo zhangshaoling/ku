@@ -1,4 +1,4 @@
-# Dao Binary Module v1 and Register Bytecode ABI v2
+# Dao Binary Module v1 and Register Bytecode ABI v3
 
 All multibyte values use little-endian encoding. Offsets are relative to the start of the module.
 
@@ -10,7 +10,7 @@ Size: 16 bytes.
 | ---: | ---: | --- | --- |
 | 0 | 4 | magic | `44 41 4f 00` (`DAO\0`) |
 | 4 | 2 | format version | `1` |
-| 6 | 2 | VM ABI version | `2` |
+| 6 | 2 | VM ABI version | `3` |
 | 8 | 4 | flags | `0` |
 | 12 | 4 | section count | `4` |
 
@@ -36,7 +36,19 @@ Initial section types:
 | 3 | `EXPORT` | 8 |
 | 4 | `IMPORT` | 8 |
 
-Sections must lie after the section table, remain inside the module, and not overlap. Duplicate or unknown section types are rejected. VM ABI v2 requires all four sections; `IMPORT` may contain zero records.
+Sections must lie after the section table, remain inside the module, and not overlap. Duplicate or unknown section types are rejected. VM ABI v3 requires all four sections; `IMPORT` may contain zero records.
+
+## Runtime Value ABI
+
+`dao_value` remains a fixed 16-byte C ABI value:
+
+| Offset | Size | Field | Scalar | Borrowed view |
+| ---: | ---: | --- | --- | --- |
+| 0 | 4 | type | `NULL/I64/TRIT` | `BYTES/STRING` |
+| 4 | 4 | reserved | zero | byte length |
+| 8 | 8 | payload | scalar payload | pointer encoded through `intptr_t` |
+
+Borrowed views are limited to `UINT32_MAX` bytes so the register value stays 16 bytes. A nonempty view requires a non-null pointer. `STRING` must contain strict UTF-8: overlong encodings, surrogate code points, invalid continuation bytes, truncation, and values above `U+10FFFF` are rejected. The VM never copies, owns, frees, or extends the lifetime of view storage.
 
 ## Import Record
 
@@ -129,4 +141,4 @@ Instruction budget is shared by nested calls. These limits are part of host poli
 
 ## Versioning
 
-Changing an opcode's meaning, record layout, register convention, or value ABI requires a VM ABI version change. VM ABI v2 adds `IMPORT` and `CALL_HOST`; VM ABI v1 modules are intentionally rejected rather than guessed. Adding an optional container feature requires a declared flag and compatible loader behavior.
+Changing an opcode's meaning, record layout, register convention, or value ABI requires a VM ABI version change. VM ABI v2 added `IMPORT` and `CALL_HOST`. VM ABI v3 adds the 16-byte borrowed `BYTES` and UTF-8 `STRING` value representations. Older modules are intentionally rejected rather than guessed. Adding an optional container feature requires a declared flag and compatible loader behavior.

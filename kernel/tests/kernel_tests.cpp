@@ -4,12 +4,15 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
 namespace {
 
 int failures = 0;
+
+static_assert(sizeof(dao_value) == 16, "dao_value must remain a compact 16-byte ABI value");
 
 void check(bool condition, const char* expression, const char* test_name) {
     if (condition)
@@ -79,6 +82,21 @@ dao_status host_invalid_value(void*, const dao_value*, size_t, dao_value* out_va
 dao_status host_error(void*, const dao_value*, size_t, dao_value*) { return DAO_DIVIDE_BY_ZERO; }
 
 dao_status host_throws(void*, const dao_value*, size_t, dao_value*) { throw 42; }
+
+dao_status host_echo_view(void*, const dao_value* args, size_t arg_count, dao_value* out_value) {
+    if (args == nullptr || arg_count != 1 || out_value == nullptr)
+        return DAO_INVALID_ARGUMENT;
+    dao_bytes view{};
+    if (dao_value_get_view(&args[0], &view) != DAO_OK)
+        return DAO_TYPE_ERROR;
+    *out_value = args[0];
+    return DAO_OK;
+}
+
+dao_status host_invalid_view(void*, const dao_value*, size_t, dao_value* out_value) {
+    *out_value = {DAO_VALUE_BYTES, 1, 0};
+    return DAO_OK;
+}
 
 void test_deterministic_encoding() {
     const auto first = make_add_module(100);
@@ -213,6 +231,108 @@ void test_host_imports(dao_vm* vm) {
     CHECK("missing host unregister",
           dao_vm_unregister_host_function(vm, 700) == DAO_IMPORT_NOT_FOUND);
 
+    dao_module_release(module);
+}
+
+void test_borrowed_views(dao_vm* vm) {
+    uint8_t storage[] = {1, 2, 3, 4};
+    dao_value bytes_value{};
+    CHECK("make bytes view",
+          dao_value_make_bytes_view({storage, sizeof(storage)}, &bytes_value) == DAO_OK);
+    CHECK("bytes view type", bytes_value.type == DAO_VALUE_BYTES);
+
+    dao_bytes extracted{};
+    CHECK("read bytes view", dao_value_get_view(&bytes_value, &extracted) == DAO_OK);
+    CHECK("bytes view is zero copy",
+          extracted.data == storage && extracted.size == sizeof(storage));
+    storage[1] = 9;
+    CHECK("bytes view observes source storage", extracted.data[1] == 9);
+
+    const uint8_t utf8[] = {'D', 'a', 'o', 0xe9, 0x81, 0x93};
+    dao_value string_value{};
+    CHECK("make UTF-8 string view",
+          dao_value_make_string_view({utf8, sizeof(utf8)}, &string_value) == DAO_OK);
+    CHECK("string view type", string_value.type == DAO_VALUE_STRING);
+    CHECK("read string view", dao_value_get_view(&string_value, &extracted) == DAO_OK);
+    CHECK("string view is zero copy", extracted.data == utf8 && extracted.size == sizeof(utf8));
+
+    dao_value empty{};
+    CHECK("make empty bytes view", dao_value_make_bytes_view({nullptr, 0}, &empty) == DAO_OK);
+    CHECK("read empty bytes view", dao_value_get_view(&empty, &extracted) == DAO_OK);
+    CHECK("empty bytes view", extracted.data == nullptr && extracted.size == 0);
+
+    const uint8_t invalid_utf8[] = {0xc0, 0xaf};
+    CHECK("reject invalid UTF-8 constructor",
+          dao_value_make_string_view({invalid_utf8, sizeof(invalid_utf8)}, &string_value) ==
+              DAO_TYPE_ERROR);
+    if (std::numeric_limits<size_t>::max() > std::numeric_limits<uint32_t>::max()) {
+        CHECK("reject view larger than 4 GiB",
+              dao_value_make_bytes_view(
+                  {storage, static_cast<size_t>(std::numeric_limits<uint32_t>::max()) + 1},
+                  &bytes_value) == DAO_INVALID_ARGUMENT);
+    }
+
+    dao::ModuleBuilder builder;
+    dao::FunctionSpec passthrough;
+    passthrough.parameter_count = 1;
+    passthrough.register_count = 2;
+    passthrough.code = {
+        instruction(dao::Opcode::Move, 1, 0),
+        instruction(dao::Opcode::Return, 0, 1),
+    };
+    const uint32_t passthrough_index = builder.add_function(std::move(passthrough));
+    builder.add_export(710, passthrough_index);
+
+    const uint32_t echo_import = builder.add_import(711, 1);
+    dao::FunctionSpec host_wrapper;
+    host_wrapper.parameter_count = 1;
+    host_wrapper.register_count = 2;
+    host_wrapper.code = {
+        instruction(dao::Opcode::CallHost, 1, 0, 1, echo_import),
+        instruction(dao::Opcode::Return, 0, 1),
+    };
+    const uint32_t host_index = builder.add_function(std::move(host_wrapper));
+    builder.add_export(712, host_index);
+
+    const auto module_bytes = builder.encode();
+    dao_error error{};
+    dao_module* module = load_module(vm, module_bytes, &error);
+    CHECK("load borrowed-view module", module != nullptr);
+    if (module == nullptr)
+        return;
+
+    dao_function function = 0;
+    dao_value result{};
+    CHECK("find view passthrough", dao_module_find_export(module, 710, &function) == DAO_OK);
+    CHECK("pass bytes view through VM",
+          dao_vm_call(vm, module, function, &bytes_value, 1, &result, &error) == DAO_OK);
+    CHECK("read passed bytes view", dao_value_get_view(&result, &extracted) == DAO_OK);
+    CHECK("VM preserves borrowed pointer",
+          extracted.data == storage && extracted.size == sizeof(storage));
+
+    dao_host_function host{sizeof(dao_host_function), 711, 1, 0, host_echo_view, nullptr};
+    CHECK("register view host", dao_vm_register_host_function(vm, &host) == DAO_OK);
+    CHECK("find view host wrapper", dao_module_find_export(module, 712, &function) == DAO_OK);
+    CHECK("pass string view through host",
+          dao_vm_call(vm, module, function, &string_value, 1, &result, &error) == DAO_OK);
+    CHECK("read host string view", dao_value_get_view(&result, &extracted) == DAO_OK);
+    CHECK("host preserves borrowed pointer",
+          extracted.data == utf8 && extracted.size == sizeof(utf8));
+    CHECK("unregister view host", dao_vm_unregister_host_function(vm, 711) == DAO_OK);
+
+    const dao_value invalid_bytes{DAO_VALUE_BYTES, 1, 0};
+    CHECK("reject null nonempty bytes view",
+          dao_vm_call(vm, module, function, &invalid_bytes, 1, &result, &error) == DAO_TYPE_ERROR);
+    const dao_value invalid_string{DAO_VALUE_STRING, static_cast<uint32_t>(sizeof(invalid_utf8)),
+                                   static_cast<int64_t>(reinterpret_cast<intptr_t>(invalid_utf8))};
+    CHECK("reject malformed UTF-8 argument",
+          dao_vm_call(vm, module, function, &invalid_string, 1, &result, &error) == DAO_TYPE_ERROR);
+
+    host.callback = host_invalid_view;
+    CHECK("register invalid-view host", dao_vm_register_host_function(vm, &host) == DAO_OK);
+    CHECK("reject invalid host view",
+          dao_vm_call(vm, module, function, &bytes_value, 1, &result, &error) == DAO_TYPE_ERROR);
+    CHECK("unregister invalid-view host", dao_vm_unregister_host_function(vm, 711) == DAO_OK);
     dao_module_release(module);
 }
 
@@ -426,6 +546,7 @@ int main() {
     test_add_and_export(vm);
     test_internal_call(vm);
     test_host_imports(vm);
+    test_borrowed_views(vm);
     test_trit_logic_and_branch(vm);
     test_bad_modules(vm);
     test_runtime_errors(vm);

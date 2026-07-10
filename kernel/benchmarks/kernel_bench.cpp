@@ -2,6 +2,7 @@
 #include "dao/format.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -22,6 +23,15 @@ dao_status host_add(void*, const dao_value* args, size_t arg_count, dao_value* o
         return DAO_INVALID_ARGUMENT;
     }
     *out_value = {DAO_VALUE_I64, 0, args[0].payload + args[1].payload};
+    return DAO_OK;
+}
+
+dao_status host_echo_view(void*, const dao_value* args, size_t arg_count, dao_value* out_value) {
+    if (arg_count != 1 || args == nullptr || out_value == nullptr ||
+        (args[0].type != DAO_VALUE_BYTES && args[0].type != DAO_VALUE_STRING)) {
+        return DAO_INVALID_ARGUMENT;
+    }
+    *out_value = args[0];
     return DAO_OK;
 }
 
@@ -59,6 +69,13 @@ int main(int argc, char** argv) {
     arithmetic.code.push_back({dao::Opcode::Return, 0, 0, 2, 0, 0});
     const uint32_t arithmetic_index = builder.add_function(std::move(arithmetic));
     builder.add_export(2, arithmetic_index);
+
+    dao::FunctionSpec view_passthrough;
+    view_passthrough.parameter_count = 1;
+    view_passthrough.register_count = 1;
+    view_passthrough.code = {{dao::Opcode::Return, 0, 0, 0, 0, 0}};
+    const uint32_t view_index = builder.add_function(std::move(view_passthrough));
+    builder.add_export(4, view_index);
     const auto bytes = builder.encode();
 
     dao_vm* vm = dao_vm_create(nullptr);
@@ -102,6 +119,27 @@ int main(int argc, char** argv) {
     const double call_ns = elapsed_ns(call_start, call_end) / static_cast<double>(call_iterations);
     const double calls_per_second = 1'000'000'000.0 / call_ns;
 
+    std::array<uint8_t, 64> view_storage{};
+    dao_value view_arg{};
+    if (dao_value_make_bytes_view({view_storage.data(), view_storage.size()}, &view_arg) != DAO_OK)
+        return EXIT_FAILURE;
+    dao_function view_function = 0;
+    if (dao_module_find_export(module, 4, &view_function) != DAO_OK)
+        return EXIT_FAILURE;
+    const auto view_start = Clock::now();
+    for (uint64_t index = 0; index < call_iterations; ++index) {
+        if (dao_vm_call(vm, module, view_function, &view_arg, 1, &result, &error) != DAO_OK)
+            return EXIT_FAILURE;
+    }
+    const auto view_end = Clock::now();
+    dao_bytes result_view{};
+    if (dao_value_get_view(&result, &result_view) != DAO_OK ||
+        result_view.data != view_storage.data()) {
+        return EXIT_FAILURE;
+    }
+    const double view_call_ns =
+        elapsed_ns(view_start, view_end) / static_cast<double>(call_iterations);
+
     dao::ModuleBuilder host_builder;
     const uint32_t host_import = host_builder.add_import(1000, 2);
     dao::FunctionSpec host_wrapper;
@@ -113,10 +151,24 @@ int main(int argc, char** argv) {
     };
     const uint32_t host_wrapper_index = host_builder.add_function(std::move(host_wrapper));
     host_builder.add_export(3, host_wrapper_index);
+
+    const uint32_t view_import = host_builder.add_import(1001, 1);
+    dao::FunctionSpec view_host_wrapper;
+    view_host_wrapper.parameter_count = 1;
+    view_host_wrapper.register_count = 2;
+    view_host_wrapper.code = {
+        {dao::Opcode::CallHost, 0, 1, 0, 1, view_import},
+        {dao::Opcode::Return, 0, 0, 1, 0, 0},
+    };
+    const uint32_t view_host_index = host_builder.add_function(std::move(view_host_wrapper));
+    host_builder.add_export(5, view_host_index);
     const auto host_bytes = host_builder.encode();
 
     dao_host_function host{sizeof(dao_host_function), 1000, 2, 0, host_add, nullptr};
     if (dao_vm_register_host_function(vm, &host) != DAO_OK)
+        return EXIT_FAILURE;
+    dao_host_function view_host{sizeof(dao_host_function), 1001, 1, 0, host_echo_view, nullptr};
+    if (dao_vm_register_host_function(vm, &view_host) != DAO_OK)
         return EXIT_FAILURE;
     dao_module* host_module = nullptr;
     if (dao_vm_load_module(vm, {host_bytes.data(), host_bytes.size()}, &host_module, &error) !=
@@ -134,6 +186,24 @@ int main(int argc, char** argv) {
     const auto host_end = Clock::now();
     const double host_call_ns =
         elapsed_ns(host_start, host_end) / static_cast<double>(call_iterations);
+
+    dao_function view_host_function = 0;
+    if (dao_module_find_export(host_module, 5, &view_host_function) != DAO_OK)
+        return EXIT_FAILURE;
+    const auto view_host_start = Clock::now();
+    for (uint64_t index = 0; index < call_iterations; ++index) {
+        if (dao_vm_call(vm, host_module, view_host_function, &view_arg, 1, &result, &error) !=
+            DAO_OK) {
+            return EXIT_FAILURE;
+        }
+    }
+    const auto view_host_end = Clock::now();
+    if (dao_value_get_view(&result, &result_view) != DAO_OK ||
+        result_view.data != view_storage.data()) {
+        return EXIT_FAILURE;
+    }
+    const double view_host_call_ns =
+        elapsed_ns(view_host_start, view_host_end) / static_cast<double>(call_iterations);
 
     dao_function arithmetic_function = 0;
     if (dao_module_find_export(module, 2, &arithmetic_function) != DAO_OK)
@@ -153,7 +223,9 @@ int main(int argc, char** argv) {
     std::cout << std::fixed << std::setprecision(2) << "module_bytes=" << bytes.size() << '\n'
               << "load_ns=" << load_ns << '\n'
               << "call_ns=" << call_ns << '\n'
+              << "view_call_ns=" << view_call_ns << '\n'
               << "host_call_ns=" << host_call_ns << '\n'
+              << "view_host_call_ns=" << view_host_call_ns << '\n'
               << "calls_per_second=" << calls_per_second << '\n'
               << "typed_ops_per_second=" << typed_ops_per_second << '\n';
 

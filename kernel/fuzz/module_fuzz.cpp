@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 
 namespace {
 
@@ -30,6 +31,25 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     if (status == DAO_OK) {
         (void)dao_module_fingerprint(module);
         dao_module_release(module);
+    }
+
+    dao_value bytes{};
+    dao_bytes extracted{};
+    if (dao_value_make_bytes_view({data, size}, &bytes) != DAO_OK ||
+        dao_value_get_view(&bytes, &extracted) != DAO_OK || extracted.data != data ||
+        extracted.size != size) {
+        std::abort();
+    }
+
+    dao_value string{};
+    const dao_status string_status = dao_value_make_string_view({data, size}, &string);
+    if (string_status == DAO_OK) {
+        if (dao_value_get_view(&string, &extracted) != DAO_OK || extracted.data != data ||
+            extracted.size != size) {
+            std::abort();
+        }
+    } else if (string_status != DAO_TYPE_ERROR) {
+        std::abort();
     }
     return 0;
 }

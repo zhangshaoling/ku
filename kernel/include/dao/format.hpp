@@ -7,7 +7,7 @@
 namespace dao {
 
 inline constexpr uint16_t kFormatVersion = 1;
-inline constexpr uint16_t kVmAbiVersion = 2;
+inline constexpr uint16_t kVmAbiVersion = 3;
 inline constexpr uint32_t kHeaderSize = 16;
 inline constexpr uint32_t kSectionEntrySize = 16;
 inline constexpr uint32_t kFunctionRecordSize = 16;

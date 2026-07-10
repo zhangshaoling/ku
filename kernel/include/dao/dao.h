@@ -41,12 +41,16 @@ typedef enum dao_status {
 typedef enum dao_value_type {
     DAO_VALUE_NULL = 0,
     DAO_VALUE_I64 = 1,
-    DAO_VALUE_TRIT = 2
+    DAO_VALUE_TRIT = 2,
+    DAO_VALUE_BYTES = 3,
+    DAO_VALUE_STRING = 4
 } dao_value_type;
 
 typedef struct dao_value {
     uint32_t type;
+    /* Zero for scalars; byte length for borrowed bytes/string views. */
     uint32_t reserved;
+    /* Scalar bits or a borrowed pointer encoded through intptr_t. */
     int64_t payload;
 } dao_value;
 
@@ -82,6 +86,10 @@ typedef struct dao_host_function {
     dao_host_callback callback;
     void* user_data;
 } dao_host_function;
+
+DAO_API dao_status dao_value_make_bytes_view(dao_bytes bytes, dao_value* out_value);
+DAO_API dao_status dao_value_make_string_view(dao_bytes utf8, dao_value* out_value);
+DAO_API dao_status dao_value_get_view(const dao_value* value, dao_bytes* out_bytes);
 
 DAO_API dao_vm_config dao_vm_config_default(void);
 DAO_API dao_vm* dao_vm_create(const dao_vm_config* config);

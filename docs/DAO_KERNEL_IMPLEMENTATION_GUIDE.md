@@ -137,6 +137,8 @@ Error
 
 值表示必须通过 benchmark 比较 tagged union、NaN boxing、compact handle 和 arena，不能凭感觉确定。
 
+首个稳定边界保持 `dao_value` 为 16 字节。`null/i64/trit` 使用零 reserved 字段；`bytes/string` 借用视图使用 32 位字节长度和 64 位指针，不复制数据，因此单视图上限为 4 GiB。`string` 进入 VM 或从宿主返回时必须通过严格 UTF-8 校验。VM 不拥有、不释放、也不延长视图内存生命周期；owned buffer 必须等 allocator/handle 契约确定后再加入。
+
 ## 7. Trit
 
 ```text
@@ -211,6 +213,9 @@ dao_status dao_module_find_export(dao_module*, uint32_t symbol, dao_function* ou
 dao_status dao_vm_call(dao_vm*, dao_module*, dao_function,
                        const dao_value* args, size_t argc,
                        dao_value* out);
+dao_status dao_value_make_bytes_view(dao_bytes, dao_value* out);
+dao_status dao_value_make_string_view(dao_bytes, dao_value* out);
+dao_status dao_value_get_view(const dao_value*, dao_bytes* out);
 void dao_module_release(dao_module*);
 void dao_vm_destroy(dao_vm*);
 ```
