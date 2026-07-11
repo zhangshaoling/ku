@@ -107,6 +107,11 @@ target_link_libraries(ku_migration_tests PRIVATE dao_kernel dao_module_builder d
 dao_enable_strict_warnings(ku_migration_tests)
 dao_enable_sanitizers(ku_migration_tests)
 
+add_executable(ku_std_math_tests kernel/tests/ku_std_math_tests.cpp)
+target_link_libraries(ku_std_math_tests PRIVATE dao_kernel dao_module_builder dao_ku_migration)
+dao_enable_strict_warnings(ku_std_math_tests)
+dao_enable_sanitizers(ku_std_math_tests)
+
 add_executable(selfhost_tests kernel/tests/selfhost_tests.cpp)
 target_link_libraries(selfhost_tests PRIVATE dao_kernel dao_module_builder dao_ku_migration)
 dao_enable_strict_warnings(selfhost_tests)
@@ -182,6 +187,11 @@ add_test(NAME ku_selfhost_seed COMMAND selfhost_tests "${CMAKE_SOURCE_DIR}/kerne
 add_test(NAME ku_compile_stdlib COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/core.ku"
     "${CMAKE_BINARY_DIR}/stdlib_core.dao")
+add_test(NAME ku_compile_std_math COMMAND dao-ku
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/math.ku"
+    "${CMAKE_BINARY_DIR}/stdlib_math.dao")
+add_test(NAME ku_std_math COMMAND ku_std_math_tests
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/math.ku")
 add_test(NAME ku_compile_acceptance COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/language_acceptance.ku"
     "${CMAKE_BINARY_DIR}/language_acceptance.dao")
@@ -221,6 +231,8 @@ set(DAO_RUNTIME_TESTS
     ku_migration
     ku_selfhost_seed
     ku_compile_stdlib
+    ku_compile_std_math
+    ku_std_math
     ku_compile_acceptance
     ku_compile_legacy_import
     ku_reject_import_escape
@@ -253,6 +265,7 @@ install(TARGETS dao_kernel dao_module_builder dao_disassembly dao_assembly dao_k
 install(DIRECTORY kernel/include/dao DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES kernel/FORMAT.md kernel/FFI.md kernel/README.md kernel/BENCHMARKS.md kernel/K5.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(FILES kernel/selfhost/compiler.ku DESTINATION share/dao/selfhost)
+install(FILES kernel/stdlib/core.ku kernel/stdlib/math.ku DESTINATION share/dao/stdlib)
 install(FILES docs/KU_SELFHOST.md docs/ABI_FREEZE_AUDIT.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(DIRECTORY bindings/python/dao_kernel DESTINATION bindings/python
     PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)

@@ -208,7 +208,14 @@ class Parser {
         }
         if (word("if") || word("若")) {
             take(); stmt.type = Stmt::Type::If; stmt.expr = expression(); skip_lines(); stmt.body = block(); skip_lines();
-            if (word("else") || word("否")) { take(); skip_lines(); stmt.alternate = block(); }
+            if (word("else") || word("否")) {
+                take();
+                skip_lines();
+                if (word("if") || word("若"))
+                    stmt.alternate.push_back(statement());
+                else
+                    stmt.alternate = block();
+            }
             return stmt;
         }
         if (word("while") || word("当")) {
@@ -383,13 +390,14 @@ class Emitter {
             const Stmt& stmt = statements[i];
             if (stmt.type == Stmt::Type::If) {
                 const auto branches = branch_false(expr(stmt.expr));
-                emit_block(stmt.body);
+                const bool terminal = implicit_return && i + 1 == statements.size();
+                emit_block(stmt.body, terminal);
                 if (stmt.alternate.empty()) {
                     patch(branches.first, code_.size()); patch(branches.second, code_.size());
                 } else {
                     const size_t jump_end = code_.size(); code_.push_back(instruction(Opcode::Jump));
                     patch(branches.first, code_.size()); patch(branches.second, code_.size());
-                    emit_block(stmt.alternate); patch(jump_end, code_.size());
+                    emit_block(stmt.alternate, terminal); patch(jump_end, code_.size());
                 }
                 continue;
             }
@@ -503,6 +511,15 @@ class Emitter {
             return dst;
         }
         if (e.type == Expr::Type::Call) {
+            if (e.value == "len") {
+                if (e.children.size() != 1)
+                    throw std::runtime_error("len expects exactly one argument at offset " +
+                                             std::to_string(e.offset));
+                const uint16_t value = expr(e.children[0]);
+                const uint16_t dst = temporary();
+                code_.push_back(instruction(Opcode::ListLength, dst, value));
+                return dst;
+            }
             auto found = indices_.find(e.value);
             auto host = imports_.find(e.value);
             if (found == indices_.end() && host == imports_.end()) throw std::runtime_error("unknown function '" + e.value + "' at offset " + std::to_string(e.offset));

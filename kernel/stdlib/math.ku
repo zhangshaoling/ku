@@ -1,0 +1,80 @@
+// Migrated from ku/std/math.ku for the Dao Binary Module integer/list subset.
+// Import with: import "std/math" as math
+
+thought abs(value) {
+  if value < 0 { -value } else { value }
+}
+
+thought sum(list) {
+  result = 0
+  for x in list { result = result + x }
+  result
+}
+
+thought product(list) {
+  result = 1
+  for x in list { result = result * x }
+  result
+}
+
+thought avg(list) {
+  if len(list) == 0 { 0 } else { sum(list) / len(list) }
+}
+
+thought clamp(val, min_val, max_val) {
+  if val < min_val { min_val }
+  else if val > max_val { max_val }
+  else { val }
+}
+
+thought lerp(a, b, t) { a + (b - a) * t }
+
+thought gcd(a, b) {
+  x = abs(a)
+  y = abs(b)
+  while y != 0 {
+    temp = y
+    y = x % y
+    x = temp
+  }
+  x
+}
+
+thought lcm(a, b) {
+  if a == 0 or b == 0 { 0 } else { abs(a * b) / gcd(a, b) }
+}
+
+thought is_prime(n) {
+  if n <= 1 { false }
+  else if n <= 3 { true }
+  else if n % 2 == 0 or n % 3 == 0 { false }
+  else {
+    i = 5
+    result = true
+    while i * i <= n {
+      if n % i == 0 or n % (i + 2) == 0 {
+        result = false
+        break
+      }
+      i = i + 6
+    }
+    result
+  }
+}
+
+thought fibonacci(n) {
+  if n <= 0 { 0 }
+  else if n == 1 { 1 }
+  else {
+    a = 0
+    b = 1
+    i = 2
+    while i <= n {
+      temp = b
+      b = a + b
+      a = temp
+      i = i + 1
+    }
+    b
+  }
+}

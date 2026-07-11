@@ -44,6 +44,8 @@
   io/fs/http/debug host boundaries.
 - `kernel/tests/fixtures/language_acceptance.ku` covers nested containers, loops, math,
   strings, and protected exceptions. Both files compile through `dao-ku` in CTest.
+- `kernel/stdlib/math.ku` is a direct migration of the integer/list-compatible functions
+  from `ku/std/math.ku`, exercised through legacy module import and VM execution.
 
 ### Phase V — MVP acceptance (full legacy parity pending)
 - Native execution covers arithmetic, comparisons, Trit logic, calls, host imports,
@@ -53,7 +55,7 @@
 
 ## Remaining For Full K4 Closure
 
-- real `ku/std/*.ku` migration instead of representative replacements;
+- remaining `ku/std/*.ku` modules and dynamic semantics beyond the migrated integer/list math subset;
 - function references/closures, floats, and remaining dynamic semantics;
 - parity against the complete legacy Python/Ku corpus;
 - stable, benchmark-selected owned container ABI.
