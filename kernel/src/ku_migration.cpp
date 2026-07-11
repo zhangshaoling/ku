@@ -47,6 +47,10 @@ std::vector<Token> lex(std::string_view source) {
     while (i < source.size()) {
         const unsigned char ch = static_cast<unsigned char>(source[i]);
         if (ch == ' ' || ch == '\t' || ch == '\r') { ++i; continue; }
+        if (ch == ';' && i + 1 < source.size() && source[i + 1] == ';') {
+            while (i < source.size() && source[i] != '\n') ++i;
+            continue;
+        }
         if (ch == '\n' || ch == ';') { push(Kind::Newline, i++, 1); continue; }
         if (ch == '/' && i + 1 < source.size() && source[i + 1] == '/') {
             while (i < source.size() && source[i] != '\n') ++i;
@@ -98,7 +102,7 @@ std::vector<Token> lex(std::string_view source) {
 }
 
 struct Expr {
-    enum class Type { Number, String, Name, Unary, Binary, Call, List, Map, Index } type = Type::Number;
+    enum class Type { Number, String, Name, Unary, Binary, Call, List, Map, Index, Conditional } type = Type::Number;
     std::string value;
     std::vector<Expr> children;
     size_t offset = 0;
@@ -207,7 +211,14 @@ class Parser {
             if (peek().kind != Kind::Name) error("expected catch variable"); stmt.target = take().text; skip_lines(); stmt.alternate = block(); return stmt;
         }
         if (word("if") || word("若")) {
-            take(); stmt.type = Stmt::Type::If; stmt.expr = expression(); skip_lines(); stmt.body = block(); skip_lines();
+            take(); stmt.type = Stmt::Type::If;
+            const bool wrapped_condition = peek().kind == Kind::LParen;
+            if (wrapped_condition) take();
+            stmt.expr = expression();
+            if (wrapped_condition && peek().kind == Kind::RParen) take();
+            skip_lines(); stmt.body = block();
+            const bool bare_alternate = peek().kind == Kind::LBrace;
+            skip_lines();
             if (word("else") || word("否")) {
                 take();
                 skip_lines();
@@ -215,7 +226,7 @@ class Parser {
                     stmt.alternate.push_back(statement());
                 else
                     stmt.alternate = block();
-            }
+            } else if (bare_alternate) stmt.alternate = block();
             return stmt;
         }
         if (word("while") || word("当")) {
@@ -256,8 +267,62 @@ class Parser {
         }
         return left;
     }
+    Expr expression_branch() {
+        expect(Kind::LBrace, "{");
+        skip_lines();
+        Expr value = expression();
+        skip_lines();
+        expect(Kind::RBrace, "}");
+        return value;
+    }
     Expr prefix() {
         Token token = take();
+        if (token.kind == Kind::Name && token.text == "if") {
+            Expr condition;
+            if (peek().kind == Kind::LParen) {
+                take(); condition = expression(); expect(Kind::RParen, ")");
+            } else condition = expression();
+            skip_lines();
+            Expr positive = expression_branch();
+            skip_lines();
+            if (word("else")) { take(); skip_lines(); }
+            if (peek().kind != Kind::LBrace) error("conditional expression requires alternate");
+            Expr alternate = expression_branch();
+            return {Expr::Type::Conditional, {},
+                    {std::move(condition), std::move(positive), std::move(alternate)},
+                    token.offset};
+        }
+        const bool operator_call = peek().kind == Kind::LParen &&
+            ((token.kind == Kind::Op && precedence(token) >= 0) ||
+             (token.kind == Kind::Name &&
+              (token.text == "and" || token.text == "or" || token.text == "not")));
+        if (operator_call) {
+            take(); skip_lines();
+            std::vector<Expr> args;
+            if (peek().kind != Kind::RParen) {
+                for (;;) {
+                    args.push_back(expression());
+                    skip_lines();
+                    if (peek().kind != Kind::Comma) break;
+                    take(); skip_lines();
+                }
+            }
+            expect(Kind::RParen, ")");
+            if (args.size() == 1 &&
+                (token.text == "-" || token.text == "!" || token.text == "not")) {
+                return {Expr::Type::Unary, token.text, std::move(args), token.offset};
+            }
+            if (args.size() >= 2 && precedence(token) >= 0 &&
+                (args.size() == 2 || token.text == "and" || token.text == "or")) {
+                Expr combined = std::move(args[0]);
+                for (size_t index = 1; index < args.size(); ++index) {
+                    combined = {Expr::Type::Binary, token.text,
+                                {std::move(combined), std::move(args[index])}, token.offset};
+                }
+                return combined;
+            }
+            error("operator call has invalid argument count");
+        }
         if ((token.kind == Kind::Op && (token.text == "-" || token.text == "!")) ||
             (token.kind == Kind::Name && token.text == "not")) {
             return {Expr::Type::Unary, token.text, {expression(6)}, token.offset};
@@ -266,22 +331,22 @@ class Parser {
         if (token.kind == Kind::Number) result = {Expr::Type::Number, token.text, {}, token.offset};
         else if (token.kind == Kind::String) result = {Expr::Type::String, token.text, {}, token.offset};
         else if (token.kind == Kind::LBracket) {
-            std::vector<Expr> items;
-            if (peek().kind != Kind::RBracket) { for (;;) { items.push_back(expression()); if (peek().kind != Kind::Comma) break; take(); } }
+            std::vector<Expr> items; skip_lines();
+            if (peek().kind != Kind::RBracket) { for (;;) { items.push_back(expression()); skip_lines(); if (peek().kind != Kind::Comma) break; take(); skip_lines(); } }
             expect(Kind::RBracket, "]"); result = {Expr::Type::List, {}, std::move(items), token.offset};
         }
         else if (token.kind == Kind::LBrace) {
-            std::vector<Expr> pairs;
+            std::vector<Expr> pairs; skip_lines();
             if (peek().kind != Kind::RBrace) {
-                for (;;) { if (peek().kind != Kind::String) error("map key must be a string literal"); Token key = take(); pairs.push_back({Expr::Type::String, key.text, {}, key.offset}); expect(Kind::Colon, ":"); pairs.push_back(expression()); if (peek().kind != Kind::Comma) break; take(); }
+                for (;;) { if (peek().kind != Kind::String) error("map key must be a string literal"); Token key = take(); pairs.push_back({Expr::Type::String, key.text, {}, key.offset}); expect(Kind::Colon, ":"); skip_lines(); pairs.push_back(expression()); skip_lines(); if (peek().kind != Kind::Comma) break; take(); skip_lines(); }
             }
             expect(Kind::RBrace, "}"); result = {Expr::Type::Map, {}, std::move(pairs), token.offset};
         }
         else if (token.kind == Kind::Name) {
             if (peek().kind != Kind::LParen) result = {Expr::Type::Name, token.text, {}, token.offset};
             else {
-                take(); std::vector<Expr> args;
-                if (peek().kind != Kind::RParen) { for (;;) { args.push_back(expression()); if (peek().kind != Kind::Comma) break; take(); } }
+                take(); skip_lines(); std::vector<Expr> args;
+                if (peek().kind != Kind::RParen) { for (;;) { args.push_back(expression()); skip_lines(); if (peek().kind != Kind::Comma) break; take(); skip_lines(); } }
                 expect(Kind::RParen, ")"); result = {Expr::Type::Call, token.text, std::move(args), token.offset};
             }
         }
@@ -471,6 +536,21 @@ class Emitter {
         const uint16_t reg = temporary(); variables_.emplace(name, reg); return reg;
     }
     uint16_t expr(const Expr& e) {
+        if (e.type == Expr::Type::Conditional) {
+            const uint16_t condition = expr(e.children[0]);
+            const auto branches = branch_false(condition);
+            const uint16_t result = temporary();
+            const uint16_t positive = expr(e.children[1]);
+            code_.push_back(instruction(Opcode::Move, result, positive));
+            const size_t jump_end = code_.size();
+            code_.push_back(instruction(Opcode::Jump));
+            patch(branches.first, code_.size());
+            patch(branches.second, code_.size());
+            const uint16_t alternate = expr(e.children[2]);
+            code_.push_back(instruction(Opcode::Move, result, alternate));
+            patch(jump_end, code_.size());
+            return result;
+        }
         if (e.type == Expr::Type::String) {
             const uint16_t dst = temporary(); const uint32_t index = builder_.add_string(e.value);
             code_.push_back(instruction(Opcode::LoadString, dst, 0, 0, index)); return dst;
@@ -517,6 +597,15 @@ class Emitter {
             return dst;
         }
         if (e.type == Expr::Type::Call) {
+            if (e.value == "push") {
+                if (e.children.size() != 2)
+                    throw std::runtime_error("push expects exactly two arguments at offset " +
+                                             std::to_string(e.offset));
+                const uint16_t list = expr(e.children[0]);
+                const uint16_t value = expr(e.children[1]);
+                code_.push_back(instruction(Opcode::ListAppend, list, value));
+                return list;
+            }
             if (e.value == "bind") {
                 if (e.children.empty() || e.children[0].type != Expr::Type::Name)
                     throw std::runtime_error("bind expects a named function at offset " +

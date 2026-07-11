@@ -75,6 +75,17 @@
 - Every generated module passes loader/verifier and assembler byte-identity round-trip.
 - The benchmark exceeds the 10 M typed ops/s gate, and `dao-ku` provides the file CLI.
 
+### Legacy syntax convergence
+- Both migration frontends accept `;;` line comments.
+- The C++ recovery/migration parser normalizes prefix operator calls such as `>= (a, b)`,
+  variadic `and/or`, multiline call/list/map literals, same-line bare alternate blocks,
+  and value-producing `if (...) { value } { alternate }` expressions onto existing AST
+  and VM instructions.
+- Legacy `push(list, value)` lowers directly to verified `LIST_APPEND`.
+- With these compatibility layers, legacy `lexer.ku`, `parser.ku`, and `task_queue.ku`
+  pass syntax parsing and now stop only at explicit capability gaps (`ord`, dynamic `type`,
+  and `system`, respectively).
+
 ## Remaining For Full K4 Closure
 
 - remaining `ku/std/*.ku` modules and dynamic semantics beyond the migrated integer/list math subset;

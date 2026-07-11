@@ -144,7 +144,15 @@ thought tokenize(source, size) {
     if byte == 91 { index = index + 1 tokens = tokens + [make_token(8, start, 1)] continue }
     if byte == 93 { index = index + 1 tokens = tokens + [make_token(9, start, 1)] continue }
     if byte == 44 { index = index + 1 tokens = tokens + [make_token(10, start, 1)] continue }
-    if byte == 59 { index = index + 1 tokens = tokens + [make_token(11, start, 1)] continue }
+    if byte == 59 {
+      if next_byte == 59 {
+        while index < size and source_byte(source, index) != 10 { index = index + 1 }
+        continue
+      }
+      index = index + 1
+      tokens = tokens + [make_token(11, start, 1)]
+      continue
+    }
     if byte == 58 { index = index + 1 tokens = tokens + [make_token(12, start, 1)] continue }
     if byte == 43 { index = index + 1 tokens = tokens + [make_token(13, start, 1)] continue }
     if byte == 45 { index = index + 1 tokens = tokens + [make_token(14, start, 1)] continue }

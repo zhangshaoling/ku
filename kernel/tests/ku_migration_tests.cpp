@@ -31,6 +31,7 @@ bool resolve_import(void* user_data, std::string_view path, std::string* source,
 
 int main() {
     const char* source = R"(
+;; legacy comment punctuation . and Unicode 注释
 import host_double(1)
 thought add(a, b) { return a + b }
 thought use_host(x) { host_double(x) }
@@ -40,10 +41,24 @@ thought calculate(x) {
   (doubled * 3) % 100
 }
 thought compare(x) { x >= 7 }
+thought prefix_compare(x) { >= (x, 7) }
+thought prefix_logic(x) { and(>= (x, 7), < (x, 10)) }
+thought variadic_prefix_logic(x) { and(>= (x, 7), < (x, 10), != (x, 8)) }
 thought logic() { true and not false }
 thought nothing() { null }
 thought missing_is_null() { {}["missing"] == null }
 thought null_differs_from_number() { null != 0 }
+thought multiline_map() {
+  {
+    "answer": 42,
+    "other": 7
+  }["answer"]
+}
+thought bare_alternate(x) { if x > 0 { return 10 } { return 20 } }
+thought conditional_expression(x) {
+  value = if (x > 0) { 40 } { 2 }
+  value + 2
+}
 thought choose(x) {
   if x > 0 { return 10 } else { return 20 }
 }
@@ -93,6 +108,11 @@ thought appended() {
   values = values + [2]
   values
 }
+thought pushed() {
+  values = []
+  push(values, 42)
+  values[0]
+}
 thought raises() { throw "bad" }
 thought catches() {
   try { raises() } catch err { return err }
@@ -124,6 +144,15 @@ thought catches() {
     CHECK("find compare", dao_module_find_export(module, symbol_id("compare"), &fn) == DAO_OK);
     CHECK("execute compare", dao_vm_call(vm, module, fn, args, 1, &result, &error) == DAO_OK);
     CHECK("compare result", result.type == DAO_VALUE_TRIT && result.payload == 1);
+    CHECK("find prefix compare", dao_module_find_export(module, symbol_id("prefix_compare"), &fn) == DAO_OK);
+    CHECK("execute prefix compare", dao_vm_call(vm, module, fn, args, 1, &result, &error) == DAO_OK);
+    CHECK("prefix compare result", result.type == DAO_VALUE_TRIT && result.payload == 1);
+    CHECK("find prefix logic", dao_module_find_export(module, symbol_id("prefix_logic"), &fn) == DAO_OK);
+    CHECK("execute prefix logic", dao_vm_call(vm, module, fn, args, 1, &result, &error) == DAO_OK);
+    CHECK("prefix logic result", result.type == DAO_VALUE_TRIT && result.payload == 1);
+    CHECK("find variadic prefix logic", dao_module_find_export(module, symbol_id("variadic_prefix_logic"), &fn) == DAO_OK);
+    CHECK("execute variadic prefix logic", dao_vm_call(vm, module, fn, args, 1, &result, &error) == DAO_OK);
+    CHECK("variadic prefix logic result", result.type == DAO_VALUE_TRIT && result.payload == 1);
     CHECK("find logic", dao_module_find_export(module, symbol_id("logic"), &fn) == DAO_OK);
     CHECK("execute logic", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
     CHECK("logic result", result.type == DAO_VALUE_TRIT && result.payload == 1);
@@ -136,10 +165,19 @@ thought catches() {
     CHECK("find null inequality", dao_module_find_export(module, symbol_id("null_differs_from_number"), &fn) == DAO_OK);
     CHECK("execute null inequality", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
     CHECK("null differs from number", result.type == DAO_VALUE_TRIT && result.payload == 1);
+    CHECK("find multiline map", dao_module_find_export(module, symbol_id("multiline_map"), &fn) == DAO_OK);
+    CHECK("execute multiline map", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("multiline map result", result.type == DAO_VALUE_I64 && result.payload == 42);
+    const dao_value negative[] = {{DAO_VALUE_I64, 0, -1}};
+    CHECK("find bare alternate", dao_module_find_export(module, symbol_id("bare_alternate"), &fn) == DAO_OK);
+    CHECK("execute bare alternate", dao_vm_call(vm, module, fn, negative, 1, &result, &error) == DAO_OK);
+    CHECK("bare alternate result", result.type == DAO_VALUE_I64 && result.payload == 20);
+    CHECK("find conditional expression", dao_module_find_export(module, symbol_id("conditional_expression"), &fn) == DAO_OK);
+    CHECK("execute conditional expression", dao_vm_call(vm, module, fn, args, 1, &result, &error) == DAO_OK);
+    CHECK("conditional expression result", result.type == DAO_VALUE_I64 && result.payload == 42);
     CHECK("find choose", dao_module_find_export(module, symbol_id("choose"), &fn) == DAO_OK);
     CHECK("execute true branch", dao_vm_call(vm, module, fn, args, 1, &result, &error) == DAO_OK);
     CHECK("true branch result", result.type == DAO_VALUE_I64 && result.payload == 10);
-    const dao_value negative[] = {{DAO_VALUE_I64, 0, -1}};
     CHECK("execute false branch", dao_vm_call(vm, module, fn, negative, 1, &result, &error) == DAO_OK);
     CHECK("false branch result", result.type == DAO_VALUE_I64 && result.payload == 20);
     CHECK("find sum_to", dao_module_find_export(module, symbol_id("sum_to"), &fn) == DAO_OK);
@@ -171,6 +209,8 @@ thought catches() {
     CHECK("execute list append", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK && result.type == DAO_VALUE_LIST);
     CHECK("inspect appended size", dao_value_list_size(vm, &result, &list_size) == DAO_OK && list_size == 2);
     CHECK("inspect appended item", dao_value_list_get(vm, &result, 0, &item) == DAO_OK && item.type == DAO_VALUE_I64 && item.payload == 40);
+    CHECK("find pushed", dao_module_find_export(module, symbol_id("pushed"), &fn) == DAO_OK);
+    CHECK("execute push builtin", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK && result.type == DAO_VALUE_I64 && result.payload == 42);
     CHECK("find catches", dao_module_find_export(module, symbol_id("catches"), &fn) == DAO_OK);
     CHECK("execute cross-call catch", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
     CHECK("read caught value", dao_value_get_view(&result, &string_view) == DAO_OK);
