@@ -46,8 +46,10 @@ emit and patch VM branch targets in the self-hosted compiler. `else { ... }` pro
 matching branch-over-alternate jump. Basic `while <condition> { ... }` loops re-evaluate their
 condition and jump back through the self-hosted builder ABI. `break` and `continue` are patched
 within their enclosing loop range.
-Plain string literals are copied into the generated module data section and loaded with
-`LOAD_STRING` (escape sequences are not yet parsed).
+String literals and escape semantics are handled in `.ku`. Generic `string_new`,
+`string_append`, and `string_finish` Host primitives only provide byte storage. Supported
+escapes are `\n`, `\t`, `\r`, `\"`, `\\`, and `\0`; any other `\x` lowers to the literal byte
+`x`. Unterminated string literals raise a `throw`.
 List literals preserve nested expression results before packing them into `MAKE_LIST`; `len(x)`
 lowers to `LIST_LENGTH`, and an identifier-backed list supports `items[index]` through
 `INDEX_GET`. `for item in list { ... }` lowers to list length, indexed element reads, and a
@@ -61,15 +63,32 @@ the catch variable receives the thrown value.
 Top-level `import name(arity)` declarations are registered before functions; matching named
 calls lower to `CALL_HOST` while local function indices exclude imports.
 
-This remains deliberately bounded: token streams, string escapes, diagnostics,
-register-overflow checks, nested indexed mutation, module-path imports, and canonical
-self-rebuild are still pending.
+The `compile` top-level loop and all downstream parsers (`parse_body`,
+`parse_expression`, `parse_additive`, `parse_multiplicative`, `parse_primary`,
+`parse_number`, `parse_string`, `parse_list`, `parse_map`) now consume a token
+stream produced by the self-hosted `tokenize` function. Tokens are encoded as
+i64 values (`type * 10^12 + start * 10^6 + length`) covering 26 token types:
+numbers, strings, identifiers, delimiters, operators, and EOF. Keyword
+recognition (`if`, `else`, `while`, `for`, `break`, `continue`, `return`,
+`throw`, `try`, `catch`, `in`) uses the `is_kw` helper that compares token
+length and source bytes directly, returning VM trits for use in `and`/`or`
+chains. The byte-scanning `advance_to_byte` bridge has been removed; `compile`
+passes token indices to `parse_body` and reads back the consumed token index
+from the packed result. Function/import lookup and arity validation also traverse
+the shared token stream; numeric import arities are read from number tokens.
+
+This remains deliberately bounded: register-overflow checks, nested indexed
+mutation, module-path imports, and canonical self-rebuild are still pending. Diagnostics
+now cover explicit `throw` paths (unterminated string/list/map literals, missing
+function body braces, empty number consumption, host/local arity mismatch,
+undefined identifiers, unexpected characters) but do not yet carry source
+positions.
 
 ## SH1: Real Frontend Remaining
 
-- move tokenization into `.ku` modules and replace byte-scanning with token streams;
-- expose string primitives and structured builder operations through numeric Host ABI;
-- compile functions, control flow, imports, constants, and containers;
+- attach token offsets to diagnostics and reject duplicate declarations;
+- support module-path imports and nested indexed assignment;
+- add register-allocation bounds and structured builder validation;
 - compare SH1 bytes with the C++ recovery compiler for canonical identity.
 
 ## SH2: Self-Rebuild

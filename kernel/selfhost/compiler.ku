@@ -2,6 +2,9 @@ import source_len(1)
 import source_byte(2)
 import source_slice(3)
 import source_hash(3)
+import string_new(0)
+import string_append(2)
+import string_finish(1)
 import builder_new(0)
 import builder_begin(3)
 import builder_emit(6)
@@ -21,81 +24,183 @@ thought packed_index(value) { value / 1000000 }
 thought packed_next(value) { value / 1000 % 1000 }
 thought packed_result(value) { value % 1000 }
 
-thought skip_space(source, index, size) {
-  while index < size {
-    byte = source_byte(source, index)
-    if byte != 32 and byte != 10 and byte != 13 and byte != 9 { break }
-    index = index + 1
-  }
-  index
-}
-
 thought source_at(source, index, size) {
   if index < 0 or index >= size { return 0 }
   source_byte(source, index)
 }
 
-thought is_space(byte) {
-  byte == 32 or byte == 10 or byte == 13 or byte == 9
+thought token_type(token) { token / 1000000000000 }
+thought token_start(token) { token / 1000000 % 1000000 }
+thought token_length(token) { token % 1000000 }
+thought make_token(type, start, length) {
+  type * 1000000000000 + start * 1000000 + length
 }
 
-thought is_word_end(byte) {
-  is_space(byte) or byte == 59 or byte == 125
-}
-
-thought is_import(source, index, size) {
-  source_at(source, index, size) == 105 and source_at(source, index + 1, size) == 109 and source_at(source, index + 2, size) == 112 and source_at(source, index + 3, size) == 111 and source_at(source, index + 4, size) == 114 and source_at(source, index + 5, size) == 116 and is_space(source_at(source, index + 6, size))
-}
-
-thought is_thought(source, index, size) {
-  source_at(source, index, size) == 116 and source_at(source, index + 1, size) == 104 and source_at(source, index + 2, size) == 111 and source_at(source, index + 3, size) == 117 and source_at(source, index + 4, size) == 103 and source_at(source, index + 5, size) == 104 and source_at(source, index + 6, size) == 116 and is_space(source_at(source, index + 7, size))
-}
-
-thought parse_number(source, index, size, handle, next_reg) {
-  index = skip_space(source, index, size)
+thought token_integer(source, token) {
   value = 0
+  pos = token_start(token)
+  end = pos + token_length(token)
+  while pos < end {
+    value = value * 10 + source_byte(source, pos) - 48
+    pos = pos + 1
+  }
+  value
+}
+
+thought tokenize(source, size) {
+  if size >= 1000000 { throw "source is too large" }
+  index = 0
+  tokens = []
   while index < size {
     byte = source_byte(source, index)
-    if byte < 48 or byte > 57 { break }
-    value = value * 10 + byte - 48
-    index = index + 1
+    if byte == 32 or byte == 10 or byte == 13 or byte == 9 { index = index + 1 continue }
+    if byte >= 48 and byte <= 57 {
+      start = index
+      while index < size {
+        b = source_byte(source, index)
+        if b < 48 or b > 57 { break }
+        index = index + 1
+      }
+      tokens = tokens + [make_token(1, start, index - start)]
+      continue
+    }
+    if byte == 34 {
+      start = index
+      index = index + 1
+      while index < size {
+        b = source_at(source, index, size)
+        if b == 92 { index = index + 2 continue }
+        if b == 34 { break }
+        index = index + 1
+      }
+      if index >= size { throw "unterminated string literal" }
+      index = index + 1
+      tokens = tokens + [make_token(2, start, index - start)]
+      continue
+    }
+    if (byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122) or byte == 95 {
+      start = index
+      while index < size {
+        b = source_byte(source, index)
+        if not ((b >= 65 and b <= 90) or (b >= 97 and b <= 122) or (b >= 48 and b <= 57) or b == 95) { break }
+        index = index + 1
+      }
+      tokens = tokens + [make_token(3, start, index - start)]
+      continue
+    }
+    start = index
+    next_byte = 0
+    if index + 1 < size { next_byte = source_byte(source, index + 1) }
+    if byte == 40 { index = index + 1 tokens = tokens + [make_token(4, start, 1)] continue }
+    if byte == 41 { index = index + 1 tokens = tokens + [make_token(5, start, 1)] continue }
+    if byte == 123 { index = index + 1 tokens = tokens + [make_token(6, start, 1)] continue }
+    if byte == 125 { index = index + 1 tokens = tokens + [make_token(7, start, 1)] continue }
+    if byte == 91 { index = index + 1 tokens = tokens + [make_token(8, start, 1)] continue }
+    if byte == 93 { index = index + 1 tokens = tokens + [make_token(9, start, 1)] continue }
+    if byte == 44 { index = index + 1 tokens = tokens + [make_token(10, start, 1)] continue }
+    if byte == 59 { index = index + 1 tokens = tokens + [make_token(11, start, 1)] continue }
+    if byte == 58 { index = index + 1 tokens = tokens + [make_token(12, start, 1)] continue }
+    if byte == 43 { index = index + 1 tokens = tokens + [make_token(13, start, 1)] continue }
+    if byte == 45 { index = index + 1 tokens = tokens + [make_token(14, start, 1)] continue }
+    if byte == 42 { index = index + 1 tokens = tokens + [make_token(15, start, 1)] continue }
+    if byte == 47 { index = index + 1 tokens = tokens + [make_token(16, start, 1)] continue }
+    if byte == 37 { index = index + 1 tokens = tokens + [make_token(17, start, 1)] continue }
+    if byte == 61 {
+      if next_byte == 61 { index = index + 2 tokens = tokens + [make_token(19, start, 2)] continue }
+      index = index + 1 tokens = tokens + [make_token(18, start, 1)] continue
+    }
+    if byte == 33 {
+      if next_byte == 61 { index = index + 2 tokens = tokens + [make_token(20, start, 2)] continue }
+      index = index + 1 tokens = tokens + [make_token(25, start, 1)] continue
+    }
+    if byte == 60 {
+      if next_byte == 61 { index = index + 2 tokens = tokens + [make_token(22, start, 2)] continue }
+      index = index + 1 tokens = tokens + [make_token(21, start, 1)] continue
+    }
+    if byte == 62 {
+      if next_byte == 61 { index = index + 2 tokens = tokens + [make_token(24, start, 2)] continue }
+      index = index + 1 tokens = tokens + [make_token(23, start, 1)] continue
+    }
+    throw "unexpected character"
+  }
+  tokens = tokens + [make_token(26, index, 0)]
+  tokens
+}
+
+thought is_kw(source, token, n, c0, c1, c2, c3, c4, c5, c6, c7) {
+  if token_length(token) != n { return 1 != 1 }
+  s = token_start(token)
+  if n > 0 { if source_byte(source, s) != c0 { return 1 != 1 } }
+  if n > 1 { if source_byte(source, s + 1) != c1 { return 1 != 1 } }
+  if n > 2 { if source_byte(source, s + 2) != c2 { return 1 != 1 } }
+  if n > 3 { if source_byte(source, s + 3) != c3 { return 1 != 1 } }
+  if n > 4 { if source_byte(source, s + 4) != c4 { return 1 != 1 } }
+  if n > 5 { if source_byte(source, s + 5) != c5 { return 1 != 1 } }
+  if n > 6 { if source_byte(source, s + 6) != c6 { return 1 != 1 } }
+  if n > 7 { if source_byte(source, s + 7) != c7 { return 1 != 1 } }
+  1 == 1
+}
+
+thought parse_number(source, tokens, token_index, handle, next_reg) {
+  token = tokens[token_index]
+  start = token_start(token)
+  length = token_length(token)
+  value = 0
+  pos = start
+  while pos < start + length {
+    value = value * 10 + source_byte(source, pos) - 48
+    pos = pos + 1
   }
   result_reg = next_reg
   builder_emit(handle, 1, result_reg, 0, 0, value)
-  pack(index, next_reg + 1, result_reg)
+  pack(token_index + 1, next_reg + 1, result_reg)
 }
 
-thought parse_string(source, index, size, handle, next_reg) {
-  index = index + 1
-  start = index
-  while index < size {
-    if source_at(source, index, size) == 34 { break }
-    index = index + 1
+thought parse_string(source, tokens, token_index, handle, next_reg) {
+  token = tokens[token_index]
+  start = token_start(token) + 1
+  length = token_length(token) - 2
+  text = string_new()
+  pos = start
+  while pos < start + length {
+    byte = source_byte(source, pos)
+    if byte == 92 and pos + 1 < start + length {
+      pos = pos + 1
+      escaped = source_byte(source, pos)
+      byte = escaped
+      if escaped == 110 { byte = 10 }
+      if escaped == 116 { byte = 9 }
+      if escaped == 114 { byte = 13 }
+      if escaped == 48 { byte = 0 }
+    }
+    string_append(text, byte)
+    pos = pos + 1
   }
-  value = source_slice(source, start, index - start)
+  value = string_finish(text)
   data_index = builder_add_string(handle, value)
   result_reg = next_reg
   builder_emit(handle, 25, result_reg, 0, 0, data_index)
-  if source_at(source, index, size) == 34 { index = index + 1 }
-  pack(index, next_reg + 1, result_reg)
+  pack(token_index + 1, next_reg + 1, result_reg)
 }
 
-thought parse_list(source, index, size, handle, next_reg, names, regs) {
-  index = skip_space(source, index + 1, size)
+thought parse_list(source, tokens, token_index, handle, next_reg, names, regs, size) {
+  token_index = token_index + 1
   values = []
-  while source_at(source, index, size) != 93 {
-    parsed = parse_expression(source, index, size, handle, next_reg, names, regs)
+  while token_type(tokens[token_index]) != 9 {
+    if token_type(tokens[token_index]) == 26 { throw "unterminated list literal" }
+    parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
     value_reg = packed_result(parsed)
     next_reg = packed_next(parsed)
     saved_reg = next_reg
     builder_emit(handle, 2, saved_reg, value_reg, 0, 0)
     next_reg = next_reg + 1
     values = values + [saved_reg]
-    index = skip_space(source, packed_index(parsed), size)
-    if source_at(source, index, size) == 44 { index = skip_space(source, index + 1, size) continue }
+    token_index = packed_index(parsed)
+    if token_type(tokens[token_index]) == 10 { token_index = token_index + 1 continue }
     break
   }
-  if source_at(source, index, size) == 93 { index = index + 1 }
+  if token_type(tokens[token_index]) != 9 { throw "expected ] in list literal" }
+  token_index = token_index + 1
   base_reg = next_reg
   count = 0
   while count < len(values) {
@@ -105,34 +210,37 @@ thought parse_list(source, index, size, handle, next_reg, names, regs) {
   }
   result_reg = next_reg
   builder_emit(handle, 26, result_reg, base_reg, count, 0)
-  pack(index, next_reg + 1, result_reg)
+  pack(token_index, next_reg + 1, result_reg)
 }
 
-thought parse_map(source, index, size, handle, next_reg, names, regs) {
-  index = skip_space(source, index + 1, size)
+thought parse_map(source, tokens, token_index, handle, next_reg, names, regs, size) {
+  token_index = token_index + 1
   values = []
-  while source_at(source, index, size) != 125 {
-    parsed = parse_expression(source, index, size, handle, next_reg, names, regs)
+  while token_type(tokens[token_index]) != 7 {
+    if token_type(tokens[token_index]) == 26 { throw "unterminated map literal" }
+    parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
     key_reg = packed_result(parsed)
     next_reg = packed_next(parsed)
     saved_reg = next_reg
     builder_emit(handle, 2, saved_reg, key_reg, 0, 0)
     next_reg = next_reg + 1
     values = values + [saved_reg]
-    index = skip_space(source, packed_index(parsed), size)
-    if source_at(source, index, size) == 58 { index = skip_space(source, index + 1, size) }
-    parsed = parse_expression(source, index, size, handle, next_reg, names, regs)
+    token_index = packed_index(parsed)
+    if token_type(tokens[token_index]) != 12 { throw "expected : in map literal" }
+    token_index = token_index + 1
+    parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
     value_reg = packed_result(parsed)
     next_reg = packed_next(parsed)
     saved_reg = next_reg
     builder_emit(handle, 2, saved_reg, value_reg, 0, 0)
     next_reg = next_reg + 1
     values = values + [saved_reg]
-    index = skip_space(source, packed_index(parsed), size)
-    if source_at(source, index, size) == 44 { index = skip_space(source, index + 1, size) continue }
+    token_index = packed_index(parsed)
+    if token_type(tokens[token_index]) == 10 { token_index = token_index + 1 continue }
     break
   }
-  if source_at(source, index, size) == 125 { index = index + 1 }
+  if token_type(tokens[token_index]) != 7 { throw "expected } in map literal" }
+  token_index = token_index + 1
   base_reg = next_reg
   count = 0
   while count < len(values) {
@@ -142,7 +250,7 @@ thought parse_map(source, index, size, handle, next_reg, names, regs) {
   }
   result_reg = next_reg
   builder_emit(handle, 29, result_reg, base_reg, count / 2, 0)
-  pack(index, next_reg + 1, result_reg)
+  pack(token_index, next_reg + 1, result_reg)
 }
 
 thought lookup_slot(names, name_hash) {
@@ -156,73 +264,115 @@ thought lookup_slot(names, name_hash) {
 
 thought lookup_reg(names, regs, name_hash) {
   slot = lookup_slot(names, name_hash)
-  if slot == 0 { return 0 }
+  if slot == 0 { throw "undefined identifier" }
   regs[slot - 1]
 }
 
-thought function_index(source, size, target_hash) {
-  index = 0
+thought function_index(source, tokens, target_hash) {
+  token_index = 0
   ordinal = 0
-  while index < size {
-    index = skip_space(source, index, size)
-    if is_import(source, index, size) {
-      while index < size {
-        if source_at(source, index, size) == 41 { index = index + 1 break }
-        index = index + 1
-      }
+  while token_type(tokens[token_index]) != 26 {
+    token = tokens[token_index]
+    if is_kw(source, token, 6, 105, 109, 112, 111, 114, 116, 0, 0) {
+      while token_type(tokens[token_index]) != 5 { token_index = token_index + 1 }
+      token_index = token_index + 1
       continue
     }
-    if not is_thought(source, index, size) { return 0 }
-    index = skip_space(source, index + 7, size)
-    name_start = index
-    while source_at(source, index, size) != 40 { index = index + 1 }
-    if source_hash(source, name_start, index - name_start) == target_hash { return ordinal }
+    if not is_kw(source, token, 7, 116, 104, 111, 117, 103, 104, 116, 0) { return 0 }
+    name_token = tokens[token_index + 1]
+    if source_hash(source, token_start(name_token), token_length(name_token)) == target_hash { return ordinal }
     ordinal = ordinal + 1
-    while index < size {
-      if source_at(source, index, size) == 123 { break }
-      index = index + 1
-    }
+    token_index = token_index + 2
+    while token_type(tokens[token_index]) != 6 { token_index = token_index + 1 }
     depth = 0
-    while index < size {
-      if source_at(source, index, size) == 123 { depth = depth + 1 }
-      if source_at(source, index, size) == 125 {
+    while token_type(tokens[token_index]) != 26 {
+      if token_type(tokens[token_index]) == 6 { depth = depth + 1 }
+      if token_type(tokens[token_index]) == 7 {
         depth = depth - 1
-        if depth == 0 { index = index + 1 break }
+        if depth == 0 { token_index = token_index + 1 break }
       }
-      index = index + 1
+      token_index = token_index + 1
     }
   }
   0
 }
 
-thought import_index(source, size, target_hash) {
-  index = 0
+thought function_arity(source, tokens, target_hash) {
+  token_index = 0
+  while token_type(tokens[token_index]) != 26 {
+    token = tokens[token_index]
+    if is_kw(source, token, 6, 105, 109, 112, 111, 114, 116, 0, 0) {
+      while token_type(tokens[token_index]) != 5 { token_index = token_index + 1 }
+      token_index = token_index + 1
+      continue
+    }
+    if not is_kw(source, token, 7, 116, 104, 111, 117, 103, 104, 116, 0) { return -1 }
+    name_token = tokens[token_index + 1]
+    matches = source_hash(source, token_start(name_token), token_length(name_token)) == target_hash
+    token_index = token_index + 3
+    arity = 0
+    while token_type(tokens[token_index]) != 5 {
+      if token_type(tokens[token_index]) == 3 { arity = arity + 1 }
+      token_index = token_index + 1
+    }
+    if matches { return arity }
+    token_index = token_index + 1
+    while token_type(tokens[token_index]) != 6 { token_index = token_index + 1 }
+    depth = 0
+    while token_type(tokens[token_index]) != 26 {
+      if token_type(tokens[token_index]) == 6 { depth = depth + 1 }
+      if token_type(tokens[token_index]) == 7 {
+        depth = depth - 1
+        if depth == 0 { token_index = token_index + 1 break }
+      }
+      token_index = token_index + 1
+    }
+  }
+  -1
+}
+
+thought import_index(source, tokens, target_hash) {
+  token_index = 0
   ordinal = 0
-  while index < size {
-    index = skip_space(source, index, size)
-    if not is_import(source, index, size) { return 0 }
-    index = skip_space(source, index + 6, size)
-    name_start = index
-    while source_at(source, index, size) != 40 { index = index + 1 }
-    if source_hash(source, name_start, index - name_start) == target_hash { return ordinal + 1 }
+  while token_type(tokens[token_index]) != 26 {
+    token = tokens[token_index]
+    if not is_kw(source, token, 6, 105, 109, 112, 111, 114, 116, 0, 0) { return 0 }
+    name_token = tokens[token_index + 1]
+    if source_hash(source, token_start(name_token), token_length(name_token)) == target_hash { return ordinal + 1 }
     ordinal = ordinal + 1
-    while index < size {
-      if source_at(source, index, size) == 41 { index = index + 1 break }
-      index = index + 1
-    }
+    while token_type(tokens[token_index]) != 5 { token_index = token_index + 1 }
+    token_index = token_index + 1
   }
   0
 }
 
-thought parse_primary(source, index, size, handle, next_reg, names, regs) {
-  index = skip_space(source, index, size)
-  byte = source_byte(source, index)
-  if byte == 34 { return parse_string(source, index, size, handle, next_reg) }
-  if byte == 91 { return parse_list(source, index, size, handle, next_reg, names, regs) }
-  if byte == 123 { return parse_map(source, index, size, handle, next_reg, names, regs) }
-  if byte == 45 {
-    parsed = parse_primary(source, index + 1, size, handle, next_reg, names, regs)
-    index = packed_index(parsed)
+thought import_arity(source, tokens, target_hash) {
+  token_index = 0
+  while token_type(tokens[token_index]) != 26 {
+    token = tokens[token_index]
+    if not is_kw(source, token, 6, 105, 109, 112, 111, 114, 116, 0, 0) { return -1 }
+    name_token = tokens[token_index + 1]
+    if source_hash(source, token_start(name_token), token_length(name_token)) == target_hash {
+      arity_token = tokens[token_index + 3]
+      if token_type(arity_token) != 1 { throw "expected import arity" }
+      return token_integer(source, arity_token)
+    }
+    while token_type(tokens[token_index]) != 5 { token_index = token_index + 1 }
+    token_index = token_index + 1
+  }
+  -1
+}
+
+thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs, size) {
+  token = tokens[token_index]
+  type = token_type(token)
+  if type == 1 { return parse_number(source, tokens, token_index, handle, next_reg) }
+  if type == 2 { return parse_string(source, tokens, token_index, handle, next_reg) }
+  if type == 8 { return parse_list(source, tokens, token_index, handle, next_reg, names, regs, size) }
+  if type == 6 { return parse_map(source, tokens, token_index, handle, next_reg, names, regs, size) }
+  if type == 14 {
+    parsed = parse_primary(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+    token_index = packed_index(parsed)
     next_reg = packed_next(parsed)
     value_reg = packed_result(parsed)
     zero_reg = next_reg
@@ -230,49 +380,47 @@ thought parse_primary(source, index, size, handle, next_reg, names, regs) {
     next_reg = next_reg + 1
     result_reg = next_reg
     builder_emit(handle, 4, result_reg, zero_reg, value_reg, 0)
-    return pack(index, next_reg + 1, result_reg)
+    return pack(token_index, next_reg + 1, result_reg)
   }
-  if byte == 40 {
-    parsed = parse_expression(source, index + 1, size, handle, next_reg, names, regs)
-    index = skip_space(source, packed_index(parsed), size)
-    if source_byte(source, index) == 41 { index = index + 1 }
-    return pack(index, packed_next(parsed), packed_result(parsed))
+  if type == 4 {
+    parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+    token_index = packed_index(parsed)
+    if token_type(tokens[token_index]) != 5 { throw "expected ) after expression" }
+    token_index = token_index + 1
+    return pack(token_index, packed_next(parsed), packed_result(parsed))
   }
-  if (byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122) or byte == 95 {
-    name_start = index
-    while index < size {
-      byte = source_byte(source, index)
-      if not ((byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122) or (byte >= 48 and byte <= 57) or byte == 95) { break }
-      index = index + 1
-    }
-    name_hash = source_hash(source, name_start, index - name_start)
-    after_name = skip_space(source, index, size)
-    if source_byte(source, after_name) == 40 {
-      if index - name_start == 3 and source_at(source, name_start, size) == 108 and source_at(source, name_start + 1, size) == 101 and source_at(source, name_start + 2, size) == 110 {
-        parsed = parse_expression(source, after_name + 1, size, handle, next_reg, names, regs)
+  if type == 3 {
+    name_hash = source_hash(source, token_start(token), token_length(token))
+    token_index = token_index + 1
+    if token_type(tokens[token_index]) == 4 {
+      if token_length(token) == 3 and source_byte(source, token_start(token)) == 108 and source_byte(source, token_start(token) + 1) == 101 and source_byte(source, token_start(token) + 2) == 110 {
+        parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
         value_reg = packed_result(parsed)
         next_reg = packed_next(parsed)
-        index = skip_space(source, packed_index(parsed), size)
-        if source_at(source, index, size) == 41 { index = index + 1 }
+        token_index = packed_index(parsed)
+        if token_type(tokens[token_index]) != 5 { throw "expected ) after len argument" }
+        token_index = token_index + 1
         result_reg = next_reg
         builder_emit(handle, 27, result_reg, value_reg, 0, 0)
-        return pack(index, next_reg + 1, result_reg)
+        return pack(token_index, next_reg + 1, result_reg)
       }
-      index = skip_space(source, after_name + 1, size)
+      token_index = token_index + 1
       arguments = []
-      while source_byte(source, index) != 41 {
-        parsed = parse_expression(source, index, size, handle, next_reg, names, regs)
+      while token_type(tokens[token_index]) != 5 {
+        if token_type(tokens[token_index]) == 26 { throw "unterminated argument list" }
+        parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
         argument_reg = packed_result(parsed)
         next_reg = packed_next(parsed)
         saved_reg = next_reg
         builder_emit(handle, 2, saved_reg, argument_reg, 0, 0)
         next_reg = next_reg + 1
         arguments = arguments + [saved_reg]
-        index = skip_space(source, packed_index(parsed), size)
-        if source_byte(source, index) == 44 { index = skip_space(source, index + 1, size) continue }
+        token_index = packed_index(parsed)
+        if token_type(tokens[token_index]) == 10 { token_index = token_index + 1 continue }
         break
       }
-      if source_byte(source, index) == 41 { index = index + 1 }
+      if token_type(tokens[token_index]) != 5 { throw "expected ) in call" }
+      token_index = token_index + 1
       argument_reg = next_reg
       argument_count = 0
       while argument_count < len(arguments) {
@@ -281,48 +429,47 @@ thought parse_primary(source, index, size, handle, next_reg, names, regs) {
         argument_count = argument_count + 1
       }
       result_reg = next_reg
-      import_slot = import_index(source, size, name_hash)
+      import_slot = import_index(source, tokens, name_hash)
       if import_slot > 0 {
+        if import_arity(source, tokens, name_hash) != argument_count { throw "host argument count mismatch" }
         builder_emit(handle, 16, result_reg, argument_reg, argument_count, import_slot - 1)
       } else {
-        builder_emit(handle, 14, result_reg, argument_reg, argument_count, function_index(source, size, name_hash))
+        target_arity = function_arity(source, tokens, name_hash)
+        if target_arity < 0 { throw "unknown function" }
+        if target_arity != argument_count { throw "function argument count mismatch" }
+        builder_emit(handle, 14, result_reg, argument_reg, argument_count, function_index(source, tokens, name_hash))
       }
-      return pack(index, next_reg + 1, result_reg)
+      return pack(token_index, next_reg + 1, result_reg)
     }
-    index = after_name
     result_reg = lookup_reg(names, regs, name_hash)
-    while source_at(source, index, size) == 91 {
-      parsed = parse_expression(source, index + 1, size, handle, next_reg, names, regs)
-      index = skip_space(source, packed_index(parsed), size)
+    while token_type(tokens[token_index]) == 8 {
+      parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+      token_index = packed_index(parsed)
       next_reg = packed_next(parsed)
       index_reg = packed_result(parsed)
-      if source_at(source, index, size) == 93 { index = index + 1 }
+      if token_type(tokens[token_index]) != 9 { throw "expected ] in index" }
+      token_index = token_index + 1
       value_reg = next_reg
       builder_emit(handle, 30, value_reg, result_reg, index_reg, 0)
       next_reg = next_reg + 1
       result_reg = value_reg
-      index = skip_space(source, index, size)
     }
-    return pack(index, next_reg, result_reg)
+    return pack(token_index, next_reg, result_reg)
   }
-  parse_number(source, index, size, handle, next_reg)
+  throw "expected expression"
 }
 
-thought parse_multiplicative(source, index, size, handle, next_reg, names, regs) {
-  parsed = parse_primary(source, index, size, handle, next_reg, names, regs)
-  index = packed_index(parsed)
+thought parse_multiplicative(source, tokens, token_index, handle, next_reg, names, regs, size) {
+  parsed = parse_primary(source, tokens, token_index, handle, next_reg, names, regs, size)
+  token_index = packed_index(parsed)
   next_reg = packed_next(parsed)
   result_reg = packed_result(parsed)
-  while index < size {
-    index = skip_space(source, index, size)
-    opcode = 0
-    byte = source_byte(source, index)
-    if byte == 42 { opcode = 5 }
-    if byte == 47 { opcode = 6 }
-    if byte == 37 { opcode = 18 }
-    if opcode == 0 { break }
-    parsed = parse_primary(source, index + 1, size, handle, next_reg, names, regs)
-    index = packed_index(parsed)
+  while token_type(tokens[token_index]) == 15 or token_type(tokens[token_index]) == 16 or token_type(tokens[token_index]) == 17 {
+    opcode = 5
+    if token_type(tokens[token_index]) == 16 { opcode = 6 }
+    if token_type(tokens[token_index]) == 17 { opcode = 18 }
+    parsed = parse_primary(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+    token_index = packed_index(parsed)
     next_reg = packed_next(parsed)
     value_reg = packed_result(parsed)
     combined_reg = next_reg
@@ -330,23 +477,19 @@ thought parse_multiplicative(source, index, size, handle, next_reg, names, regs)
     next_reg = next_reg + 1
     result_reg = combined_reg
   }
-  pack(index, next_reg, result_reg)
+  pack(token_index, next_reg, result_reg)
 }
 
-thought parse_additive(source, index, size, handle, next_reg, names, regs) {
-  parsed = parse_multiplicative(source, index, size, handle, next_reg, names, regs)
-  index = packed_index(parsed)
+thought parse_additive(source, tokens, token_index, handle, next_reg, names, regs, size) {
+  parsed = parse_multiplicative(source, tokens, token_index, handle, next_reg, names, regs, size)
+  token_index = packed_index(parsed)
   next_reg = packed_next(parsed)
   result_reg = packed_result(parsed)
-  while index < size {
-    index = skip_space(source, index, size)
-    opcode = 0
-    byte = source_byte(source, index)
-    if byte == 43 { opcode = 3 }
-    if byte == 45 { opcode = 4 }
-    if opcode == 0 { break }
-    parsed = parse_multiplicative(source, index + 1, size, handle, next_reg, names, regs)
-    index = packed_index(parsed)
+  while token_type(tokens[token_index]) == 13 or token_type(tokens[token_index]) == 14 {
+    opcode = 3
+    if token_type(tokens[token_index]) == 14 { opcode = 4 }
+    parsed = parse_multiplicative(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+    token_index = packed_index(parsed)
     next_reg = packed_next(parsed)
     value_reg = packed_result(parsed)
     combined_reg = next_reg
@@ -354,390 +497,342 @@ thought parse_additive(source, index, size, handle, next_reg, names, regs) {
     next_reg = next_reg + 1
     result_reg = combined_reg
   }
-  pack(index, next_reg, result_reg)
+  pack(token_index, next_reg, result_reg)
 }
 
-thought parse_expression(source, index, size, handle, next_reg, names, regs) {
-  parsed = parse_additive(source, index, size, handle, next_reg, names, regs)
-  index = packed_index(parsed)
+thought parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size) {
+  parsed = parse_additive(source, tokens, token_index, handle, next_reg, names, regs, size)
+  token_index = packed_index(parsed)
   next_reg = packed_next(parsed)
   result_reg = packed_result(parsed)
-  index = skip_space(source, index, size)
-  opcode = 0
-  byte = source_byte(source, index)
-  next_byte = 0
-  if index + 1 < size { next_byte = source_byte(source, index + 1) }
-  if byte == 61 and next_byte == 61 { opcode = 19 index = index + 2 }
-  if byte == 33 and next_byte == 61 { opcode = 20 index = index + 2 }
-  if byte == 60 {
-    opcode = 21
-    index = index + 1
-    if source_byte(source, index) == 61 { opcode = 22 index = index + 1 }
-  }
-  if byte == 62 {
-    opcode = 23
-    index = index + 1
-    if source_byte(source, index) == 61 { opcode = 24 index = index + 1 }
-  }
-  if opcode == 0 { return pack(index, next_reg, result_reg) }
-  parsed = parse_additive(source, index, size, handle, next_reg, names, regs)
-  index = packed_index(parsed)
+  type = token_type(tokens[token_index])
+  if type < 19 or type > 24 { return pack(token_index, next_reg, result_reg) }
+  opcode = type
+  parsed = parse_additive(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+  token_index = packed_index(parsed)
   next_reg = packed_next(parsed)
   value_reg = packed_result(parsed)
   combined_reg = next_reg
   builder_emit(handle, opcode, combined_reg, result_reg, value_reg, 0)
-  pack(index, next_reg + 1, combined_reg)
+  pack(token_index, next_reg + 1, combined_reg)
 }
 
-thought parse_body(source, index, size, handle, next_reg, names, regs, loop_depth) {
+thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size) {
   result_reg = 0
-  while index < size {
-    index = skip_space(source, index, size)
-    if source_byte(source, index) == 125 { break }
-    if source_at(source, index, size) == 98 and source_at(source, index + 1, size) == 114 and source_at(source, index + 2, size) == 101 and source_at(source, index + 3, size) == 97 and source_at(source, index + 4, size) == 107 and is_word_end(source_at(source, index + 5, size)) {
-      if loop_depth > 0 { builder_emit(handle, 13, 0, 0, 0, -1) }
-      index = index + 5
-      if source_at(source, index, size) == 59 { index = index + 1 }
-      continue
-    }
-    if source_at(source, index, size) == 99 and source_at(source, index + 1, size) == 111 and source_at(source, index + 2, size) == 110 and source_at(source, index + 3, size) == 116 and source_at(source, index + 4, size) == 105 and source_at(source, index + 5, size) == 110 and source_at(source, index + 6, size) == 117 and source_at(source, index + 7, size) == 101 and is_word_end(source_at(source, index + 8, size)) {
-      if loop_depth > 0 { builder_emit(handle, 13, 0, 0, 0, -2) }
-      index = index + 8
-      if source_at(source, index, size) == 59 { index = index + 1 }
-      continue
-    }
-    if source_at(source, index, size) == 116 and source_at(source, index + 1, size) == 104 and source_at(source, index + 2, size) == 114 and source_at(source, index + 3, size) == 111 and source_at(source, index + 4, size) == 119 and is_space(source_at(source, index + 5, size)) {
-      parsed = parse_expression(source, index + 5, size, handle, next_reg, names, regs)
-      index = packed_index(parsed)
-      next_reg = packed_next(parsed)
-      result_reg = packed_result(parsed)
-      builder_emit(handle, 33, 0, result_reg, 0, 0)
-      if source_at(source, index, size) == 59 { index = index + 1 continue }
-      break
-    }
-    if source_at(source, index, size) == 116 and source_at(source, index + 1, size) == 114 and source_at(source, index + 2, size) == 121 and (is_space(source_at(source, index + 3, size)) or source_at(source, index + 3, size) == 123) {
-      index = index + 3
-      while index < size {
-        if source_at(source, index, size) == 123 { index = index + 1 break }
-        index = index + 1
-      }
-      try_begin = builder_position(handle)
-      builder_emit(handle, 31, 0, 0, 0, 0)
-      parsed = parse_body(source, index, size, handle, next_reg, names, regs, loop_depth)
-      index = packed_index(parsed)
-      next_reg = packed_next(parsed)
-      builder_emit(handle, 32, 0, 0, 0, 0)
-      end_branch = builder_position(handle)
-      builder_emit(handle, 13, 0, 0, 0, 0)
-      if source_at(source, index, size) == 125 { index = index + 1 }
-      index = skip_space(source, index, size)
-      if source_at(source, index, size) == 99 and source_at(source, index + 1, size) == 97 and source_at(source, index + 2, size) == 116 and source_at(source, index + 3, size) == 99 and source_at(source, index + 4, size) == 104 and is_space(source_at(source, index + 5, size)) {
-        index = skip_space(source, index + 5, size)
-        name_start = index
-        while index < size {
-          byte = source_at(source, index, size)
-          if not ((byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122) or (byte >= 48 and byte <= 57) or byte == 95) { break }
-          index = index + 1
-        }
-        catch_hash = source_hash(source, name_start, index - name_start)
-        slot = lookup_slot(names, catch_hash)
-        if slot == 0 {
-          catch_reg = next_reg
-          names = names + [catch_hash]
-          regs = regs + [catch_reg]
-          next_reg = next_reg + 1
-        } else { catch_reg = regs[slot - 1] }
-        while index < size {
-          if source_at(source, index, size) == 123 { index = index + 1 break }
-          index = index + 1
-        }
-        catch_start = builder_position(handle)
-        builder_patch(handle, try_begin, catch_start)
-        builder_emit(handle, 34, catch_reg, 0, 0, 0)
-        parsed = parse_body(source, index, size, handle, next_reg, names, regs, loop_depth)
-        index = packed_index(parsed)
-        next_reg = packed_next(parsed)
-        if source_at(source, index, size) == 125 { index = index + 1 }
-        target = builder_position(handle)
-        builder_patch(handle, end_branch, target)
+  while token_type(tokens[token_index]) != 7 and token_type(tokens[token_index]) != 26 {
+    token = tokens[token_index]
+    type = token_type(token)
+    if type == 11 { token_index = token_index + 1 continue }
+    if type == 3 {
+      if is_kw(source, token, 5, 98, 114, 101, 97, 107, 0, 0, 0) {
+        if loop_depth > 0 { builder_emit(handle, 13, 0, 0, 0, -1) }
+        token_index = token_index + 1
+        if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 }
         continue
       }
-      target = builder_position(handle)
-      builder_patch(handle, try_begin, target)
-      builder_patch(handle, end_branch, target)
-      continue
-    }
-    if source_at(source, index, size) == 105 and source_at(source, index + 1, size) == 102 and is_space(source_at(source, index + 2, size)) {
-      parsed = parse_expression(source, index + 2, size, handle, next_reg, names, regs)
-      index = skip_space(source, packed_index(parsed), size)
-      next_reg = packed_next(parsed)
-      condition_reg = packed_result(parsed)
-      while index < size {
-        if source_at(source, index, size) == 123 { index = index + 1 break }
-        index = index + 1
+      if is_kw(source, token, 8, 99, 111, 110, 116, 105, 110, 117, 101) {
+        if loop_depth > 0 { builder_emit(handle, 13, 0, 0, 0, -2) }
+        token_index = token_index + 1
+        if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 }
+        continue
       }
-      negative_branch = builder_position(handle)
-      builder_emit(handle, 10, 0, condition_reg, 0, 0)
-      zero_branch = builder_position(handle)
-      builder_emit(handle, 11, 0, condition_reg, 0, 0)
-      parsed = parse_body(source, index, size, handle, next_reg, names, regs, loop_depth)
-      index = packed_index(parsed)
-      next_reg = packed_next(parsed)
-      if source_at(source, index, size) == 125 { index = index + 1 }
-      index = skip_space(source, index, size)
-      if source_at(source, index, size) == 101 and source_at(source, index + 1, size) == 108 and source_at(source, index + 2, size) == 115 and source_at(source, index + 3, size) == 101 and (is_space(source_at(source, index + 4, size)) or source_at(source, index + 4, size) == 123) {
+      if is_kw(source, token, 5, 116, 104, 114, 111, 119, 0, 0, 0) {
+        parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+        token_index = packed_index(parsed)
+        next_reg = packed_next(parsed)
+        result_reg = packed_result(parsed)
+        builder_emit(handle, 33, 0, result_reg, 0, 0)
+        if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
+        break
+      }
+      if is_kw(source, token, 3, 116, 114, 121, 0, 0, 0, 0, 0) {
+        token_index = token_index + 1
+        if token_type(tokens[token_index]) != 6 { throw "expected { after try" }
+        token_index = token_index + 1
+        try_begin = builder_position(handle)
+        builder_emit(handle, 31, 0, 0, 0, 0)
+        parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size)
+        token_index = packed_index(parsed)
+        next_reg = packed_next(parsed)
+        builder_emit(handle, 32, 0, 0, 0, 0)
         end_branch = builder_position(handle)
         builder_emit(handle, 13, 0, 0, 0, 0)
-        alternate_start = builder_position(handle)
-        builder_patch(handle, negative_branch, alternate_start)
-        builder_patch(handle, zero_branch, alternate_start)
-        index = index + 4
-        while index < size {
-          if source_at(source, index, size) == 123 { index = index + 1 break }
-          index = index + 1
+        if token_type(tokens[token_index]) != 7 { throw "expected } after try body" }
+        token_index = token_index + 1
+        if token_type(tokens[token_index]) == 3 and is_kw(source, tokens[token_index], 5, 99, 97, 116, 99, 104, 0, 0, 0) {
+          token_index = token_index + 1
+          catch_token = tokens[token_index]
+          if token_type(catch_token) != 3 { throw "expected catch variable" }
+          catch_hash = source_hash(source, token_start(catch_token), token_length(catch_token))
+          token_index = token_index + 1
+          slot = lookup_slot(names, catch_hash)
+          if slot == 0 {
+            catch_reg = next_reg
+            names = names + [catch_hash]
+            regs = regs + [catch_reg]
+            next_reg = next_reg + 1
+          } else { catch_reg = regs[slot - 1] }
+          if token_type(tokens[token_index]) != 6 { throw "expected { after catch variable" }
+          token_index = token_index + 1
+          catch_start = builder_position(handle)
+          builder_patch(handle, try_begin, catch_start)
+          builder_emit(handle, 34, catch_reg, 0, 0, 0)
+          parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size)
+          token_index = packed_index(parsed)
+          next_reg = packed_next(parsed)
+          if token_type(tokens[token_index]) != 7 { throw "expected } after catch body" }
+          token_index = token_index + 1
+          target = builder_position(handle)
+          builder_patch(handle, end_branch, target)
+          continue
         }
-        parsed = parse_body(source, index, size, handle, next_reg, names, regs, loop_depth)
-        index = packed_index(parsed)
-        next_reg = packed_next(parsed)
-        if source_at(source, index, size) == 125 { index = index + 1 }
         target = builder_position(handle)
+        builder_patch(handle, try_begin, target)
         builder_patch(handle, end_branch, target)
         continue
       }
-      target = builder_position(handle)
-      builder_patch(handle, negative_branch, target)
-      builder_patch(handle, zero_branch, target)
-      continue
-    }
-    if source_at(source, index, size) == 114 and source_at(source, index + 1, size) == 101 and source_at(source, index + 2, size) == 116 and source_at(source, index + 3, size) == 117 and source_at(source, index + 4, size) == 114 and source_at(source, index + 5, size) == 110 and is_space(source_at(source, index + 6, size)) {
-      parsed = parse_expression(source, index + 6, size, handle, next_reg, names, regs)
-      index = packed_index(parsed)
-      next_reg = packed_next(parsed)
-      result_reg = packed_result(parsed)
-      builder_emit(handle, 15, 0, result_reg, 0, 0)
-      if source_at(source, index, size) == 59 { index = index + 1 continue }
-      break
-    }
-    if source_at(source, index, size) == 102 and source_at(source, index + 1, size) == 111 and source_at(source, index + 2, size) == 114 and is_space(source_at(source, index + 3, size)) {
-      index = skip_space(source, index + 3, size)
-      name_start = index
-      while index < size {
-        byte = source_at(source, index, size)
-        if not ((byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122) or (byte >= 48 and byte <= 57) or byte == 95) { break }
-        index = index + 1
+      if is_kw(source, token, 2, 105, 102, 0, 0, 0, 0, 0, 0) {
+        parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+        token_index = packed_index(parsed)
+        next_reg = packed_next(parsed)
+        condition_reg = packed_result(parsed)
+        if token_type(tokens[token_index]) != 6 { throw "expected { after if condition" }
+        token_index = token_index + 1
+        negative_branch = builder_position(handle)
+        builder_emit(handle, 10, 0, condition_reg, 0, 0)
+        zero_branch = builder_position(handle)
+        builder_emit(handle, 11, 0, condition_reg, 0, 0)
+        parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size)
+        token_index = packed_index(parsed)
+        next_reg = packed_next(parsed)
+        if token_type(tokens[token_index]) != 7 { throw "expected } after if body" }
+        token_index = token_index + 1
+        if token_type(tokens[token_index]) == 3 and is_kw(source, tokens[token_index], 4, 101, 108, 115, 101, 0, 0, 0, 0) {
+          end_branch = builder_position(handle)
+          builder_emit(handle, 13, 0, 0, 0, 0)
+          alternate_start = builder_position(handle)
+          builder_patch(handle, negative_branch, alternate_start)
+          builder_patch(handle, zero_branch, alternate_start)
+          token_index = token_index + 1
+          if token_type(tokens[token_index]) != 6 { throw "expected { after else" }
+          token_index = token_index + 1
+          parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size)
+          token_index = packed_index(parsed)
+          next_reg = packed_next(parsed)
+          if token_type(tokens[token_index]) != 7 { throw "expected } after else body" }
+          token_index = token_index + 1
+          target = builder_position(handle)
+          builder_patch(handle, end_branch, target)
+          continue
+        }
+        target = builder_position(handle)
+        builder_patch(handle, negative_branch, target)
+        builder_patch(handle, zero_branch, target)
+        continue
       }
-      item_hash = source_hash(source, name_start, index - name_start)
-      index = skip_space(source, index, size)
-      if source_at(source, index, size) == 105 and source_at(source, index + 1, size) == 110 { index = index + 2 }
-      index = skip_space(source, index, size)
-      parsed = parse_expression(source, index, size, handle, next_reg, names, regs)
-      index = skip_space(source, packed_index(parsed), size)
-      next_reg = packed_next(parsed)
-      list_reg = packed_result(parsed)
-      while index < size {
-        if source_at(source, index, size) == 123 { index = index + 1 break }
-        index = index + 1
+      if is_kw(source, token, 6, 114, 101, 116, 117, 114, 110, 0, 0) {
+        parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+        token_index = packed_index(parsed)
+        next_reg = packed_next(parsed)
+        result_reg = packed_result(parsed)
+        builder_emit(handle, 15, 0, result_reg, 0, 0)
+        if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
+        break
       }
-      length_reg = next_reg
-      builder_emit(handle, 27, length_reg, list_reg, 0, 0)
-      next_reg = next_reg + 1
-      cursor_reg = next_reg
-      builder_emit(handle, 1, cursor_reg, 0, 0, 0)
-      next_reg = next_reg + 1
-      one_reg = next_reg
-      builder_emit(handle, 1, one_reg, 0, 0, 1)
-      next_reg = next_reg + 1
-      loop_start = builder_position(handle)
-      compare_reg = next_reg
-      builder_emit(handle, 21, compare_reg, cursor_reg, length_reg, 0)
-      next_reg = next_reg + 1
-      negative_branch = builder_position(handle)
-      builder_emit(handle, 10, 0, compare_reg, 0, 0)
-      zero_branch = builder_position(handle)
-      builder_emit(handle, 11, 0, compare_reg, 0, 0)
-      slot = lookup_slot(names, item_hash)
-      if slot == 0 {
-        item_reg = next_reg
-        names = names + [item_hash]
-        regs = regs + [item_reg]
+      if is_kw(source, token, 3, 102, 111, 114, 0, 0, 0, 0, 0) {
+        token_index = token_index + 1
+        item_token = tokens[token_index]
+        if token_type(item_token) != 3 { throw "expected variable after for" }
+        item_hash = source_hash(source, token_start(item_token), token_length(item_token))
+        token_index = token_index + 1
+        if token_type(tokens[token_index]) != 3 or not is_kw(source, tokens[token_index], 2, 105, 110, 0, 0, 0, 0, 0, 0) { throw "expected in after for variable" }
+        token_index = token_index + 1
+        parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
+        token_index = packed_index(parsed)
+        next_reg = packed_next(parsed)
+        list_reg = packed_result(parsed)
+        if token_type(tokens[token_index]) != 6 { throw "expected { after for iterable" }
+        token_index = token_index + 1
+        length_reg = next_reg
+        builder_emit(handle, 27, length_reg, list_reg, 0, 0)
         next_reg = next_reg + 1
-      } else { item_reg = regs[slot - 1] }
-      builder_emit(handle, 28, item_reg, list_reg, cursor_reg, 0)
-      body_start = builder_position(handle)
-      parsed = parse_body(source, index, size, handle, next_reg, names, regs, loop_depth + 1)
-      index = packed_index(parsed)
-      next_reg = packed_next(parsed)
-      increment_start = builder_position(handle)
-      builder_emit(handle, 3, cursor_reg, cursor_reg, one_reg, 0)
-      builder_emit(handle, 13, 0, 0, 0, loop_start)
-      target = builder_position(handle)
-      builder_patch(handle, negative_branch, target)
-      builder_patch(handle, zero_branch, target)
-      builder_patch_marked(handle, body_start, increment_start, -1, target)
-      builder_patch_marked(handle, body_start, increment_start, -2, increment_start)
-      if source_at(source, index, size) == 125 { index = index + 1 }
-      continue
-    }
-    if source_at(source, index, size) == 119 and source_at(source, index + 1, size) == 104 and source_at(source, index + 2, size) == 105 and source_at(source, index + 3, size) == 108 and source_at(source, index + 4, size) == 101 and is_space(source_at(source, index + 5, size)) {
-      loop_start = builder_position(handle)
-      parsed = parse_expression(source, index + 5, size, handle, next_reg, names, regs)
-      index = skip_space(source, packed_index(parsed), size)
-      next_reg = packed_next(parsed)
-      condition_reg = packed_result(parsed)
-      while index < size {
-        if source_at(source, index, size) == 123 { index = index + 1 break }
-        index = index + 1
+        cursor_reg = next_reg
+        builder_emit(handle, 1, cursor_reg, 0, 0, 0)
+        next_reg = next_reg + 1
+        one_reg = next_reg
+        builder_emit(handle, 1, one_reg, 0, 0, 1)
+        next_reg = next_reg + 1
+        loop_start = builder_position(handle)
+        compare_reg = next_reg
+        builder_emit(handle, 21, compare_reg, cursor_reg, length_reg, 0)
+        next_reg = next_reg + 1
+        negative_branch = builder_position(handle)
+        builder_emit(handle, 10, 0, compare_reg, 0, 0)
+        zero_branch = builder_position(handle)
+        builder_emit(handle, 11, 0, compare_reg, 0, 0)
+        slot = lookup_slot(names, item_hash)
+        if slot == 0 {
+          item_reg = next_reg
+          names = names + [item_hash]
+          regs = regs + [item_reg]
+          next_reg = next_reg + 1
+        } else { item_reg = regs[slot - 1] }
+        builder_emit(handle, 28, item_reg, list_reg, cursor_reg, 0)
+        body_start = builder_position(handle)
+        parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth + 1, size)
+        token_index = packed_index(parsed)
+        next_reg = packed_next(parsed)
+        increment_start = builder_position(handle)
+        builder_emit(handle, 3, cursor_reg, cursor_reg, one_reg, 0)
+        builder_emit(handle, 13, 0, 0, 0, loop_start)
+        target = builder_position(handle)
+        builder_patch(handle, negative_branch, target)
+        builder_patch(handle, zero_branch, target)
+        builder_patch_marked(handle, body_start, increment_start, -1, target)
+        builder_patch_marked(handle, body_start, increment_start, -2, increment_start)
+        if token_type(tokens[token_index]) != 7 { throw "expected } after for body" }
+        token_index = token_index + 1
+        continue
       }
-      negative_branch = builder_position(handle)
-      builder_emit(handle, 10, 0, condition_reg, 0, 0)
-      zero_branch = builder_position(handle)
-      builder_emit(handle, 11, 0, condition_reg, 0, 0)
-      body_start = builder_position(handle)
-      parsed = parse_body(source, index, size, handle, next_reg, names, regs, loop_depth + 1)
-      index = packed_index(parsed)
-      next_reg = packed_next(parsed)
-      body_end = builder_position(handle)
-      builder_emit(handle, 13, 0, 0, 0, loop_start)
-      target = builder_position(handle)
-      builder_patch(handle, negative_branch, target)
-      builder_patch(handle, zero_branch, target)
-      builder_patch_marked(handle, body_start, body_end, -1, target)
-      builder_patch_marked(handle, body_start, body_end, -2, loop_start)
-      if source_at(source, index, size) == 125 { index = index + 1 }
-      continue
-    }
-    name_start = index
-    probe = index
-    while probe < size {
-      byte = source_byte(source, probe)
-      if not ((byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122) or (byte >= 48 and byte <= 57) or byte == 95) { break }
-      probe = probe + 1
-    }
-    after_name = skip_space(source, probe, size)
-    if probe > name_start and source_at(source, after_name, size) == 91 {
-      assignment_probe = after_name + 1
-      while source_at(source, assignment_probe, size) != 93 { assignment_probe = assignment_probe + 1 }
-      assignment_probe = skip_space(source, assignment_probe + 1, size)
-      if source_at(source, assignment_probe, size) == 61 and source_at(source, assignment_probe + 1, size) != 61 {
-        object_reg = lookup_reg(names, regs, source_hash(source, name_start, probe - name_start))
-        parsed = parse_expression(source, after_name + 1, size, handle, next_reg, names, regs)
+      if is_kw(source, token, 5, 119, 104, 105, 108, 101, 0, 0, 0) {
+        loop_start = builder_position(handle)
+        parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+        token_index = packed_index(parsed)
         next_reg = packed_next(parsed)
-        key_reg = packed_result(parsed)
-        index = assignment_probe
-        parsed = parse_expression(source, index + 1, size, handle, next_reg, names, regs)
-        index = packed_index(parsed)
+        condition_reg = packed_result(parsed)
+        if token_type(tokens[token_index]) != 6 { throw "expected { after while condition" }
+        token_index = token_index + 1
+        negative_branch = builder_position(handle)
+        builder_emit(handle, 10, 0, condition_reg, 0, 0)
+        zero_branch = builder_position(handle)
+        builder_emit(handle, 11, 0, condition_reg, 0, 0)
+        body_start = builder_position(handle)
+        parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth + 1, size)
+        token_index = packed_index(parsed)
         next_reg = packed_next(parsed)
-        value_reg = packed_result(parsed)
-        builder_emit(handle, 36, object_reg, key_reg, value_reg, 0)
-        result_reg = value_reg
-        if source_at(source, index, size) == 59 { index = index + 1 continue }
+        body_end = builder_position(handle)
+        builder_emit(handle, 13, 0, 0, 0, loop_start)
+        target = builder_position(handle)
+        builder_patch(handle, negative_branch, target)
+        builder_patch(handle, zero_branch, target)
+        builder_patch_marked(handle, body_start, body_end, -1, target)
+        builder_patch_marked(handle, body_start, body_end, -2, loop_start)
+        if token_type(tokens[token_index]) != 7 { throw "expected } after while body" }
+        token_index = token_index + 1
+        continue
+      }
+      name_hash = source_hash(source, token_start(token), token_length(token))
+      if token_type(tokens[token_index + 1]) == 8 {
+        bracket_depth = 1
+        scan = token_index + 2
+        while bracket_depth > 0 {
+          if token_type(tokens[scan]) == 26 { throw "unterminated index" }
+          if token_type(tokens[scan]) == 8 { bracket_depth = bracket_depth + 1 }
+          if token_type(tokens[scan]) == 9 { bracket_depth = bracket_depth - 1 }
+          scan = scan + 1
+        }
+        if token_type(tokens[scan]) == 18 {
+          object_reg = lookup_reg(names, regs, name_hash)
+          parsed = parse_expression(source, tokens, token_index + 2, handle, next_reg, names, regs, size)
+          token_index = packed_index(parsed)
+          next_reg = packed_next(parsed)
+          key_reg = packed_result(parsed)
+          if token_type(tokens[token_index]) != 9 { throw "expected ] in index assignment" }
+          token_index = token_index + 1
+          if token_type(tokens[token_index]) != 18 { throw "expected = in index assignment" }
+          parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+          token_index = packed_index(parsed)
+          next_reg = packed_next(parsed)
+          value_reg = packed_result(parsed)
+          builder_emit(handle, 36, object_reg, key_reg, value_reg, 0)
+          result_reg = value_reg
+          if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
+          break
+        }
+      }
+      if token_type(tokens[token_index + 1]) == 18 {
+        parsed = parse_expression(source, tokens, token_index + 2, handle, next_reg, names, regs, size)
+        token_index = packed_index(parsed)
+        next_reg = packed_next(parsed)
+        result_reg = packed_result(parsed)
+        slot = lookup_slot(names, name_hash)
+        if slot == 0 {
+          names = names + [name_hash]
+          regs = regs + [result_reg]
+        } else {
+          result_reg = regs[slot - 1]
+          builder_emit(handle, 2, result_reg, packed_result(parsed), 0, 0)
+        }
+        if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
         break
       }
     }
-    next_byte = 0
-    if after_name + 1 < size { next_byte = source_byte(source, after_name + 1) }
-    if probe > name_start and source_byte(source, after_name) == 61 and next_byte != 61 {
-      parsed = parse_expression(source, after_name + 1, size, handle, next_reg, names, regs)
-      index = packed_index(parsed)
-      next_reg = packed_next(parsed)
-      result_reg = packed_result(parsed)
-      name_hash = source_hash(source, name_start, probe - name_start)
-      slot = lookup_slot(names, name_hash)
-      if slot == 0 {
-        names = names + [name_hash]
-        regs = regs + [result_reg]
-      } else {
-        result_reg = regs[slot - 1]
-        builder_emit(handle, 2, result_reg, packed_result(parsed), 0, 0)
-      }
-      if source_byte(source, index) == 59 { index = index + 1 continue }
-      break
-    }
-    parsed = parse_expression(source, index, size, handle, next_reg, names, regs)
-    index = packed_index(parsed)
+    parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
+    token_index = packed_index(parsed)
     next_reg = packed_next(parsed)
     result_reg = packed_result(parsed)
-    if source_byte(source, index) == 59 { index = index + 1 continue }
+    if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
     break
   }
-  pack(index, next_reg, result_reg)
+  pack(token_index, next_reg, result_reg)
 }
 
 thought compile(source) {
   handle = builder_new()
   size = source_len(source)
-  index = 0
-  while index < size {
-    index = skip_space(source, index, size)
-    if index >= size { break }
-    if is_import(source, index, size) {
-      index = skip_space(source, index + 6, size)
-      name_start = index
-      while source_at(source, index, size) != 40 { index = index + 1 }
-      import_symbol = source_hash(source, name_start, index - name_start)
-      index = skip_space(source, index + 1, size)
-      arity = 0
-      if source_at(source, index, size) != 41 {
-        arity = 1
-        while source_at(source, index, size) != 41 {
-          if source_at(source, index, size) == 44 { arity = arity + 1 }
-          index = index + 1
-        }
-      }
-      if source_at(source, index, size) == 41 { index = index + 1 }
+  tokens = tokenize(source, size)
+  token_index = 0
+  while token_type(tokens[token_index]) != 26 {
+    token = tokens[token_index]
+    if token_type(token) == 3 and is_kw(source, token, 6, 105, 109, 112, 111, 114, 116, 0, 0) {
+      token_index = token_index + 1
+      name_token = tokens[token_index]
+      if token_type(name_token) != 3 { throw "expected import name" }
+      import_symbol = source_hash(source, token_start(name_token), token_length(name_token))
+      token_index = token_index + 1
+      if token_type(tokens[token_index]) != 4 { throw "expected ( after import name" }
+      token_index = token_index + 1
+      arity_token = tokens[token_index]
+      if token_type(arity_token) != 1 { throw "expected import arity" }
+      arity = token_integer(source, arity_token)
+      token_index = token_index + 1
+      if token_type(tokens[token_index]) != 5 { throw "expected ) after import arity" }
+      token_index = token_index + 1
       builder_import(handle, import_symbol, arity)
       continue
     }
-    while index < size {
-      if source_byte(source, index) == 32 { break }
-      index = index + 1
-    }
-    index = skip_space(source, index, size)
-    name_start = index
-    while index < size {
-      if source_byte(source, index) == 40 { break }
-      index = index + 1
-    }
-    name_length = index - name_start
-    export_symbol = source_hash(source, name_start, name_length)
+    if token_type(token) != 3 or not is_kw(source, token, 7, 116, 104, 111, 117, 103, 104, 116, 0) { throw "expected thought declaration" }
+    token_index = token_index + 1
+    name_token = tokens[token_index]
+    if token_type(name_token) != 3 { throw "expected function name" }
+    export_symbol = source_hash(source, token_start(name_token), token_length(name_token))
+    token_index = token_index + 1
+    if token_type(tokens[token_index]) != 4 { throw "expected ( after function name" }
+    token_index = token_index + 1
     names = []
     regs = []
     param_count = 0
-    index = index + 1
-    while index < size {
-      index = skip_space(source, index, size)
-      if source_byte(source, index) == 41 { index = index + 1 break }
-      param_start = index
-      while index < size {
-        byte = source_byte(source, index)
-        if byte == 44 or byte == 41 { break }
-        index = index + 1
+    if token_type(tokens[token_index]) != 5 {
+      while token_type(tokens[token_index]) != 5 {
+        param_token = tokens[token_index]
+        names = names + [source_hash(source, token_start(param_token), token_length(param_token))]
+        regs = regs + [param_count]
+        param_count = param_count + 1
+        token_index = token_index + 1
+        if token_type(tokens[token_index]) == 10 { token_index = token_index + 1 }
       }
-      param_end = index
-      while param_end > param_start {
-        if source_byte(source, param_end - 1) != 32 { break }
-        param_end = param_end - 1
-      }
-      names = names + [source_hash(source, param_start, param_end - param_start)]
-      regs = regs + [param_count]
-      param_count = param_count + 1
-      if source_byte(source, index) == 44 { index = index + 1 }
-      if source_byte(source, index) == 41 { index = index + 1 break }
     }
+    token_index = token_index + 1
+    if token_type(tokens[token_index]) != 6 { throw "expected function body" }
+    token_index = token_index + 1
     builder_begin(handle, param_count, 64)
-    while index < size {
-      if source_byte(source, index) == 123 { index = index + 1 break }
-      index = index + 1
-    }
-    parsed = parse_body(source, index, size, handle, param_count, names, regs, 0)
+    parsed = parse_body(source, tokens, token_index, handle, param_count, names, regs, 0, size)
+    token_index = packed_index(parsed)
     result_reg = packed_result(parsed)
     builder_emit(handle, 15, 0, result_reg, 0, 0)
     builder_finish(handle, export_symbol)
-    index = packed_index(parsed)
-    while index < size {
-      if source_byte(source, index) == 125 { index = index + 1 break }
-      index = index + 1
-    }
+    if token_type(tokens[token_index]) != 7 { throw "unterminated function body" }
+    token_index = token_index + 1
   }
   builder_encode(handle)
 }
