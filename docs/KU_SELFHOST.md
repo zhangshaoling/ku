@@ -70,19 +70,26 @@ stream produced by the self-hosted `tokenize` function. Tokens are encoded as
 i64 values (`type * 10^12 + start * 10^6 + length`) covering 26 token types:
 numbers, strings, identifiers, delimiters, operators, and EOF. Keyword
 recognition (`if`, `else`, `while`, `for`, `break`, `continue`, `return`,
-`throw`, `try`, `catch`, `in`) uses the `is_kw` helper that compares token
+`throw`, `try`, `catch`, `in`, `not`, `and`, `or`, `true`, `false`, `null`)
+uses the `is_kw` helper that compares token
 length and source bytes directly, returning VM trits for use in `and`/`or`
-chains. The byte-scanning `advance_to_byte` bridge has been removed; `compile`
+chains. Logical negation and trit conjunction/disjunction lower to the matching
+VM instructions. Line feeds are emitted as statement-separator tokens, so
+newline-delimited `.ku` source and semicolon-delimited source follow the same
+parser path. The byte-scanning `advance_to_byte` bridge has been removed; `compile`
 passes token indices to `parse_body` and reads back the consumed token index
 from the packed result. Function/import lookup and arity validation also traverse
 the shared token stream; numeric import arities are read from number tokens.
 Before code generation, a token preflight rejects duplicate functions, duplicate imports,
 import/function name conflicts, and duplicate parameters.
 All emitted instructions pass through a `.ku` register-boundary wrapper before reaching the
-raw builder Host adapter; register indices and contiguous counts must remain below 64.
+raw builder Host adapter; register indices and contiguous counts must remain below the VM's
+4096-register default. Packed parser results use widened fields so token and register indices
+do not truncate during the self-rebuild. New local bindings receive independent registers,
+preventing assignments such as `start = index` from aliasing later writes to `index`.
 
 This remains deliberately bounded: nested indexed mutation, module-path imports, and
-canonical self-rebuild are still pending. Diagnostics
+canonical byte-identical self-rebuild are still pending. Diagnostics
 now cover explicit `throw` paths (unterminated string/list/map literals, missing
 function body braces, empty number consumption, host/local arity mismatch,
 undefined identifiers, unexpected characters) but do not yet carry source
@@ -95,9 +102,15 @@ positions.
 - expand structured builder validation beyond register bounds;
 - compare SH1 bytes with the C++ recovery compiler for canonical identity.
 
-## SH2: Self-Rebuild
+## SH2: Functional Self-Rebuild (implemented)
 
-- compile the `.ku` compiler with its previous verified binary;
-- compile it again with the newly produced binary;
-- require byte-identical compiler modules and parity corpus results;
-- retain the C++ compiler only as recovery/bootstrap tooling.
+`ku_selfhost_seed` now compiles `compiler.ku` with the bootstrap-produced compiler,
+loads that rebuilt compiler, and uses it to compile and execute a fresh module whose
+result must be `42`. This proves the generated compiler is loadable and functionally
+capable of compiling downstream `.ku` source. The test uses an elevated instruction
+budget because the current token lookup and code generation paths are intentionally
+simple and not yet optimized.
+
+Remaining SH2 work is canonical byte identity between consecutive rebuilds and running
+the complete parity corpus through the rebuilt compiler. The C++ frontend remains
+recovery/bootstrap tooling until those checks pass.

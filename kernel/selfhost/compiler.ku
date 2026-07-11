@@ -17,15 +17,15 @@ import builder_finish(2)
 import builder_encode(1)
 
 thought pack(index, next_reg, result_reg) {
-  index * 1000000 + next_reg * 1000 + result_reg
+  index * 10000000000 + next_reg * 100000 + result_reg
 }
 
-thought packed_index(value) { value / 1000000 }
-thought packed_next(value) { value / 1000 % 1000 }
-thought packed_result(value) { value % 1000 }
+thought packed_index(value) { value / 10000000000 }
+thought packed_next(value) { value / 100000 % 100000 }
+thought packed_result(value) { value % 100000 }
 
 thought builder_emit(handle, opcode, dst, a, b, immediate) {
-  if dst < 0 or dst >= 64 or a < 0 or a >= 64 or b < 0 or b >= 64 {
+  if dst < 0 or dst >= 4096 or a < 0 or a >= 4096 or b < 0 or b >= 4096 {
     throw "register limit exceeded"
   }
   builder_emit_raw(handle, opcode, dst, a, b, immediate)
@@ -60,7 +60,12 @@ thought tokenize(source, size) {
   tokens = []
   while index < size {
     byte = source_byte(source, index)
-    if byte == 32 or byte == 10 or byte == 13 or byte == 9 { index = index + 1 continue }
+    if byte == 10 {
+      tokens = tokens + [make_token(11, index, 1)]
+      index = index + 1
+      continue
+    }
+    if byte == 32 or byte == 13 or byte == 9 { index = index + 1 continue }
     if byte >= 48 and byte <= 57 {
       start = index
       while index < size {
@@ -152,6 +157,7 @@ thought validate_declarations(source, tokens) {
   token_index = 0
   symbols = []
   while token_type(tokens[token_index]) != 26 {
+    if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
     keyword = tokens[token_index]
     is_import_decl = is_kw(source, keyword, 6, 105, 109, 112, 111, 114, 116, 0, 0)
     is_function_decl = is_kw(source, keyword, 7, 116, 104, 111, 117, 103, 104, 116, 0)
@@ -333,6 +339,7 @@ thought function_index(source, tokens, target_hash) {
   token_index = 0
   ordinal = 0
   while token_type(tokens[token_index]) != 26 {
+    if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
     token = tokens[token_index]
     if is_kw(source, token, 6, 105, 109, 112, 111, 114, 116, 0, 0) {
       while token_type(tokens[token_index]) != 5 { token_index = token_index + 1 }
@@ -361,6 +368,7 @@ thought function_index(source, tokens, target_hash) {
 thought function_arity(source, tokens, target_hash) {
   token_index = 0
   while token_type(tokens[token_index]) != 26 {
+    if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
     token = tokens[token_index]
     if is_kw(source, token, 6, 105, 109, 112, 111, 114, 116, 0, 0) {
       while token_type(tokens[token_index]) != 5 { token_index = token_index + 1 }
@@ -396,6 +404,7 @@ thought import_index(source, tokens, target_hash) {
   token_index = 0
   ordinal = 0
   while token_type(tokens[token_index]) != 26 {
+    if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
     token = tokens[token_index]
     if not is_kw(source, token, 6, 105, 109, 112, 111, 114, 116, 0, 0) { return 0 }
     name_token = tokens[token_index + 1]
@@ -410,6 +419,7 @@ thought import_index(source, tokens, target_hash) {
 thought import_arity(source, tokens, target_hash) {
   token_index = 0
   while token_type(tokens[token_index]) != 26 {
+    if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
     token = tokens[token_index]
     if not is_kw(source, token, 6, 105, 109, 112, 111, 114, 116, 0, 0) { return -1 }
     name_token = tokens[token_index + 1]
@@ -431,6 +441,14 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
   if type == 2 { return parse_string(source, tokens, token_index, handle, next_reg) }
   if type == 8 { return parse_list(source, tokens, token_index, handle, next_reg, names, regs, size) }
   if type == 6 { return parse_map(source, tokens, token_index, handle, next_reg, names, regs, size) }
+  if type == 25 {
+    parsed = parse_primary(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+    token_index = packed_index(parsed)
+    next_reg = packed_next(parsed)
+    result_reg = next_reg
+    builder_emit(handle, 7, result_reg, packed_result(parsed), 0, 0)
+    return pack(token_index, next_reg + 1, result_reg)
+  }
   if type == 14 {
     parsed = parse_primary(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
     token_index = packed_index(parsed)
@@ -451,6 +469,29 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
     return pack(token_index, packed_next(parsed), packed_result(parsed))
   }
   if type == 3 {
+    if is_kw(source, token, 3, 110, 111, 116, 0, 0, 0, 0, 0) {
+      parsed = parse_primary(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+      token_index = packed_index(parsed)
+      next_reg = packed_next(parsed)
+      result_reg = next_reg
+      builder_emit(handle, 7, result_reg, packed_result(parsed), 0, 0)
+      return pack(token_index, next_reg + 1, result_reg)
+    }
+    if is_kw(source, token, 4, 116, 114, 117, 101, 0, 0, 0, 0) {
+      result_reg = next_reg
+      builder_emit(handle, 17, result_reg, 0, 0, 1)
+      return pack(token_index + 1, next_reg + 1, result_reg)
+    }
+    if is_kw(source, token, 5, 102, 97, 108, 115, 101, 0, 0, 0) {
+      result_reg = next_reg
+      builder_emit(handle, 17, result_reg, 0, 0, -1)
+      return pack(token_index + 1, next_reg + 1, result_reg)
+    }
+    if is_kw(source, token, 4, 110, 117, 108, 108, 0, 0, 0, 0) {
+      result_reg = next_reg
+      builder_emit(handle, 35, result_reg, 0, 0, 0)
+      return pack(token_index + 1, next_reg + 1, result_reg)
+    }
     name_hash = source_hash(source, token_start(token), token_length(token))
     token_index = token_index + 1
     if token_type(tokens[token_index]) == 4 {
@@ -549,6 +590,17 @@ thought parse_additive(source, tokens, token_index, handle, next_reg, names, reg
   while token_type(tokens[token_index]) == 13 or token_type(tokens[token_index]) == 14 {
     opcode = 3
     if token_type(tokens[token_index]) == 14 { opcode = 4 }
+    if opcode == 3 and token_type(tokens[token_index + 1]) == 8 {
+      parsed = parse_expression(source, tokens, token_index + 2, handle, next_reg, names, regs, size)
+      token_index = packed_index(parsed)
+      next_reg = packed_next(parsed)
+      if token_type(tokens[token_index]) == 9 {
+        builder_emit(handle, 37, result_reg, packed_result(parsed), 0, 0)
+        token_index = token_index + 1
+        continue
+      }
+      throw "list append expects one value"
+    }
     parsed = parse_multiplicative(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
     token_index = packed_index(parsed)
     next_reg = packed_next(parsed)
@@ -561,7 +613,7 @@ thought parse_additive(source, tokens, token_index, handle, next_reg, names, reg
   pack(token_index, next_reg, result_reg)
 }
 
-thought parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size) {
+thought parse_comparison(source, tokens, token_index, handle, next_reg, names, regs, size) {
   parsed = parse_additive(source, tokens, token_index, handle, next_reg, names, regs, size)
   token_index = packed_index(parsed)
   next_reg = packed_next(parsed)
@@ -576,6 +628,42 @@ thought parse_expression(source, tokens, token_index, handle, next_reg, names, r
   combined_reg = next_reg
   builder_emit(handle, opcode, combined_reg, result_reg, value_reg, 0)
   pack(token_index, next_reg + 1, combined_reg)
+}
+
+thought parse_and(source, tokens, token_index, handle, next_reg, names, regs, size) {
+  parsed = parse_comparison(source, tokens, token_index, handle, next_reg, names, regs, size)
+  token_index = packed_index(parsed)
+  next_reg = packed_next(parsed)
+  result_reg = packed_result(parsed)
+  while token_type(tokens[token_index]) == 3 and is_kw(source, tokens[token_index], 3, 97, 110, 100, 0, 0, 0, 0, 0) {
+    parsed = parse_comparison(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+    token_index = packed_index(parsed)
+    next_reg = packed_next(parsed)
+    value_reg = packed_result(parsed)
+    combined_reg = next_reg
+    builder_emit(handle, 8, combined_reg, result_reg, value_reg, 0)
+    next_reg = next_reg + 1
+    result_reg = combined_reg
+  }
+  pack(token_index, next_reg, result_reg)
+}
+
+thought parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size) {
+  parsed = parse_and(source, tokens, token_index, handle, next_reg, names, regs, size)
+  token_index = packed_index(parsed)
+  next_reg = packed_next(parsed)
+  result_reg = packed_result(parsed)
+  while token_type(tokens[token_index]) == 3 and is_kw(source, tokens[token_index], 2, 111, 114, 0, 0, 0, 0, 0, 0) {
+    parsed = parse_and(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+    token_index = packed_index(parsed)
+    next_reg = packed_next(parsed)
+    value_reg = packed_result(parsed)
+    combined_reg = next_reg
+    builder_emit(handle, 9, combined_reg, result_reg, value_reg, 0)
+    next_reg = next_reg + 1
+    result_reg = combined_reg
+  }
+  pack(token_index, next_reg, result_reg)
 }
 
 thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size) {
@@ -807,8 +895,8 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
           value_reg = packed_result(parsed)
           builder_emit(handle, 36, object_reg, key_reg, value_reg, 0)
           result_reg = value_reg
-          if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
-          break
+          if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 }
+          continue
         }
       }
       if token_type(tokens[token_index + 1]) == 18 {
@@ -818,22 +906,26 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
         result_reg = packed_result(parsed)
         slot = lookup_slot(names, name_hash)
         if slot == 0 {
+          declared_reg = next_reg
+          builder_emit(handle, 2, declared_reg, result_reg, 0, 0)
           names = names + [name_hash]
-          regs = regs + [result_reg]
+          regs = regs + [declared_reg]
+          next_reg = next_reg + 1
+          result_reg = declared_reg
         } else {
           result_reg = regs[slot - 1]
           builder_emit(handle, 2, result_reg, packed_result(parsed), 0, 0)
         }
-        if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
-        break
+        if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 }
+        continue
       }
     }
     parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
     token_index = packed_index(parsed)
     next_reg = packed_next(parsed)
     result_reg = packed_result(parsed)
-    if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
-    break
+    if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 }
+    continue
   }
   pack(token_index, next_reg, result_reg)
 }
@@ -845,6 +937,7 @@ thought compile(source) {
   validate_declarations(source, tokens)
   token_index = 0
   while token_type(tokens[token_index]) != 26 {
+    if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
     token = tokens[token_index]
     if token_type(token) == 3 and is_kw(source, token, 6, 105, 109, 112, 111, 114, 116, 0, 0) {
       token_index = token_index + 1
@@ -887,7 +980,7 @@ thought compile(source) {
     token_index = token_index + 1
     if token_type(tokens[token_index]) != 6 { throw "expected function body" }
     token_index = token_index + 1
-    builder_begin(handle, param_count, 64)
+    builder_begin(handle, param_count, 4096)
     parsed = parse_body(source, tokens, token_index, handle, param_count, names, regs, 0, size)
     token_index = packed_index(parsed)
     result_reg = packed_result(parsed)
