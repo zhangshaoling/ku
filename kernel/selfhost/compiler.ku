@@ -376,6 +376,66 @@ thought parse_body(source, index, size, handle, next_reg, names, regs, loop_dept
       if source_at(source, index, size) == 59 { index = index + 1 continue }
       break
     }
+    if source_at(source, index, size) == 102 and source_at(source, index + 1, size) == 111 and source_at(source, index + 2, size) == 114 and is_space(source_at(source, index + 3, size)) {
+      index = skip_space(source, index + 3, size)
+      name_start = index
+      while index < size {
+        byte = source_at(source, index, size)
+        if not ((byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122) or (byte >= 48 and byte <= 57) or byte == 95) { break }
+        index = index + 1
+      }
+      item_hash = source_hash(source, name_start, index - name_start)
+      index = skip_space(source, index, size)
+      if source_at(source, index, size) == 105 and source_at(source, index + 1, size) == 110 { index = index + 2 }
+      index = skip_space(source, index, size)
+      parsed = parse_expression(source, index, size, handle, next_reg, names, regs)
+      index = skip_space(source, packed_index(parsed), size)
+      next_reg = packed_next(parsed)
+      list_reg = packed_result(parsed)
+      while index < size {
+        if source_at(source, index, size) == 123 { index = index + 1 break }
+        index = index + 1
+      }
+      length_reg = next_reg
+      builder_emit(handle, 27, length_reg, list_reg, 0, 0)
+      next_reg = next_reg + 1
+      cursor_reg = next_reg
+      builder_emit(handle, 1, cursor_reg, 0, 0, 0)
+      next_reg = next_reg + 1
+      one_reg = next_reg
+      builder_emit(handle, 1, one_reg, 0, 0, 1)
+      next_reg = next_reg + 1
+      loop_start = builder_position(handle)
+      compare_reg = next_reg
+      builder_emit(handle, 21, compare_reg, cursor_reg, length_reg, 0)
+      next_reg = next_reg + 1
+      negative_branch = builder_position(handle)
+      builder_emit(handle, 10, 0, compare_reg, 0, 0)
+      zero_branch = builder_position(handle)
+      builder_emit(handle, 11, 0, compare_reg, 0, 0)
+      slot = lookup_slot(names, item_hash)
+      if slot == 0 {
+        item_reg = next_reg
+        names = names + [item_hash]
+        regs = regs + [item_reg]
+        next_reg = next_reg + 1
+      } else { item_reg = regs[slot - 1] }
+      builder_emit(handle, 28, item_reg, list_reg, cursor_reg, 0)
+      body_start = builder_position(handle)
+      parsed = parse_body(source, index, size, handle, next_reg, names, regs, loop_depth + 1)
+      index = packed_index(parsed)
+      next_reg = packed_next(parsed)
+      increment_start = builder_position(handle)
+      builder_emit(handle, 3, cursor_reg, cursor_reg, one_reg, 0)
+      builder_emit(handle, 13, 0, 0, 0, loop_start)
+      target = builder_position(handle)
+      builder_patch(handle, negative_branch, target)
+      builder_patch(handle, zero_branch, target)
+      builder_patch_marked(handle, body_start, increment_start, -1, target)
+      builder_patch_marked(handle, body_start, increment_start, -2, increment_start)
+      if source_at(source, index, size) == 125 { index = index + 1 }
+      continue
+    }
     if source_at(source, index, size) == 119 and source_at(source, index + 1, size) == 104 and source_at(source, index + 2, size) == 105 and source_at(source, index + 3, size) == 108 and source_at(source, index + 4, size) == 101 and is_space(source_at(source, index + 5, size)) {
       loop_start = builder_position(handle)
       parsed = parse_expression(source, index + 5, size, handle, next_reg, names, regs)

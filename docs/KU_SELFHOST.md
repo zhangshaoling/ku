@@ -50,11 +50,12 @@ Plain string literals are copied into the generated module data section and load
 `LOAD_STRING` (escape sequences are not yet parsed).
 List literals preserve nested expression results before packing them into `MAKE_LIST`; `len(x)`
 lowers to `LIST_LENGTH`, and an identifier-backed list supports `items[index]` through
-`INDEX_GET`.
+`INDEX_GET`. `for item in list { ... }` lowers to list length, indexed element reads, and a
+cursor loop; its `continue` target advances the cursor before retesting.
 
 This remains deliberately bounded: token streams, string escapes, containers, imports,
-diagnostics, register-overflow checks, list mutation, maps, and canonical self-rebuild are
-still pending.
+diagnostics, register-overflow checks, list mutation, maps, and canonical self-rebuild are still
+pending.
 
 ## SH1: Real Frontend Remaining
 
