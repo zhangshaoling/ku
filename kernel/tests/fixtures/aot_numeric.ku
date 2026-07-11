@@ -15,3 +15,15 @@ thought sum_direct(n) {
   }
   return total
 }
+thought raises_number() { throw 42 }
+thought catches_local() {
+  try { throw 42 } catch error { return error }
+}
+thought catches_call() {
+  try { raises_number() } catch error { return error }
+}
+thought catches_nested() {
+  try {
+    try { throw 42 } catch inner { throw inner }
+  } catch outer { return outer }
+}
