@@ -43,6 +43,40 @@ thought make_token(type, start, length) {
   type * 1000000000000 + start * 1000000 + length
 }
 
+thought append_decimal(handle, value) {
+  if value == 0 { string_append(handle, 48) return 0 }
+  divisor = 1
+  while value / divisor >= 10 { divisor = divisor * 10 }
+  while divisor > 0 {
+    string_append(handle, value / divisor % 10 + 48)
+    divisor = divisor / 10
+  }
+  0
+}
+
+thought fail_at(message, offset) {
+  handle = string_new()
+  index = 0
+  length = source_len(message)
+  while index < length {
+    string_append(handle, source_byte(message, index))
+    index = index + 1
+  }
+  string_append(handle, 32)
+  string_append(handle, 97)
+  string_append(handle, 116)
+  string_append(handle, 32)
+  string_append(handle, 111)
+  string_append(handle, 102)
+  string_append(handle, 102)
+  string_append(handle, 115)
+  string_append(handle, 101)
+  string_append(handle, 116)
+  string_append(handle, 32)
+  append_decimal(handle, offset)
+  throw string_finish(handle)
+}
+
 thought token_integer(source, token) {
   value = 0
   pos = token_start(token)
@@ -85,7 +119,7 @@ thought tokenize(source, size) {
         if b == 34 { break }
         index = index + 1
       }
-      if index >= size { throw "unterminated string literal" }
+      if index >= size { fail_at("unterminated string literal", start) }
       index = index + 1
       tokens = tokens + [make_token(2, start, index - start)]
       continue
@@ -133,7 +167,7 @@ thought tokenize(source, size) {
       if next_byte == 61 { index = index + 2 tokens = tokens + [make_token(24, start, 2)] continue }
       index = index + 1 tokens = tokens + [make_token(23, start, 1)] continue
     }
-    throw "unexpected character"
+    fail_at("unexpected character", index)
   }
   tokens = tokens + [make_token(26, index, 0)]
   tokens
@@ -161,7 +195,7 @@ thought validate_declarations(source, tokens) {
     keyword = tokens[token_index]
     is_import_decl = is_kw(source, keyword, 6, 105, 109, 112, 111, 114, 116, 0, 0)
     is_function_decl = is_kw(source, keyword, 7, 116, 104, 111, 117, 103, 104, 116, 0)
-    if not is_import_decl and not is_function_decl { throw "expected declaration" }
+    if not is_import_decl and not is_function_decl { fail_at("expected declaration", token_start(keyword)) }
     name_token = tokens[token_index + 1]
     if token_type(name_token) != 3 { throw "expected declaration name" }
     name_hash = source_hash(source, token_start(name_token), token_length(name_token))
@@ -558,7 +592,7 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
     }
     return pack(token_index, next_reg, result_reg)
   }
-  throw "expected expression"
+  fail_at("expected expression", token_start(token))
 }
 
 thought parse_multiplicative(source, tokens, token_index, handle, next_reg, names, regs, size) {
@@ -970,7 +1004,7 @@ thought compile(source) {
       builder_import(handle, import_symbol, arity)
       continue
     }
-    if token_type(token) != 3 or not is_kw(source, token, 7, 116, 104, 111, 117, 103, 104, 116, 0) { throw "expected thought declaration" }
+    if token_type(token) != 3 or not is_kw(source, token, 7, 116, 104, 111, 117, 103, 104, 116, 0) { fail_at("expected thought declaration", token_start(token)) }
     token_index = token_index + 1
     name_token = tokens[token_index]
     if token_type(name_token) != 3 { throw "expected function name" }

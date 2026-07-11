@@ -112,6 +112,8 @@ int main(int argc,char**argv){
             dao_value arg{};dao_value generated{};
             if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(source.data()),source.size()},&arg)!=DAO_OK||dao_vm_call(vm,compiler_module,compile_function,&arg,1,&generated,&error)==DAO_OK)return false;
         }
+        const std::string_view positioned="thought bad() { @ }";dao_value positioned_arg{};dao_value positioned_generated{};
+        if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(positioned.data()),positioned.size()},&positioned_arg)!=DAO_OK||dao_vm_call(vm,compiler_module,compile_function,&positioned_arg,1,&positioned_generated,&error)==DAO_OK||std::string_view(error.message)!="unexpected character at offset 16")return false;
         return true;
     };
     if(!run_rejections(module,function))return EXIT_FAILURE;

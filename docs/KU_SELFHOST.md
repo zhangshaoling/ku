@@ -90,15 +90,17 @@ do not truncate during the self-rebuild. New local bindings receive independent 
 preventing assignments such as `start = index` from aliasing later writes to `index`.
 
 This remains deliberately bounded: module-path imports are still pending. Diagnostics
-now cover explicit `throw` paths (unterminated string/list/map literals, missing
-function body braces, empty number consumption, host/local arity mismatch,
-undefined identifiers, unexpected characters) but do not yet carry source
-positions.
+cover explicit `throw` paths (unterminated string/list/map literals, missing function
+body braces, empty number consumption, host/local arity mismatch, undefined identifiers,
+and unexpected characters). The `.ku` frontend now constructs source-positioned messages
+for lexer failures and top-level/expression entry errors, and uncaught string exceptions
+are preserved through `dao_error.message`. Remaining parser diagnostics still need token
+offsets.
 
 ## SH1: Real Frontend Remaining
 
-- attach token offsets to diagnostics;
-- support module-path imports and nested indexed assignment;
+- attach token offsets to the remaining parser diagnostics;
+- support module-path imports;
 - expand structured builder validation beyond register bounds;
 - compare SH1 bytes with the C++ recovery compiler for canonical identity.
 

@@ -1162,7 +1162,13 @@ dao_status dao_vm_call(dao_vm* vm, const dao_module* module, dao_function functi
     uint64_t budget = vm->config.max_instructions_per_call;
     dao_value thrown = null_value();
     const dao_status status = execute_function(vm, module, function, args, arg_count, 0, budget, out_value, &thrown, error);
-    if (status == DAO_RUNTIME_ERROR && thrown.type != DAO_VALUE_NULL) return fail(error, DAO_RUNTIME_ERROR, "uncaught exception");
+    if (status == DAO_RUNTIME_ERROR && thrown.type != DAO_VALUE_NULL) {
+        if (thrown.type == DAO_VALUE_STRING) {
+            const std::string message(reinterpret_cast<const char*>(view_data(thrown)), thrown.reserved);
+            return fail(error, DAO_RUNTIME_ERROR, message.c_str());
+        }
+        return fail(error, DAO_RUNTIME_ERROR, "uncaught exception");
+    }
     return status;
 }
 
