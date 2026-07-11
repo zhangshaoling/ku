@@ -103,13 +103,30 @@ thought parse_primary(source, index, size, handle, next_reg, names, regs) {
     name_hash = source_hash(source, name_start, index - name_start)
     after_name = skip_space(source, index, size)
     if source_byte(source, after_name) == 40 {
-      parsed = parse_expression(source, after_name + 1, size, handle, next_reg, names, regs)
-      argument_reg = packed_result(parsed)
-      next_reg = packed_next(parsed)
-      index = skip_space(source, packed_index(parsed), size)
+      index = skip_space(source, after_name + 1, size)
+      arguments = []
+      while source_byte(source, index) != 41 {
+        parsed = parse_expression(source, index, size, handle, next_reg, names, regs)
+        argument_reg = packed_result(parsed)
+        next_reg = packed_next(parsed)
+        saved_reg = next_reg
+        builder_emit(handle, 2, saved_reg, argument_reg, 0, 0)
+        next_reg = next_reg + 1
+        arguments = arguments + [saved_reg]
+        index = skip_space(source, packed_index(parsed), size)
+        if source_byte(source, index) == 44 { index = skip_space(source, index + 1, size) continue }
+        break
+      }
       if source_byte(source, index) == 41 { index = index + 1 }
+      argument_reg = next_reg
+      argument_count = 0
+      while argument_count < len(arguments) {
+        builder_emit(handle, 2, next_reg, arguments[argument_count], 0, 0)
+        next_reg = next_reg + 1
+        argument_count = argument_count + 1
+      }
       result_reg = next_reg
-      builder_emit(handle, 14, result_reg, argument_reg, 1, function_index(source, size, name_hash))
+      builder_emit(handle, 14, result_reg, argument_reg, argument_count, function_index(source, size, name_hash))
       return pack(index, next_reg + 1, result_reg)
     }
     return pack(index, next_reg, lookup_reg(names, regs, name_hash))
