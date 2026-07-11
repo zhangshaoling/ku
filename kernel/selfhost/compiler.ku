@@ -6,6 +6,7 @@ import builder_begin(3)
 import builder_emit(6)
 import builder_position(1)
 import builder_patch(3)
+import builder_patch_marked(5)
 import builder_finish(2)
 import builder_encode(1)
 
@@ -33,6 +34,10 @@ thought source_at(source, index, size) {
 
 thought is_space(byte) {
   byte == 32 or byte == 10 or byte == 13 or byte == 9
+}
+
+thought is_word_end(byte) {
+  is_space(byte) or byte == 59 or byte == 125
 }
 
 thought parse_number(source, index, size, handle, next_reg) {
@@ -232,11 +237,23 @@ thought parse_expression(source, index, size, handle, next_reg, names, regs) {
   pack(index, next_reg + 1, combined_reg)
 }
 
-thought parse_body(source, index, size, handle, next_reg, names, regs) {
+thought parse_body(source, index, size, handle, next_reg, names, regs, loop_depth) {
   result_reg = 0
   while index < size {
     index = skip_space(source, index, size)
     if source_byte(source, index) == 125 { break }
+    if source_at(source, index, size) == 98 and source_at(source, index + 1, size) == 114 and source_at(source, index + 2, size) == 101 and source_at(source, index + 3, size) == 97 and source_at(source, index + 4, size) == 107 and is_word_end(source_at(source, index + 5, size)) {
+      if loop_depth > 0 { builder_emit(handle, 13, 0, 0, 0, -1) }
+      index = index + 5
+      if source_at(source, index, size) == 59 { index = index + 1 }
+      continue
+    }
+    if source_at(source, index, size) == 99 and source_at(source, index + 1, size) == 111 and source_at(source, index + 2, size) == 110 and source_at(source, index + 3, size) == 116 and source_at(source, index + 4, size) == 105 and source_at(source, index + 5, size) == 110 and source_at(source, index + 6, size) == 117 and source_at(source, index + 7, size) == 101 and is_word_end(source_at(source, index + 8, size)) {
+      if loop_depth > 0 { builder_emit(handle, 13, 0, 0, 0, -2) }
+      index = index + 8
+      if source_at(source, index, size) == 59 { index = index + 1 }
+      continue
+    }
     if source_at(source, index, size) == 105 and source_at(source, index + 1, size) == 102 and is_space(source_at(source, index + 2, size)) {
       parsed = parse_expression(source, index + 2, size, handle, next_reg, names, regs)
       index = skip_space(source, packed_index(parsed), size)
@@ -250,7 +267,7 @@ thought parse_body(source, index, size, handle, next_reg, names, regs) {
       builder_emit(handle, 10, 0, condition_reg, 0, 0)
       zero_branch = builder_position(handle)
       builder_emit(handle, 11, 0, condition_reg, 0, 0)
-      parsed = parse_body(source, index, size, handle, next_reg, names, regs)
+      parsed = parse_body(source, index, size, handle, next_reg, names, regs, loop_depth)
       index = packed_index(parsed)
       next_reg = packed_next(parsed)
       if source_at(source, index, size) == 125 { index = index + 1 }
@@ -266,7 +283,7 @@ thought parse_body(source, index, size, handle, next_reg, names, regs) {
           if source_at(source, index, size) == 123 { index = index + 1 break }
           index = index + 1
         }
-        parsed = parse_body(source, index, size, handle, next_reg, names, regs)
+        parsed = parse_body(source, index, size, handle, next_reg, names, regs, loop_depth)
         index = packed_index(parsed)
         next_reg = packed_next(parsed)
         if source_at(source, index, size) == 125 { index = index + 1 }
@@ -302,13 +319,17 @@ thought parse_body(source, index, size, handle, next_reg, names, regs) {
       builder_emit(handle, 10, 0, condition_reg, 0, 0)
       zero_branch = builder_position(handle)
       builder_emit(handle, 11, 0, condition_reg, 0, 0)
-      parsed = parse_body(source, index, size, handle, next_reg, names, regs)
+      body_start = builder_position(handle)
+      parsed = parse_body(source, index, size, handle, next_reg, names, regs, loop_depth + 1)
       index = packed_index(parsed)
       next_reg = packed_next(parsed)
+      body_end = builder_position(handle)
       builder_emit(handle, 13, 0, 0, 0, loop_start)
       target = builder_position(handle)
       builder_patch(handle, negative_branch, target)
       builder_patch(handle, zero_branch, target)
+      builder_patch_marked(handle, body_start, body_end, -1, target)
+      builder_patch_marked(handle, body_start, body_end, -2, loop_start)
       if source_at(source, index, size) == 125 { index = index + 1 }
       continue
     }
@@ -397,7 +418,7 @@ thought compile(source) {
       if source_byte(source, index) == 123 { index = index + 1 break }
       index = index + 1
     }
-    parsed = parse_body(source, index, size, handle, param_count, names, regs)
+    parsed = parse_body(source, index, size, handle, param_count, names, regs, 0)
     result_reg = packed_result(parsed)
     builder_emit(handle, 15, 0, result_reg, 0, 0)
     builder_finish(handle, export_symbol)

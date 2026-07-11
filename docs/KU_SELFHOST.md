@@ -44,10 +44,11 @@ local binding's register. Integer comparisons
 Whitespace-delimited `if <condition> { ... }` blocks and explicit `return <expression>` statements
 emit and patch VM branch targets in the self-hosted compiler. `else { ... }` produces the
 matching branch-over-alternate jump. Basic `while <condition> { ... }` loops re-evaluate their
-condition and jump back through the self-hosted builder ABI.
+condition and jump back through the self-hosted builder ABI. `break` and `continue` are patched
+within their enclosing loop range.
 
 This remains deliberately bounded: token streams, strings, containers, imports, diagnostics,
-register-overflow checks, `break`/`continue`, and canonical self-rebuild are still pending.
+register-overflow checks, and canonical self-rebuild are still pending.
 
 ## SH1: Real Frontend Remaining
 
