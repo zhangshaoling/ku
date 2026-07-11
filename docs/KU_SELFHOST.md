@@ -35,8 +35,11 @@ imports, proper diagnostics, register-overflow checks, or canonical self-rebuild
 
 The `.ku` compiler now scans and emits consecutive `thought` declarations into one generated
 module, preserving each source function name as an export. Parameters and identifier reads
-lower directly to parameter registers. Assignments and inter-function calls remain the next
-parser slice.
+lower directly to parameter registers. Function bodies support semicolon-separated local
+assignments, and a function can call another generated function with one expression argument.
+
+This remains deliberately bounded: multi-argument calls, token streams, strings, containers,
+imports, diagnostics, register-overflow checks, and canonical self-rebuild are still pending.
 
 ## SH1: Real Frontend Remaining
 
