@@ -80,7 +80,9 @@ newline-delimited `.ku` source and semicolon-delimited source follow the same
 parser path. The byte-scanning `advance_to_byte` bridge has been removed; `compile`
 passes token indices to `parse_body` and reads back the consumed token index
 from the packed result. Function/import lookup and arity validation also traverse
-the shared token stream; numeric import arities are read from number tokens.
+the shared token stream; numeric import arities are read from number tokens. Each call
+site now resolves index and arity together, avoiding the previous duplicate full-token
+scan during self-rebuild.
 Before code generation, a token preflight rejects duplicate functions, duplicate imports,
 import/function name conflicts, and duplicate parameters.
 All emitted instructions pass through a `.ku` register-boundary wrapper before reaching the
