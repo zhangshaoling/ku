@@ -156,6 +156,7 @@ Opcode parse_opcode(std::string_view token) {
             if (token == "LOAD_I64" || token == "load_i64") return Opcode::LoadI64;
             if (token == "LOAD_TRIT" || token == "load_trit") return Opcode::LoadTrit;
             if (token == "LOAD_STRING" || token == "load_string") return Opcode::LoadString;
+            if (token == "LOAD_FUNCTION" || token == "load_function") return Opcode::LoadFunction;
             if (token == "LOAD_NULL" || token == "load_null") return Opcode::LoadNull;
             if (token == "LIST_LEN" || token == "list_len") return Opcode::ListLength;
             if (token == "LIST_GET" || token == "list_get") return Opcode::ListGet;
@@ -205,6 +206,7 @@ Opcode parse_opcode(std::string_view token) {
         case 'c':
             if (token == "CALL" || token == "call") return Opcode::Call;
             if (token == "CALL_HOST" || token == "call_host") return Opcode::CallHost;
+            if (token == "CALL_VALUE" || token == "call_value") return Opcode::CallValue;
             if (token == "CATCH" || token == "catch") return Opcode::Catch;
             break;
         case 'I': case 'i':
@@ -427,7 +429,8 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
     }
     case Opcode::LoadI64:
     case Opcode::LoadTrit:
-    case Opcode::LoadString: {
+    case Opcode::LoadString:
+    case Opcode::LoadFunction: {
         if (fields.size() - operand_start < 2) {
             return fail(error, "instruction: expected dst, immediate");
         }
@@ -612,6 +615,16 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
         while (!dst_reg.empty() && dst_reg.back() == ',') dst_reg.remove_suffix(1);
         if (!parse_register(dst_reg, instruction.dst)) {
             return fail(error, "call_host instruction: bad dst register");
+        }
+        break;
+    }
+    case Opcode::CallValue: {
+        if (fields.size() - operand_start < 4) return fail(error, "call_value: expected dst, function, args, count");
+        if (!parse_register(fields[operand_start], instruction.dst) ||
+            !parse_register(fields[operand_start + 1], instruction.a) ||
+            !parse_register(fields[operand_start + 2], instruction.b) ||
+            !parse_int64_strict(fields[operand_start + 3], instruction.immediate)) {
+            return fail(error, "call_value: bad operand");
         }
         break;
     }

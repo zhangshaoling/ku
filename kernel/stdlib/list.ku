@@ -119,3 +119,44 @@ thought enumerate(items) {
   }
   result
 }
+
+thought map(items, fn) {
+  result = []
+  for x in items { result = result + [fn(x)] }
+  result
+}
+
+thought filter(items, fn) {
+  result = []
+  for x in items {
+    if fn(x) { result = result + [x] }
+  }
+  result
+}
+
+thought reduce(items, fn, initial) {
+  result = initial
+  for x in items { result = fn(result, x) }
+  result
+}
+
+thought find(items, fn) {
+  for x in items {
+    if fn(x) { return x }
+  }
+  null
+}
+
+thought all(items, fn) {
+  for x in items {
+    if not fn(x) { return false }
+  }
+  true
+}
+
+thought any(items, fn) {
+  for x in items {
+    if fn(x) { return true }
+  }
+  false
+}

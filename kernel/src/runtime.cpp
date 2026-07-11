@@ -200,6 +200,8 @@ bool is_valid_value(const dao_value& value) {
         return value.reserved == 0 && value.payload != 0;
     if (value.type == DAO_VALUE_MAP)
         return value.reserved == 0 && value.payload != 0;
+    if (value.type == DAO_VALUE_FUNCTION)
+        return value.reserved == 0 && value.payload >= 0;
     if (value.type != DAO_VALUE_BYTES && value.type != DAO_VALUE_STRING)
         return false;
 
@@ -282,7 +284,7 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
                               const dao::Instruction& instruction, uint32_t function_index,
                               uint32_t pc, dao_error* error) {
     if (instruction.flags != 0) {
-        return fail(error, DAO_VERIFY_ERROR, "instruction flags must be zero in VM ABI v7",
+        return fail(error, DAO_VERIFY_ERROR, "instruction flags must be zero in VM ABI v8",
                     function_index, pc);
     }
 
@@ -306,6 +308,10 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
     case Opcode::LoadString:
         if (valid_register(instruction.dst) && instruction.immediate >= 0 &&
             static_cast<uint64_t>(instruction.immediate) < module.strings.size()) return DAO_OK;
+        break;
+    case Opcode::LoadFunction:
+        if (valid_register(instruction.dst) && instruction.immediate >= 0 &&
+            static_cast<uint64_t>(instruction.immediate) < module.functions.size()) return DAO_OK;
         break;
     case Opcode::LoadNull:
         if (valid_register(instruction.dst)) return DAO_OK;
@@ -387,6 +393,14 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
             return DAO_OK;
         break;
     }
+    case Opcode::CallValue: {
+        if (!valid_register(instruction.dst) || !valid_register(instruction.a) ||
+            instruction.immediate < 0) break;
+        const uint64_t end = static_cast<uint64_t>(instruction.b) +
+                             static_cast<uint64_t>(instruction.immediate);
+        if (end <= function.register_count) return DAO_OK;
+        break;
+    }
     case Opcode::CallHost: {
         if (!valid_register(instruction.dst) || instruction.immediate < 0 ||
             static_cast<uint64_t>(instruction.immediate) >= module.imports.size()) {
@@ -462,6 +476,10 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
                 static_cast<int64_t>(reinterpret_cast<intptr_t>(value.data()))};
             ++pc; break;
         }
+        case Opcode::LoadFunction:
+            registers[instruction.dst] = dao_value{DAO_VALUE_FUNCTION, 0, instruction.immediate};
+            ++pc;
+            break;
         case Opcode::LoadNull:
             registers[instruction.dst] = null_value(); ++pc; break;
         case Opcode::MakeList: {
@@ -664,6 +682,26 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
             ++pc;
             break;
         }
+        case Opcode::CallValue: {
+            const dao_value& target = registers[instruction.a];
+            if (target.type != DAO_VALUE_FUNCTION || target.payload < 0 ||
+                static_cast<uint64_t>(target.payload) >= module->functions.size()) {
+                return fail(error, DAO_TYPE_ERROR, "CALL_VALUE requires a local function reference",
+                            function_index, pc);
+            }
+            dao_value result = null_value();
+            const dao_status status = execute_function(
+                vm, module, static_cast<uint32_t>(target.payload),
+                instruction.immediate == 0 ? nullptr : registers.data() + instruction.b,
+                static_cast<size_t>(instruction.immediate), depth + 1, budget, &result, thrown, error);
+            if (status == DAO_RUNTIME_ERROR && thrown->type != DAO_VALUE_NULL && !handlers.empty()) {
+                pc = handlers.back(); handlers.pop_back(); break;
+            }
+            if (status != DAO_OK) return status;
+            registers[instruction.dst] = result;
+            ++pc;
+            break;
+        }
         case Opcode::CallHost: {
             const auto& import = module->imports[static_cast<size_t>(instruction.immediate)];
             const auto found = vm->host_functions.find(import.symbol_id);
@@ -696,7 +734,8 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
                 return fail(error, DAO_TYPE_ERROR, "host callback returned an invalid value",
                             function_index, pc);
             }
-            if (result.type == DAO_VALUE_LIST || result.type == DAO_VALUE_MAP) {
+            if (result.type == DAO_VALUE_LIST || result.type == DAO_VALUE_MAP ||
+                result.type == DAO_VALUE_FUNCTION) {
                 return fail(error, DAO_TYPE_ERROR, "host callbacks cannot manufacture VM-owned containers",
                             function_index, pc);
             }
@@ -1081,7 +1120,8 @@ dao_status dao_vm_call(dao_vm* vm, const dao_module* module, dao_function functi
         if (!is_valid_value(args[index])) {
             return fail(error, DAO_TYPE_ERROR, "argument contains an invalid value");
         }
-        if (args[index].type == DAO_VALUE_LIST || args[index].type == DAO_VALUE_MAP) {
+        if (args[index].type == DAO_VALUE_LIST || args[index].type == DAO_VALUE_MAP ||
+            args[index].type == DAO_VALUE_FUNCTION) {
             return fail(error, DAO_INVALID_ARGUMENT, "VM-owned containers cannot be reused across top-level calls");
         }
     }

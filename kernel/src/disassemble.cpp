@@ -218,6 +218,7 @@ const char* opcode_name(Opcode opcode) {
         return "DIV_I64";
     case Opcode::LoadTrit: return "LOAD_TRIT";
     case Opcode::LoadString: return "LOAD_STRING";
+    case Opcode::LoadFunction: return "LOAD_FUNCTION";
     case Opcode::LoadNull: return "LOAD_NULL";
     case Opcode::MakeList: return "MAKE_LIST";
     case Opcode::ListLength: return "LIST_LEN";
@@ -257,6 +258,8 @@ const char* opcode_name(Opcode opcode) {
         return "RETURN";
     case Opcode::CallHost:
         return "CALL_HOST";
+    case Opcode::CallValue:
+        return "CALL_VALUE";
     }
     return "UNKNOWN";
 }
@@ -272,6 +275,7 @@ void append_instruction_text(std::ostream& out,
     case Opcode::LoadI64:
     case Opcode::LoadTrit:
     case Opcode::LoadString:
+    case Opcode::LoadFunction:
         out << " r" << instruction.dst << ", " << instruction.immediate;
         break;
     case Opcode::LoadNull:
@@ -336,6 +340,10 @@ void append_instruction_text(std::ostream& out,
         out << " import" << instruction.immediate << ", args ";
         if (instruction.b == 0) out << "none"; else out << "r" << instruction.a << ".." << (instruction.a + instruction.b - 1);
         out << ", dst r" << instruction.dst;
+        break;
+    case Opcode::CallValue:
+        out << " r" << instruction.dst << ", r" << instruction.a << ", r"
+            << instruction.b << ", " << instruction.immediate;
         break;
     }
 }

@@ -92,6 +92,15 @@ thought unique_case() { list_unique([3, 1, 4, 1, 5, 1]) }
 thought sort_case() { list_sort([3, 1, 4, 1, 5]) }
 thought zip_case() { list_zip([3, 1], [4, 5]) }
 thought enumerate_case() { list_enumerate([3, 1]) }
+thought square(value) { value * value }
+thought even(value) { value % 2 == 0 }
+thought add(left, right) { left + right }
+thought map_case() { list_map([1, 2, 3], square) }
+thought filter_case() { list_filter([1, 2, 3, 4], even) }
+thought reduce_case() { list_reduce([1, 2, 3, 4], add, 0) }
+thought find_case() { list_find([1, 3, 4, 5], even) }
+thought all_case() { list_all([2, 4, 6], even) }
+thought any_case() { list_any([1, 3, 4], even) }
 )";
     dao::km::Options options{};
     options.import_resolver = resolve_list;
@@ -125,6 +134,12 @@ thought enumerate_case() { list_enumerate([3, 1]) }
               "list unique");
         check(expect_list_i64(vm, module, "sort_case", {1, 1, 3, 4, 5}, &error),
               "list sort");
+        check(expect_list_i64(vm, module, "map_case", {1, 4, 9}, &error), "list map");
+        check(expect_list_i64(vm, module, "filter_case", {2, 4}, &error), "list filter");
+        check(expect_value(vm, module, "reduce_case", DAO_VALUE_I64, 10, &error), "list reduce");
+        check(expect_value(vm, module, "find_case", DAO_VALUE_I64, 4, &error), "list find");
+        check(expect_value(vm, module, "all_case", DAO_VALUE_TRIT, 1, &error), "list all");
+        check(expect_value(vm, module, "any_case", DAO_VALUE_TRIT, 1, &error), "list any");
         dao_function zip{};
         dao_value zipped{};
         size_t size = 0;

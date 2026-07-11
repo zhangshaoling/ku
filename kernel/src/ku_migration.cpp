@@ -501,8 +501,14 @@ class Emitter {
             if (e.value == "false" || e.value == "假") { const uint16_t dst = temporary(); code_.push_back(instruction(Opcode::LoadTrit, dst, 0, 0, -1)); return dst; }
             if (e.value == "null" || e.value == "空") { const uint16_t dst = temporary(); code_.push_back(instruction(Opcode::LoadNull, dst)); return dst; }
             auto found = variables_.find(e.value);
-            if (found == variables_.end()) throw std::runtime_error("undefined variable '" + e.value + "' at offset " + std::to_string(e.offset));
-            return found->second;
+            if (found != variables_.end()) return found->second;
+            const auto function = indices_.find(e.value);
+            if (function == indices_.end())
+                throw std::runtime_error("undefined variable '" + e.value + "' at offset " + std::to_string(e.offset));
+            const uint16_t dst = temporary();
+            code_.push_back(instruction(Opcode::LoadFunction, dst, 0, 0,
+                                        static_cast<int64_t>(function->second.index)));
+            return dst;
         }
         if (e.type == Expr::Type::Unary) {
             const uint16_t value = expr(e.children[0]); const uint16_t dst = temporary();
@@ -522,7 +528,8 @@ class Emitter {
             }
             auto found = indices_.find(e.value);
             auto host = imports_.find(e.value);
-            if (found == indices_.end() && host == imports_.end()) throw std::runtime_error("unknown function '" + e.value + "' at offset " + std::to_string(e.offset));
+            const auto function_value = variables_.find(e.value);
+            if (found == indices_.end() && host == imports_.end() && function_value == variables_.end()) throw std::runtime_error("unknown function '" + e.value + "' at offset " + std::to_string(e.offset));
             if (host != imports_.end() && host->second.arity != e.children.size()) throw std::runtime_error("host function '" + e.value + "' argument count mismatch at offset " + std::to_string(e.offset));
             if (found != indices_.end() && found->second.arity != e.children.size()) throw std::runtime_error("function '" + e.value + "' argument count mismatch at offset " + std::to_string(e.offset));
             std::vector<uint16_t> actuals;
@@ -530,7 +537,10 @@ class Emitter {
             const uint16_t base = static_cast<uint16_t>(next_);
             for (const uint16_t actual : actuals) { const uint16_t slot = temporary(); code_.push_back(instruction(Opcode::Move, slot, actual)); }
             const uint16_t dst = temporary();
-            if (host != imports_.end()) code_.push_back(instruction(Opcode::CallHost, dst, base, static_cast<uint16_t>(e.children.size()), host->second.index));
+            if (function_value != variables_.end())
+                code_.push_back(instruction(Opcode::CallValue, dst, function_value->second, base,
+                                            static_cast<int64_t>(e.children.size())));
+            else if (host != imports_.end()) code_.push_back(instruction(Opcode::CallHost, dst, base, static_cast<uint16_t>(e.children.size()), host->second.index));
             else code_.push_back(instruction(Opcode::Call, dst, base, static_cast<uint16_t>(e.children.size()), found->second.index));
             return dst;
         }
