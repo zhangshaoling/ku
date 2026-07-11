@@ -38,14 +38,16 @@ module, preserving each source function name as an export. Parameters and identi
 lower directly to parameter registers. Function bodies support semicolon-separated local
 assignments, and a function can call another generated function with zero or more integer
 expression arguments. The compiler preserves argument values and packs them into the
-contiguous register range required by the VM call ABI. Later assignments shadow earlier
-local bindings. Integer comparisons (`==`, `!=`, `<`, `<=`, `>`, and `>=`) lower to VM trits.
+contiguous register range required by the VM call ABI. Reassignment writes back to an existing
+local binding's register. Integer comparisons
+(`==`, `!=`, `<`, `<=`, `>`, and `>=`) lower to VM trits.
 Whitespace-delimited `if <condition> { ... }` blocks and explicit `return <expression>` statements
 emit and patch VM branch targets in the self-hosted compiler. `else { ... }` produces the
-matching branch-over-alternate jump.
+matching branch-over-alternate jump. Basic `while <condition> { ... }` loops re-evaluate their
+condition and jump back through the self-hosted builder ABI.
 
 This remains deliberately bounded: token streams, strings, containers, imports, diagnostics,
-register-overflow checks, loops, and canonical self-rebuild are still pending.
+register-overflow checks, `break`/`continue`, and canonical self-rebuild are still pending.
 
 ## SH1: Real Frontend Remaining
 

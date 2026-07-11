@@ -49,13 +49,19 @@ thought parse_number(source, index, size, handle, next_reg) {
   pack(index, next_reg + 1, result_reg)
 }
 
-thought lookup_reg(names, regs, name_hash) {
+thought lookup_slot(names, name_hash) {
   i = len(names) - 1
   while i >= 0 {
-    if names[i] == name_hash { return regs[i] }
+    if names[i] == name_hash { return i + 1 }
     i = i - 1
   }
   0
+}
+
+thought lookup_reg(names, regs, name_hash) {
+  slot = lookup_slot(names, name_hash)
+  if slot == 0 { return 0 }
+  regs[slot - 1]
 }
 
 thought function_index(source, size, target_hash) {
@@ -282,6 +288,30 @@ thought parse_body(source, index, size, handle, next_reg, names, regs) {
       if source_at(source, index, size) == 59 { index = index + 1 continue }
       break
     }
+    if source_at(source, index, size) == 119 and source_at(source, index + 1, size) == 104 and source_at(source, index + 2, size) == 105 and source_at(source, index + 3, size) == 108 and source_at(source, index + 4, size) == 101 and is_space(source_at(source, index + 5, size)) {
+      loop_start = builder_position(handle)
+      parsed = parse_expression(source, index + 5, size, handle, next_reg, names, regs)
+      index = skip_space(source, packed_index(parsed), size)
+      next_reg = packed_next(parsed)
+      condition_reg = packed_result(parsed)
+      while index < size {
+        if source_at(source, index, size) == 123 { index = index + 1 break }
+        index = index + 1
+      }
+      negative_branch = builder_position(handle)
+      builder_emit(handle, 10, 0, condition_reg, 0, 0)
+      zero_branch = builder_position(handle)
+      builder_emit(handle, 11, 0, condition_reg, 0, 0)
+      parsed = parse_body(source, index, size, handle, next_reg, names, regs)
+      index = packed_index(parsed)
+      next_reg = packed_next(parsed)
+      builder_emit(handle, 13, 0, 0, 0, loop_start)
+      target = builder_position(handle)
+      builder_patch(handle, negative_branch, target)
+      builder_patch(handle, zero_branch, target)
+      if source_at(source, index, size) == 125 { index = index + 1 }
+      continue
+    }
     name_start = index
     probe = index
     while probe < size {
@@ -297,8 +327,15 @@ thought parse_body(source, index, size, handle, next_reg, names, regs) {
       index = packed_index(parsed)
       next_reg = packed_next(parsed)
       result_reg = packed_result(parsed)
-      names = names + [source_hash(source, name_start, probe - name_start)]
-      regs = regs + [result_reg]
+      name_hash = source_hash(source, name_start, probe - name_start)
+      slot = lookup_slot(names, name_hash)
+      if slot == 0 {
+        names = names + [name_hash]
+        regs = regs + [result_reg]
+      } else {
+        result_reg = regs[slot - 1]
+        builder_emit(handle, 2, result_reg, packed_result(parsed), 0, 0)
+      }
       if source_byte(source, index) == 59 { index = index + 1 continue }
       break
     }
