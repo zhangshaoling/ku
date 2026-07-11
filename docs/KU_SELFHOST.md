@@ -76,6 +76,8 @@ chains. The byte-scanning `advance_to_byte` bridge has been removed; `compile`
 passes token indices to `parse_body` and reads back the consumed token index
 from the packed result. Function/import lookup and arity validation also traverse
 the shared token stream; numeric import arities are read from number tokens.
+Before code generation, a token preflight rejects duplicate functions, duplicate imports,
+import/function name conflicts, and duplicate parameters.
 
 This remains deliberately bounded: register-overflow checks, nested indexed
 mutation, module-path imports, and canonical self-rebuild are still pending. Diagnostics
@@ -86,7 +88,7 @@ positions.
 
 ## SH1: Real Frontend Remaining
 
-- attach token offsets to diagnostics and reject duplicate declarations;
+- attach token offsets to diagnostics;
 - support module-path imports and nested indexed assignment;
 - add register-allocation bounds and structured builder validation;
 - compare SH1 bytes with the C++ recovery compiler for canonical identity.

@@ -141,6 +141,60 @@ thought is_kw(source, token, n, c0, c1, c2, c3, c4, c5, c6, c7) {
   1 == 1
 }
 
+thought validate_declarations(source, tokens) {
+  token_index = 0
+  symbols = []
+  while token_type(tokens[token_index]) != 26 {
+    keyword = tokens[token_index]
+    is_import_decl = is_kw(source, keyword, 6, 105, 109, 112, 111, 114, 116, 0, 0)
+    is_function_decl = is_kw(source, keyword, 7, 116, 104, 111, 117, 103, 104, 116, 0)
+    if not is_import_decl and not is_function_decl { throw "expected declaration" }
+    name_token = tokens[token_index + 1]
+    if token_type(name_token) != 3 { throw "expected declaration name" }
+    name_hash = source_hash(source, token_start(name_token), token_length(name_token))
+    if lookup_slot(symbols, name_hash) != 0 { throw "duplicate declaration" }
+    symbols = symbols + [name_hash]
+    if is_import_decl {
+      while token_type(tokens[token_index]) != 5 {
+        if token_type(tokens[token_index]) == 26 { throw "unterminated import" }
+        token_index = token_index + 1
+      }
+      token_index = token_index + 1
+      continue
+    }
+    token_index = token_index + 2
+    if token_type(tokens[token_index]) != 4 { throw "expected parameter list" }
+    token_index = token_index + 1
+    parameters = []
+    while token_type(tokens[token_index]) != 5 {
+      parameter = tokens[token_index]
+      if token_type(parameter) != 3 { throw "expected parameter name" }
+      parameter_hash = source_hash(source, token_start(parameter), token_length(parameter))
+      if lookup_slot(parameters, parameter_hash) != 0 { throw "duplicate parameter" }
+      parameters = parameters + [parameter_hash]
+      token_index = token_index + 1
+      if token_type(tokens[token_index]) == 10 { token_index = token_index + 1 continue }
+      if token_type(tokens[token_index]) != 5 { throw "expected comma or )" }
+    }
+    token_index = token_index + 1
+    while token_type(tokens[token_index]) != 6 {
+      if token_type(tokens[token_index]) == 26 { throw "expected function body" }
+      token_index = token_index + 1
+    }
+    depth = 0
+    while token_type(tokens[token_index]) != 26 {
+      if token_type(tokens[token_index]) == 6 { depth = depth + 1 }
+      if token_type(tokens[token_index]) == 7 {
+        depth = depth - 1
+        if depth == 0 { token_index = token_index + 1 break }
+      }
+      token_index = token_index + 1
+    }
+    if depth != 0 { throw "unterminated function body" }
+  }
+  0
+}
+
 thought parse_number(source, tokens, token_index, handle, next_reg) {
   token = tokens[token_index]
   start = token_start(token)
@@ -781,6 +835,7 @@ thought compile(source) {
   handle = builder_new()
   size = source_len(source)
   tokens = tokenize(source, size)
+  validate_declarations(source, tokens)
   token_index = 0
   while token_type(tokens[token_index]) != 26 {
     token = tokens[token_index]

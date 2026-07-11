@@ -112,12 +112,17 @@ int main(int argc,char**argv){
     const bool exception_ok=dao_vm_call(vm,exception_module,exception_function,nullptr,0,&exception_result,&error)==DAO_OK&&exception_result.type==DAO_VALUE_STRING&&dao_value_get_view(&exception_result,&exception_text)==DAO_OK&&std::string_view(reinterpret_cast<const char*>(exception_text.data),exception_text.size)=="handled";
     dao_module_release(exception_module);
     if(!exception_ok)return EXIT_FAILURE;
-    const char*invalid_sources[]={"thought bad() { \"unterminated }","thought bad() { missing }","thought bad() { [1, 2 }","thought bad() { {\"key\" 42} }","thought add(left, right) { left + right } thought bad() { add(1) }","import host_double(1) thought bad() { host_double(1, 2) }","thought bad() { absent() }","thought bad()","thought bad() { 42 ","thought bad() { @ }","thought bad() { [1, ","import host_double(x) thought bad() { 42 }","other bad() { 42 }"};
+    const char*invalid_sources[]={"thought bad() { \"unterminated }","thought bad() { missing }","thought bad() { [1, 2 }","thought bad() { {\"key\" 42} }","thought add(left, right) { left + right } thought bad() { add(1) }","import host_double(1) thought bad() { host_double(1, 2) }","thought bad() { absent() }","thought bad()","thought bad() { 42 ","thought bad() { @ }","thought bad() { [1, ","import host_double(x) thought bad() { 42 }","other bad() { 42 }","thought same() { 1 } thought same() { 2 }","import same(1) thought same() { 1 }","import same(1) import same(1) thought ok() { 1 }"};
     for(const char*invalid_source:invalid_sources){
         const std::string invalid=invalid_source;dao_value invalid_arg{};
         if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(invalid.data()),invalid.size()},&invalid_arg)!=DAO_OK)return EXIT_FAILURE;
         dao_value invalid_generated{};
         if(dao_vm_call(vm,module,function,&invalid_arg,1,&invalid_generated,&error)==DAO_OK)return EXIT_FAILURE;
     }
+    const std::string duplicate_parameter="thought bad(value, value) { value }";
+    dao_value duplicate_parameter_arg{};
+    if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(duplicate_parameter.data()),duplicate_parameter.size()},&duplicate_parameter_arg)!=DAO_OK)return EXIT_FAILURE;
+    dao_value duplicate_parameter_generated{};
+    if(dao_vm_call(vm,module,function,&duplicate_parameter_arg,1,&duplicate_parameter_generated,&error)==DAO_OK)return EXIT_FAILURE;
     dao_module_release(module);dao_vm_destroy(vm);std::cout<<"dao .ku self-host seed passed\n";return EXIT_SUCCESS;
 }
