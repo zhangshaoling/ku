@@ -6,6 +6,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -15,6 +16,15 @@ uint32_t symbol_id(std::string_view name) { uint32_t hash = 2166136261u; for (co
 dao_status host_double(void*, const dao_value* args, size_t count, dao_value* out) {
     if (count != 1 || args[0].type != DAO_VALUE_I64) return DAO_TYPE_ERROR;
     *out = {DAO_VALUE_I64, 0, args[0].payload * 2}; return DAO_OK;
+}
+struct ImportSources { std::unordered_map<std::string, std::string> values; };
+bool resolve_import(void* user_data, std::string_view path, std::string* source,
+                    std::string* error) {
+    const auto& values = static_cast<ImportSources*>(user_data)->values;
+    const auto found = values.find(std::string(path));
+    if (found == values.end()) { *error = "not found"; return false; }
+    *source = found->second;
+    return true;
 }
 }
 #define CHECK(name, expression) check((expression), (name))
@@ -157,6 +167,40 @@ thought catches() {
     if (!assembled) std::cerr << "assemble error: " << error.message << '\n';
     CHECK("assemble text", assembled);
     CHECK("round trip identical", round_trip == bytes);
+
+    ImportSources import_sources{{
+        {"math", "thought add(a, b) { a + b } thought double(value) { add(value, value) }"},
+    }};
+    dao::km::Options import_options{};
+    import_options.import_resolver = resolve_import;
+    import_options.import_user_data = &import_sources;
+    dao::ModuleBuilder imported_builder;
+    const std::string imported_source =
+        "\xE5\xBC\x95 \"math\" \xE5\x88\xAB m\nthought imported_answer() { m_double(21) }";
+    CHECK("compile legacy module import",
+          dao::km::compile(imported_source, imported_builder, &error, import_options));
+    const auto imported_bytes = imported_builder.encode();
+    dao_module* imported_module = nullptr;
+    CHECK("load legacy module import",
+          dao_vm_load_module(vm, {imported_bytes.data(), imported_bytes.size()}, &imported_module,
+                             &error) == DAO_OK);
+    CHECK("find legacy import caller",
+          dao_module_find_export(imported_module, symbol_id("imported_answer"), &fn) == DAO_OK);
+    CHECK("execute legacy import caller",
+          dao_vm_call(vm, imported_module, fn, nullptr, 0, &result, &error) == DAO_OK &&
+              result.type == DAO_VALUE_I64 && result.payload == 42);
+    dao_module_release(imported_module);
+
+    dao::ModuleBuilder missing_resolver;
+    CHECK("legacy import requires resolver",
+          !dao::km::compile("import \"math\" as m\nthought bad() { m_double(1) }",
+                            missing_resolver, &error));
+    import_sources.values["cycle"] =
+        "import \"cycle\" as nested\nthought value() { 1 }";
+    dao::ModuleBuilder cyclic_import;
+    CHECK("reject cyclic legacy import",
+          !dao::km::compile("import \"cycle\" as cycle\nthought bad() { cycle_value() }",
+                            cyclic_import, &error, import_options));
 
     dao::ModuleBuilder invalid;
     CHECK("reject break outside loop", !dao::km::compile("thought bad() { break }", invalid, &error));

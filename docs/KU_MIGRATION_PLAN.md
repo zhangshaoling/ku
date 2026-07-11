@@ -35,6 +35,9 @@
   `dao_host_function` (guide §10/§11), and calls lower to `CALL_HOST`.
 - Stable FNV-1a symbol IDs, duplicate rejection, signature checks, and internal/host name
   conflict checks are enforced at compile time.
+- Legacy source imports (`引 "std/..." 别 alias` and `import "std/..." as alias`) are
+  resolved explicitly by `dao-ku`, recursively source-bundled under deterministic alias
+  prefixes, cycle-checked, and confined to the input module root.
 
 ### Phase M — representative samples (MVP complete)
 - `kernel/stdlib/core.ku` provides migrated math/list/string behavior and explicit
@@ -50,7 +53,6 @@
 
 ## Remaining For Full K4 Closure
 
-- legacy `引 "std/..." 别 ...` import compatibility;
 - real `ku/std/*.ku` migration instead of representative replacements;
 - function references/closures, floats, and remaining dynamic semantics;
 - parity against the complete legacy Python/Ku corpus;

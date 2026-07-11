@@ -185,6 +185,13 @@ add_test(NAME ku_compile_stdlib COMMAND dao-ku
 add_test(NAME ku_compile_acceptance COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/language_acceptance.ku"
     "${CMAKE_BINARY_DIR}/language_acceptance.dao")
+add_test(NAME ku_compile_legacy_import COMMAND dao-ku
+    "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/legacy_import_main.ku"
+    "${CMAKE_BINARY_DIR}/legacy_import.dao")
+add_test(NAME ku_reject_import_escape COMMAND dao-ku
+    "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/legacy_import_escape.ku"
+    "${CMAKE_BINARY_DIR}/legacy_import_escape.dao")
+set_tests_properties(ku_reject_import_escape PROPERTIES WILL_FAIL TRUE)
 add_test(NAME aot_compile_module COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/aot_numeric.ku"
     "${CMAKE_BINARY_DIR}/aot_numeric.dao")
@@ -215,6 +222,8 @@ set(DAO_RUNTIME_TESTS
     ku_selfhost_seed
     ku_compile_stdlib
     ku_compile_acceptance
+    ku_compile_legacy_import
+    ku_reject_import_escape
     aot_compile_module
     aot_generate_c
     aot_execute_native

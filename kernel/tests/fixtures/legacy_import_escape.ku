@@ -1,0 +1,3 @@
+import "../stdlib/core" as escaped
+
+thought must_not_compile() { escaped_math_abs(1) }

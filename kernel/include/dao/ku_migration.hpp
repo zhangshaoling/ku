@@ -4,11 +4,19 @@
 #include "dao/dao.h"
 #include "dao/format.hpp"
 
+#include <string>
 #include <string_view>
 
 namespace dao {
 namespace km {
-struct Options { bool trace = false; };
+using ImportResolver = bool (*)(void* user_data, std::string_view module_path,
+                                std::string* source, std::string* error);
+
+struct Options {
+    bool trace = false;
+    ImportResolver import_resolver = nullptr;
+    void* import_user_data = nullptr;
+};
 
 bool compile(std::string_view source, ModuleBuilder& builder, dao_error* error, Options options = {});
 

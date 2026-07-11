@@ -43,6 +43,10 @@ Compile the supported scalar Ku subset to a verified Dao module with:
 .\kernel\out\cmake\bin\dao-ku.exe input.ku output.dao
 ```
 
+`dao-ku` accepts legacy source imports such as `引 "std/math" 别 math` and
+`import "std/math" as math`. Imported functions are namespaced as `math_<name>`;
+resolution is recursive, cycle-checked, and restricted to the input module root.
+
 The frontend self-hosting path has started: `kernel/selfhost/compiler.ku` implements the
 SH0 seed and the SH1a expression parser, generating a verified executable module through
 the typed-builder Host ABI. See [`../docs/KU_SELFHOST.md`](../docs/KU_SELFHOST.md).

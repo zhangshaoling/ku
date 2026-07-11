@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -97,7 +98,7 @@ std::vector<Token> lex(std::string_view source) {
 }
 
 struct Expr {
-    enum class Type { Number, String, Name, Unary, Binary, Call, List, Map, Index } type;
+    enum class Type { Number, String, Name, Unary, Binary, Call, List, Map, Index } type = Type::Number;
     std::string value;
     std::vector<Expr> children;
     size_t offset = 0;
@@ -112,7 +113,12 @@ struct Stmt {
 };
 struct Function { std::string name; std::vector<std::string> params; std::vector<Stmt> body; };
 struct Import { std::string name; uint16_t arity; };
-struct Program { std::vector<Import> imports; std::vector<Function> functions; };
+struct ModuleImport { std::string path; std::string alias; };
+struct Program {
+    std::vector<Import> imports;
+    std::vector<ModuleImport> module_imports;
+    std::vector<Function> functions;
+};
 
 class Parser {
   public:
@@ -120,9 +126,15 @@ class Parser {
     Program parse() {
         Program program;
         skip_lines();
-        while (word("import")) { program.imports.push_back(import_decl()); skip_lines(); }
-        while (peek().kind != Kind::End) { program.functions.push_back(function()); skip_lines(); }
-        if (program.functions.empty()) error("expected at least one thought/function definition");
+        while (peek().kind != Kind::End) {
+            if ((word("import") && peek(1).kind == Kind::String) || word("\xE5\xBC\x95"))
+                program.module_imports.push_back(module_import_decl());
+            else if (word("import"))
+                program.imports.push_back(import_decl());
+            else
+                program.functions.push_back(function());
+            skip_lines();
+        }
         return program;
     }
   private:
@@ -142,6 +154,21 @@ class Parser {
         unsigned long arity = std::stoul(take().text);
         if (arity > std::numeric_limits<uint16_t>::max()) error("host import parameter count is too large");
         result.arity = static_cast<uint16_t>(arity); expect(Kind::RParen, ")"); return result;
+    }
+    ModuleImport module_import_decl() {
+        take();
+        if (peek().kind != Kind::String) error("expected module import path");
+        ModuleImport result{take().text, {}};
+        if (word("as") || word("\xE5\x88\xAB")) {
+            take();
+            if (peek().kind != Kind::Name) error("expected module import alias");
+            result.alias = take().text;
+        } else {
+            const size_t slash = result.path.find_last_of("/\\");
+            result.alias = result.path.substr(slash == std::string::npos ? 0 : slash + 1);
+        }
+        if (result.path.empty() || result.alias.empty()) error("module import path and alias must not be empty");
+        return result;
     }
     Function function() {
         if (!(word("thought") || word("func") || word("思"))) error("expected thought, func, or 思");
@@ -258,6 +285,69 @@ class Parser {
     }
     std::vector<Token> tokens_; size_t pos_ = 0;
 };
+
+void rewrite_expr(Expr& expr, const std::string& prefix,
+                  const std::unordered_set<std::string>& local_functions,
+                  const std::vector<ModuleImport>& module_imports) {
+    for (Expr& child : expr.children)
+        rewrite_expr(child, prefix, local_functions, module_imports);
+    if (expr.type != Expr::Type::Call)
+        return;
+    if (local_functions.contains(expr.value)) {
+        expr.value = prefix + expr.value;
+        return;
+    }
+    for (const ModuleImport& module_import : module_imports) {
+        const std::string alias_prefix = module_import.alias + "_";
+        if (expr.value.starts_with(alias_prefix)) {
+            expr.value = prefix + expr.value;
+            return;
+        }
+    }
+}
+
+void rewrite_statements(std::vector<Stmt>& statements, const std::string& prefix,
+                        const std::unordered_set<std::string>& local_functions,
+                        const std::vector<ModuleImport>& module_imports) {
+    for (Stmt& statement : statements) {
+        rewrite_expr(statement.expr, prefix, local_functions, module_imports);
+        rewrite_expr(statement.assignment_target, prefix, local_functions, module_imports);
+        rewrite_statements(statement.body, prefix, local_functions, module_imports);
+        rewrite_statements(statement.alternate, prefix, local_functions, module_imports);
+    }
+}
+
+void collect_program(std::string_view source, const std::string& prefix, const Options& options,
+                     std::unordered_set<std::string>& active_imports, Program& merged) {
+    Program program = Parser(lex(source)).parse();
+    for (const ModuleImport& module_import : program.module_imports) {
+        if (options.import_resolver == nullptr)
+            throw std::runtime_error("module import '" + module_import.path + "' requires an import resolver");
+        if (!active_imports.insert(module_import.path).second)
+            throw std::runtime_error("cyclic module import '" + module_import.path + "'");
+        std::string imported_source;
+        std::string resolver_error;
+        if (!options.import_resolver(options.import_user_data, module_import.path, &imported_source,
+                                     &resolver_error)) {
+            throw std::runtime_error("cannot resolve module import '" + module_import.path +
+                                     "': " + resolver_error);
+        }
+        collect_program(imported_source, prefix + module_import.alias + "_", options,
+                        active_imports, merged);
+        active_imports.erase(module_import.path);
+    }
+
+    std::unordered_set<std::string> local_functions;
+    for (const Function& function : program.functions)
+        local_functions.insert(function.name);
+    for (Function& function : program.functions) {
+        rewrite_statements(function.body, prefix, local_functions, program.module_imports);
+        function.name = prefix + function.name;
+        merged.functions.push_back(std::move(function));
+    }
+    for (Import& import : program.imports)
+        merged.imports.push_back(std::move(import));
+}
 
 Instruction instruction(Opcode op, uint16_t dst = 0, uint16_t a = 0, uint16_t b = 0, int64_t imm = 0) {
     return Instruction{op, 0, dst, a, b, imm};
@@ -448,10 +538,14 @@ class Emitter {
 
 } // namespace
 
-bool compile(std::string_view source, ModuleBuilder& builder, dao_error* error, Options) {
+bool compile(std::string_view source, ModuleBuilder& builder, dao_error* error, Options options) {
     clear(error);
     try {
-        auto program = Parser(lex(source)).parse();
+        Program program;
+        std::unordered_set<std::string> active_imports;
+        collect_program(source, {}, options, active_imports, program);
+        if (program.functions.empty())
+            throw std::runtime_error("expected at least one thought/function definition");
         std::unordered_map<std::string, Emitter::FunctionTarget> indices;
         for (uint32_t i = 0; i < program.functions.size(); ++i) {
             if (program.functions[i].params.size() > std::numeric_limits<uint16_t>::max()) throw std::runtime_error("too many parameters in function '" + program.functions[i].name + "'");
@@ -460,8 +554,14 @@ bool compile(std::string_view source, ModuleBuilder& builder, dao_error* error, 
         std::unordered_map<std::string, Emitter::HostImport> imports;
         for (const Import& import : program.imports) {
             if (indices.contains(import.name)) throw std::runtime_error("host import conflicts with function '" + import.name + "'");
+            const auto existing = imports.find(import.name);
+            if (existing != imports.end()) {
+                if (existing->second.arity != import.arity)
+                    throw std::runtime_error("host import '" + import.name + "' has conflicting arities");
+                continue;
+            }
             const uint32_t index = builder.add_import(symbol_id(import.name), import.arity);
-            if (!imports.emplace(import.name, Emitter::HostImport{index, import.arity}).second) throw std::runtime_error("duplicate host import '" + import.name + "'");
+            imports.emplace(import.name, Emitter::HostImport{index, import.arity});
         }
         for (const Function& fn : program.functions) {
             const uint32_t index = builder.add_function(Emitter(indices, imports, builder, fn).emit(fn));
