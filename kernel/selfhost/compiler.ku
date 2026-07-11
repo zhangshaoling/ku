@@ -7,7 +7,7 @@ import string_append(2)
 import string_finish(1)
 import builder_new(0)
 import builder_begin(3)
-import builder_emit(6)
+import builder_emit_raw(6)
 import builder_add_string(2)
 import builder_import(3)
 import builder_position(1)
@@ -23,6 +23,13 @@ thought pack(index, next_reg, result_reg) {
 thought packed_index(value) { value / 1000000 }
 thought packed_next(value) { value / 1000 % 1000 }
 thought packed_result(value) { value % 1000 }
+
+thought builder_emit(handle, opcode, dst, a, b, immediate) {
+  if dst < 0 or dst >= 64 or a < 0 or a >= 64 or b < 0 or b >= 64 {
+    throw "register limit exceeded"
+  }
+  builder_emit_raw(handle, opcode, dst, a, b, immediate)
+}
 
 thought source_at(source, index, size) {
   if index < 0 or index >= size { return 0 }

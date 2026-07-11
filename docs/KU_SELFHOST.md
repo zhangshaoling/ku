@@ -78,9 +78,11 @@ from the packed result. Function/import lookup and arity validation also travers
 the shared token stream; numeric import arities are read from number tokens.
 Before code generation, a token preflight rejects duplicate functions, duplicate imports,
 import/function name conflicts, and duplicate parameters.
+All emitted instructions pass through a `.ku` register-boundary wrapper before reaching the
+raw builder Host adapter; register indices and contiguous counts must remain below 64.
 
-This remains deliberately bounded: register-overflow checks, nested indexed
-mutation, module-path imports, and canonical self-rebuild are still pending. Diagnostics
+This remains deliberately bounded: nested indexed mutation, module-path imports, and
+canonical self-rebuild are still pending. Diagnostics
 now cover explicit `throw` paths (unterminated string/list/map literals, missing
 function body braces, empty number consumption, host/local arity mismatch,
 undefined identifiers, unexpected characters) but do not yet carry source
@@ -90,7 +92,7 @@ positions.
 
 - attach token offsets to diagnostics;
 - support module-path imports and nested indexed assignment;
-- add register-allocation bounds and structured builder validation;
+- expand structured builder validation beyond register bounds;
 - compare SH1 bytes with the C++ recovery compiler for canonical identity.
 
 ## SH2: Self-Rebuild
