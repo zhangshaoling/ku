@@ -47,7 +47,9 @@
 - `kernel/stdlib/math.ku` is a direct migration of the integer/list-compatible functions
   from `ku/std/math.ku`, exercised through legacy module import and VM execution.
 - `kernel/stdlib/list.ku` migrates reads, membership, counting, extrema, list-building, and
-  higher-order helpers from `ku/std/list.ku`; cross-call persistent closures remain pending.
+  higher-order helpers from `ku/std/list.ku`. The migrated integer/list subset now includes
+  flat-map, interleave, step, pad, and positive/negative rotation; cross-call persistent
+  closures remain pending.
 
 ### Phase V — MVP acceptance (full legacy parity pending)
 - Native execution covers arithmetic, comparisons, Trit logic, calls, host imports,

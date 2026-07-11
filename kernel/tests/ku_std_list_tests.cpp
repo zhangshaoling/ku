@@ -103,6 +103,13 @@ thought all_case() { list_all([2, 4, 6], even) }
 thought any_case() { list_any([1, 3, 4], even) }
 thought add_base(base, value) { base + value }
 thought bound_map_case() { list_map([1, 2], bind(add_base, 40)) }
+thought pair(value) { [value, value + 10] }
+thought flat_map_case() { list_flat_map([1, 2], pair) }
+thought interleave_case() { list_interleave([1, 3, 5], [2, 4]) }
+thought step_case() { list_step([0, 1, 2, 3, 4, 5], 2) }
+thought pad_case() { list_pad([1, 2], 5, 9) }
+thought rotate_case() { list_rotate([1, 2, 3, 4], 1) }
+thought rotate_negative_case() { list_rotate([1, 2, 3, 4], -1) }
 )";
     dao::km::Options options{};
     options.import_resolver = resolve_list;
@@ -144,6 +151,16 @@ thought bound_map_case() { list_map([1, 2], bind(add_base, 40)) }
         check(expect_value(vm, module, "any_case", DAO_VALUE_TRIT, 1, &error), "list any");
         check(expect_list_i64(vm, module, "bound_map_case", {41, 42}, &error),
               "list bound closure");
+        check(expect_list_i64(vm, module, "flat_map_case", {1, 11, 2, 12}, &error),
+              "list flat map");
+        check(expect_list_i64(vm, module, "interleave_case", {1, 2, 3, 4, 5}, &error),
+              "list interleave");
+        check(expect_list_i64(vm, module, "step_case", {0, 2, 4}, &error), "list step");
+        check(expect_list_i64(vm, module, "pad_case", {1, 2, 9, 9, 9}, &error), "list pad");
+        check(expect_list_i64(vm, module, "rotate_case", {4, 1, 2, 3}, &error),
+              "list rotate");
+        check(expect_list_i64(vm, module, "rotate_negative_case", {2, 3, 4, 1}, &error),
+              "list negative rotate");
         dao_function zip{};
         dao_value zipped{};
         size_t size = 0;

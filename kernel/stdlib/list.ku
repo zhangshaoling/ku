@@ -160,3 +160,60 @@ thought any(items, fn) {
   }
   false
 }
+
+thought flat_map(items, fn) {
+  result = []
+  for x in items {
+    mapped = fn(x)
+    for y in mapped { result = result + [y] }
+  }
+  result
+}
+
+thought interleave(left, right) {
+  result = []
+  limit = len(left)
+  if len(right) > limit { limit = len(right) }
+  i = 0
+  while i < limit {
+    if i < len(left) { result = result + [left[i]] }
+    if i < len(right) { result = result + [right[i]] }
+    i = i + 1
+  }
+  result
+}
+
+thought step(items, amount) {
+  result = []
+  i = 0
+  while i < len(items) {
+    result = result + [items[i]]
+    i = i + amount
+  }
+  result
+}
+
+thought pad(items, length, value) {
+  result = []
+  for x in items { result = result + [x] }
+  while len(result) < length { result = result + [value] }
+  result
+}
+
+thought rotate(items, amount) {
+  if len(items) == 0 { [] }
+  else {
+    size = len(items)
+    offset = amount % size
+    if offset < 0 { offset = offset + size }
+    result = []
+    i = 0
+    while i < size {
+      index = i - offset
+      if index < 0 { index = index + size }
+      result = result + [items[index]]
+      i = i + 1
+    }
+    result
+  }
+}
