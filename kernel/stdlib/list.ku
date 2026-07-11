@@ -170,6 +170,16 @@ thought flat_map(items, fn) {
   result
 }
 
+thought group_by(items, fn) {
+  result = {}
+  for x in items {
+    key = fn(x)
+    if result[key] == null { result[key] = [] }
+    result[key] = result[key] + [x]
+  }
+  result
+}
+
 thought interleave(left, right) {
   result = []
   limit = len(left)

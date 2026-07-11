@@ -20,6 +20,8 @@
   `+ - * / %`, integer comparisons, and forward/internal function calls within a unit.
 - Implemented by VM ABI v9: module-owned UTF-8 string constants, lists, string-keyed maps,
   dynamic list/map indexing, verified list append, local function references, and same-call bindings.
+  Missing map keys evaluate to `null`, matching the legacy runtime and C-VM parity contract;
+  equality/inequality accepts `null` without weakening ordered integer comparisons.
 - Per-function header: registers/parameters/instructions derived from actual code.
 - Verification: every output passes `loader+verifier` and round-trips back through the assembler (existing tools).
 
@@ -48,8 +50,8 @@
   from `ku/std/math.ku`, exercised through legacy module import and VM execution.
 - `kernel/stdlib/list.ku` migrates reads, membership, counting, extrema, list-building, and
   higher-order helpers from `ku/std/list.ku`. The migrated integer/list subset now includes
-  flat-map, interleave, step, pad, and positive/negative rotation; cross-call persistent
-  closures remain pending.
+  flat-map, group-by, interleave, step, pad, and positive/negative rotation; cross-call
+  persistent closures remain pending.
 
 ### Phase V — MVP acceptance (full legacy parity pending)
 - Native execution covers arithmetic, comparisons, Trit logic, calls, host imports,

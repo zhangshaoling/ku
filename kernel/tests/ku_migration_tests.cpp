@@ -42,6 +42,8 @@ thought calculate(x) {
 thought compare(x) { x >= 7 }
 thought logic() { true and not false }
 thought nothing() { null }
+thought missing_is_null() { {}["missing"] == null }
+thought null_differs_from_number() { null != 0 }
 thought choose(x) {
   if x > 0 { return 10 } else { return 20 }
 }
@@ -128,6 +130,12 @@ thought catches() {
     CHECK("find null", dao_module_find_export(module, symbol_id("nothing"), &fn) == DAO_OK);
     CHECK("execute null", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
     CHECK("null result", result.type == DAO_VALUE_NULL);
+    CHECK("find missing null", dao_module_find_export(module, symbol_id("missing_is_null"), &fn) == DAO_OK);
+    CHECK("execute missing null", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("missing key is null", result.type == DAO_VALUE_TRIT && result.payload == 1);
+    CHECK("find null inequality", dao_module_find_export(module, symbol_id("null_differs_from_number"), &fn) == DAO_OK);
+    CHECK("execute null inequality", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("null differs from number", result.type == DAO_VALUE_TRIT && result.payload == 1);
     CHECK("find choose", dao_module_find_export(module, symbol_id("choose"), &fn) == DAO_OK);
     CHECK("execute true branch", dao_vm_call(vm, module, fn, args, 1, &result, &error) == DAO_OK);
     CHECK("true branch result", result.type == DAO_VALUE_I64 && result.payload == 10);

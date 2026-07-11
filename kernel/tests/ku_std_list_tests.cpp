@@ -105,6 +105,8 @@ thought add_base(base, value) { base + value }
 thought bound_map_case() { list_map([1, 2], bind(add_base, 40)) }
 thought pair(value) { [value, value + 10] }
 thought flat_map_case() { list_flat_map([1, 2], pair) }
+thought parity_name(value) { if value % 2 == 0 { "even" } else { "odd" } }
+thought group_by_case() { list_group_by([1, 2, 3, 4, 5], parity_name) }
 thought interleave_case() { list_interleave([1, 3, 5], [2, 4]) }
 thought step_case() { list_step([0, 1, 2, 3, 4, 5], 2) }
 thought pad_case() { list_pad([1, 2], 5, 9) }
@@ -153,6 +155,25 @@ thought rotate_negative_case() { list_rotate([1, 2, 3, 4], -1) }
               "list bound closure");
         check(expect_list_i64(vm, module, "flat_map_case", {1, 11, 2, 12}, &error),
               "list flat map");
+        dao_function group_by{};
+        dao_value grouped{};
+        dao_value odd{};
+        dao_value even{};
+        const uint8_t odd_key[]={'o','d','d'};
+        const uint8_t even_key[]={'e','v','e','n'};
+        size_t group_size=0;
+        dao_value group_item{};
+        check(dao_module_find_export(module, symbol_id("group_by_case"), &group_by) == DAO_OK &&
+                  dao_vm_call(vm, module, group_by, nullptr, 0, &grouped, &error) == DAO_OK &&
+                  dao_value_map_get(vm, &grouped, {odd_key, sizeof(odd_key)}, &odd) == DAO_OK &&
+                  dao_value_map_get(vm, &grouped, {even_key, sizeof(even_key)}, &even) == DAO_OK &&
+                  dao_value_list_size(vm, &odd, &group_size) == DAO_OK && group_size == 3 &&
+                  dao_value_list_get(vm, &odd, 2, &group_item) == DAO_OK &&
+                  group_item.type == DAO_VALUE_I64 && group_item.payload == 5 &&
+                  dao_value_list_size(vm, &even, &group_size) == DAO_OK && group_size == 2 &&
+                  dao_value_list_get(vm, &even, 1, &group_item) == DAO_OK &&
+                  group_item.type == DAO_VALUE_I64 && group_item.payload == 4,
+              "list group by");
         check(expect_list_i64(vm, module, "interleave_case", {1, 2, 3, 4, 5}, &error),
               "list interleave");
         check(expect_list_i64(vm, module, "step_case", {0, 2, 4}, &error), "list step");

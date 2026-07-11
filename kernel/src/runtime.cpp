@@ -557,8 +557,7 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
                 if (key.type != DAO_VALUE_STRING) return fail(error, DAO_TYPE_ERROR, "map key must be string", function_index, pc);
                 const auto* map = resolve_container(vm->maps, vm->container_generation, object); if (map == nullptr) return fail(error, DAO_RUNTIME_ERROR, "stale map handle", function_index, pc);
                 const auto found = map->values.find(std::string(reinterpret_cast<const char*>(view_data(key)), key.reserved));
-                if (found == map->values.end()) return fail(error, DAO_RUNTIME_ERROR, "map key not found", function_index, pc);
-                registers[instruction.dst] = found->second;
+                registers[instruction.dst] = found == map->values.end() ? null_value() : found->second;
             } else return fail(error, DAO_TYPE_ERROR, "indexing requires list or map", function_index, pc);
             ++pc; break;
         }
@@ -604,6 +603,17 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
         case Opcode::CompareLeI64:
         case Opcode::CompareGtI64:
         case Opcode::CompareGeI64: {
+            const bool equality = instruction.opcode == Opcode::CompareEqI64 ||
+                                  instruction.opcode == Opcode::CompareNeI64;
+            const bool left_null = registers[instruction.a].type == DAO_VALUE_NULL;
+            const bool right_null = registers[instruction.b].type == DAO_VALUE_NULL;
+            if (equality && (left_null || right_null)) {
+                const bool equal = left_null && right_null;
+                const bool truth = instruction.opcode == Opcode::CompareEqI64 ? equal : !equal;
+                registers[instruction.dst] = dao_value{DAO_VALUE_TRIT, 0, truth ? 1 : -1};
+                ++pc;
+                break;
+            }
             if (!require_i64(instruction.a) || !require_i64(instruction.b)) {
                 return fail(error, DAO_TYPE_ERROR, "integer opcode requires i64 operands",
                             function_index, pc);
