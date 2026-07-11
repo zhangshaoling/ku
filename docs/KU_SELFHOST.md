@@ -56,6 +56,8 @@ Map literals preserve string-key/value pairs before packing them into `MAKE_MAP`
 identifier bindings use `INDEX_GET` for string-key lookup.
 Single-level identifier-backed list and map indexing supports `container[key] = value` through
 `INDEX_SET`.
+`throw <expression>` and `try { ... } catch error { ... }` lower to patched VM handler targets;
+the catch variable receives the thrown value.
 Top-level `import name(arity)` declarations are registered before functions; matching named
 calls lower to `CALL_HOST` while local function indices exclude imports.
 

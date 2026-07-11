@@ -90,5 +90,21 @@ int main(int argc,char**argv){
     const bool mutation_ok=dao_vm_call(vm,mutation_module,mutation_function,nullptr,0,&mutation_result,&error)==DAO_OK&&mutation_result.type==DAO_VALUE_I64&&mutation_result.payload==42;
     dao_module_release(mutation_module);
     if(!mutation_ok)return EXIT_FAILURE;
+    const std::string exception_source="thought recover() { try { throw \"handled\" } catch error { return error } }";
+    dao_value exception_arg{};
+    if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(exception_source.data()),exception_source.size()},&exception_arg)!=DAO_OK)return EXIT_FAILURE;
+    dao_value exception_generated{};
+    if(dao_vm_call(vm,module,function,&exception_arg,1,&exception_generated,&error)!=DAO_OK)return EXIT_FAILURE;
+    dao_bytes exception_output{};
+    if(dao_value_get_view(&exception_generated,&exception_output)!=DAO_OK)return EXIT_FAILURE;
+    dao_module*exception_module=nullptr;
+    if(dao_vm_load_module(vm,exception_output,&exception_module,&error)!=DAO_OK)return EXIT_FAILURE;
+    dao_function exception_function=0;
+    if(dao_module_find_export(exception_module,symbol("recover"),&exception_function)!=DAO_OK)return EXIT_FAILURE;
+    dao_value exception_result{};
+    dao_bytes exception_text{};
+    const bool exception_ok=dao_vm_call(vm,exception_module,exception_function,nullptr,0,&exception_result,&error)==DAO_OK&&exception_result.type==DAO_VALUE_STRING&&dao_value_get_view(&exception_result,&exception_text)==DAO_OK&&std::string_view(reinterpret_cast<const char*>(exception_text.data),exception_text.size)=="handled";
+    dao_module_release(exception_module);
+    if(!exception_ok)return EXIT_FAILURE;
     dao_module_release(module);dao_vm_destroy(vm);std::cout<<"dao .ku self-host seed passed\n";return EXIT_SUCCESS;
 }
