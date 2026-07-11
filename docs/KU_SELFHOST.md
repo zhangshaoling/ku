@@ -38,10 +38,12 @@ module, preserving each source function name as an export. Parameters and identi
 lower directly to parameter registers. Function bodies support semicolon-separated local
 assignments, and a function can call another generated function with zero or more integer
 expression arguments. The compiler preserves argument values and packs them into the
-contiguous register range required by the VM call ABI.
+contiguous register range required by the VM call ABI. Later assignments shadow earlier
+local bindings. Integer comparisons (`==`, `!=`, `<`, `<=`, `>`, and `>=`) lower to VM trits.
 
 This remains deliberately bounded: token streams, strings, containers, imports, diagnostics,
-register-overflow checks, and canonical self-rebuild are still pending.
+register-overflow checks, conditional/loop statements, and canonical self-rebuild are still
+pending.
 
 ## SH1: Real Frontend Remaining
 

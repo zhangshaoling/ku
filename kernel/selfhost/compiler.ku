@@ -39,10 +39,10 @@ thought parse_number(source, index, size, handle, next_reg) {
 }
 
 thought lookup_reg(names, regs, name_hash) {
-  i = 0
-  while i < len(names) {
+  i = len(names) - 1
+  while i >= 0 {
     if names[i] == name_hash { return regs[i] }
-    i = i + 1
+    i = i - 1
   }
   0
 }
@@ -159,7 +159,7 @@ thought parse_multiplicative(source, index, size, handle, next_reg, names, regs)
   pack(index, next_reg, result_reg)
 }
 
-thought parse_expression(source, index, size, handle, next_reg, names, regs) {
+thought parse_additive(source, index, size, handle, next_reg, names, regs) {
   parsed = parse_multiplicative(source, index, size, handle, next_reg, names, regs)
   index = packed_index(parsed)
   next_reg = packed_next(parsed)
@@ -183,6 +183,38 @@ thought parse_expression(source, index, size, handle, next_reg, names, regs) {
   pack(index, next_reg, result_reg)
 }
 
+thought parse_expression(source, index, size, handle, next_reg, names, regs) {
+  parsed = parse_additive(source, index, size, handle, next_reg, names, regs)
+  index = packed_index(parsed)
+  next_reg = packed_next(parsed)
+  result_reg = packed_result(parsed)
+  index = skip_space(source, index, size)
+  opcode = 0
+  byte = source_byte(source, index)
+  next_byte = 0
+  if index + 1 < size { next_byte = source_byte(source, index + 1) }
+  if byte == 61 and next_byte == 61 { opcode = 19 index = index + 2 }
+  if byte == 33 and next_byte == 61 { opcode = 20 index = index + 2 }
+  if byte == 60 {
+    opcode = 21
+    index = index + 1
+    if source_byte(source, index) == 61 { opcode = 22 index = index + 1 }
+  }
+  if byte == 62 {
+    opcode = 23
+    index = index + 1
+    if source_byte(source, index) == 61 { opcode = 24 index = index + 1 }
+  }
+  if opcode == 0 { return pack(index, next_reg, result_reg) }
+  parsed = parse_additive(source, index, size, handle, next_reg, names, regs)
+  index = packed_index(parsed)
+  next_reg = packed_next(parsed)
+  value_reg = packed_result(parsed)
+  combined_reg = next_reg
+  builder_emit(handle, opcode, combined_reg, result_reg, value_reg, 0)
+  pack(index, next_reg + 1, combined_reg)
+}
+
 thought parse_body(source, index, size, handle, next_reg, names, regs) {
   result_reg = 0
   while index < size {
@@ -196,7 +228,9 @@ thought parse_body(source, index, size, handle, next_reg, names, regs) {
       probe = probe + 1
     }
     after_name = skip_space(source, probe, size)
-    if probe > name_start and source_byte(source, after_name) == 61 and source_byte(source, after_name + 1) != 61 {
+    next_byte = 0
+    if after_name + 1 < size { next_byte = source_byte(source, after_name + 1) }
+    if probe > name_start and source_byte(source, after_name) == 61 and next_byte != 61 {
       parsed = parse_expression(source, after_name + 1, size, handle, next_reg, names, regs)
       index = packed_index(parsed)
       next_reg = packed_next(parsed)
