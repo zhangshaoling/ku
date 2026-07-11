@@ -115,5 +115,10 @@ The rebuilt compiler also compiles `compiler.ku` again. The first and second reb
 modules must have identical sizes and byte-for-byte contents, proving that self-rebuild
 has reached a deterministic fixed point.
 
-Remaining SH2 work is running the complete parity corpus through the rebuilt compiler.
-The C++ frontend remains recovery/bootstrap tooling until that check passes.
+The rebuilt compiler runs the same positive parity matrix as the bootstrap compiler,
+covering arithmetic, precedence, local and inter-function calls, comparisons, trit
+logic, null, control flow, strings and escapes, lists, maps, indexing, and iteration.
+
+Remaining SH2 work is extending rebuilt-compiler parity to the Host import, mutation,
+exception, and rejection corpora. The C++ frontend remains recovery/bootstrap tooling
+until those checks pass.
