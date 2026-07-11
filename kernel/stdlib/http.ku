@@ -1,0 +1,10 @@
+// Migrated scalar/borrowed-view subset of ku/std/http.ku.
+// Import with: import "std/http" as http
+
+import host_http_get(1)
+import host_http_post(3)
+
+thought get(url) { host_http_get(url) }
+thought post(url, body, headers) { host_http_post(url, body, headers) }
+thought is_ok(response) { response["ok"] }
+thought is_error(response) { not response["ok"] }

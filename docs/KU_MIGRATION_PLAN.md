@@ -65,6 +65,9 @@
 - `kernel/stdlib/io.ku` composes the migrated `fs` and `string` modules for file-size,
   append, append-line, fallback read, copy, and safe-delete operations. Its tests exercise
   recursive standard-library import rewriting against the same in-memory Host filesystem.
+- `kernel/stdlib/http.ku` migrates GET/POST capability wrappers and response-status helpers.
+  Request header Maps are created in `.ku` and inspected by the Host through the public
+  container API; JSON and Host-created response Maps remain owned-container ABI work.
 
 ### Phase V — MVP acceptance (full legacy parity pending)
 - Native execution covers arithmetic, comparisons, Trit logic, calls, host imports,
