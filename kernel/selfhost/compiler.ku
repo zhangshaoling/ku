@@ -208,7 +208,21 @@ thought parse_primary(source, index, size, handle, next_reg, names, regs) {
       builder_emit(handle, 14, result_reg, argument_reg, argument_count, function_index(source, size, name_hash))
       return pack(index, next_reg + 1, result_reg)
     }
-    return pack(index, next_reg, lookup_reg(names, regs, name_hash))
+    index = after_name
+    result_reg = lookup_reg(names, regs, name_hash)
+    while source_at(source, index, size) == 91 {
+      parsed = parse_expression(source, index + 1, size, handle, next_reg, names, regs)
+      index = skip_space(source, packed_index(parsed), size)
+      next_reg = packed_next(parsed)
+      index_reg = packed_result(parsed)
+      if source_at(source, index, size) == 93 { index = index + 1 }
+      value_reg = next_reg
+      builder_emit(handle, 30, value_reg, result_reg, index_reg, 0)
+      next_reg = next_reg + 1
+      result_reg = value_reg
+      index = skip_space(source, index, size)
+    }
+    return pack(index, next_reg, result_reg)
   }
   parse_number(source, index, size, handle, next_reg)
 }
