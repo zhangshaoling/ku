@@ -83,8 +83,9 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     dao_error error{};
 
-    dao_vm_config cold_config = dao_vm_config_default(); cold_config.max_cached_modules = 0;
+    dao_vm_config cold_config = dao_vm_config_default();
     dao_vm* cold_vm = dao_vm_create(&cold_config); if (cold_vm == nullptr) return EXIT_FAILURE;
+    if (dao_vm_set_module_cache_capacity(cold_vm, 0) != DAO_OK) return EXIT_FAILURE;
     const auto cold_load_start = Clock::now();
     for (uint64_t index = 0; index < load_iterations; ++index) {
         dao_module* loaded = nullptr;

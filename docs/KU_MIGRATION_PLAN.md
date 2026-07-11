@@ -14,7 +14,7 @@
 - Front does not change; just emit typed-builder calls for a single fixed `.ku` smoke program, run `km verify`, hand bytes to the existing loader+verifier.
 - Establishes the code path end-to-end.
 
-### Phase L — expression subset (complete)
+### Phase L — expression MVP (complete)
 - Lexer + Pratt parser -> `ModuleBuilder`.
 - Implemented: integer/null/bool literals, assignment, `and/or/not`, unary minus,
   `+ - * / %`, integer comparisons, and forward/internal function calls within a unit.
@@ -23,30 +23,38 @@
 - Per-function header: registers/parameters/instructions derived from actual code.
 - Verification: every output passes `loader+verifier` and round-trips back through the assembler (existing tools).
 
-### Phase C — control flow (complete)
+### Phase C — control-flow MVP (complete)
 - Implemented: nested `if/else`, `while`, `break/continue`, and `return`, with strict
   Trit conditions and verified branch-target backpatching.
 - Implemented: list `for..in` and cross-function `try/catch/throw` propagation.
 - Trit-aware branch opcodes (BR_TRIT_NEG/ZERO/POS) for Ku trit semantics.
 - Function-call + self-recursion; nested functions lowered to flat calls.
 
-### Phase I — imports, ABI, host FFI (complete for explicit imports)
+### Phase I — imports and FFI (explicit-import MVP complete)
 - `import name(arity)` declares native host functions registered through
   `dao_host_function` (guide §10/§11), and calls lower to `CALL_HOST`.
 - Stable FNV-1a symbol IDs, duplicate rejection, signature checks, and internal/host name
   conflict checks are enforced at compile time.
 
-### Phase M — representative samples (complete)
+### Phase M — representative samples (MVP complete)
 - `kernel/stdlib/core.ku` provides migrated math/list/string behavior and explicit
   io/fs/http/debug host boundaries.
 - `kernel/tests/fixtures/language_acceptance.ku` covers nested containers, loops, math,
   strings, and protected exceptions. Both files compile through `dao-ku` in CTest.
 
-### Phase V — compiler acceptance (complete)
+### Phase V — MVP acceptance (full legacy parity pending)
 - Native execution covers arithmetic, comparisons, Trit logic, calls, host imports,
   branches, loops, break/continue, and compile-time rejection cases.
 - Every generated module passes loader/verifier and assembler byte-identity round-trip.
 - The benchmark exceeds the 10 M typed ops/s gate, and `dao-ku` provides the file CLI.
+
+## Remaining For Full K4 Closure
+
+- legacy `引 "std/..." 别 ...` import compatibility;
+- real `ku/std/*.ku` migration instead of representative replacements;
+- index mutation, function references/closures, floats, and remaining dynamic semantics;
+- parity against the complete legacy Python/Ku corpus;
+- stable, benchmark-selected owned container ABI.
 
 ## Non-negotiable (per guide §12 / §14)
 - Must go through typed builder; no offset-patching or handwritten binary in the hot path.

@@ -535,8 +535,9 @@ void test_instruction_budget() {
 }
 
 void test_verified_module_cache() {
-    dao_vm_config config = dao_vm_config_default(); config.max_cached_modules = 2;
+    dao_vm_config config = dao_vm_config_default();
     dao_vm* vm = dao_vm_create(&config); CHECK("create cache vm", vm != nullptr); if (!vm) return;
+    CHECK("set cache capacity", dao_vm_set_module_cache_capacity(vm, 2) == DAO_OK);
     const auto bytes = make_add_module(100); dao_error error{};
     dao_module* first = load_module(vm, bytes, &error); dao_module* second = load_module(vm, bytes, &error);
     CHECK("cache loads", first != nullptr && second != nullptr);

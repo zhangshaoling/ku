@@ -70,7 +70,8 @@ The registry belongs to the VM, not the module. The same verified module can the
 
 ## Verified Module Cache
 
-`dao_vm_config.max_cached_modules` controls the per-VM verified-module cache and defaults
-to 64. Cache identity is fingerprint plus full byte equality. Use
+The verified-module cache defaults to 64 entries. Configure it through
+`dao_vm_set_module_cache_capacity`; `dao_vm_config.reserved` remains zero for C ABI
+compatibility. Cache identity is fingerprint plus full byte equality. Use
 `dao_vm_get_cache_stats` for hit/miss counters and `dao_vm_clear_module_cache` to release
 cache-owned references. Caller-owned module references remain valid after a clear.

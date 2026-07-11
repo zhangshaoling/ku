@@ -7,7 +7,7 @@ pub type dao_function = u32;
 
 #[repr(C)] pub struct dao_bytes { pub data: *const u8, pub size: usize }
 #[repr(C)] pub struct dao_value { pub type_: u32, pub reserved: u32, pub payload: i64 }
-#[repr(C)] pub struct dao_vm_config { pub struct_size: u32, pub max_registers: u32, pub max_call_depth: u32, pub max_cached_modules: u32, pub max_module_bytes: u64, pub max_instructions_per_call: u64 }
+#[repr(C)] pub struct dao_vm_config { pub struct_size: u32, pub max_registers: u32, pub max_call_depth: u32, pub reserved: u32, pub max_module_bytes: u64, pub max_instructions_per_call: u64 }
 #[repr(C)] pub struct dao_error { pub code: i32, pub function_index: u32, pub instruction_index: u32, pub message: [c_char; 192] }
 
 extern "C" {

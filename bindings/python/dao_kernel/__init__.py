@@ -24,7 +24,7 @@ class DaoError(c.Structure):
 
 class DaoConfig(c.Structure):
     _fields_ = [("struct_size", c.c_uint32), ("max_registers", c.c_uint32),
-                ("max_call_depth", c.c_uint32), ("max_cached_modules", c.c_uint32),
+                ("max_call_depth", c.c_uint32), ("reserved", c.c_uint32),
                 ("max_module_bytes", c.c_uint64), ("max_instructions_per_call", c.c_uint64)]
 
 

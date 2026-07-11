@@ -29,8 +29,8 @@ Run the initial load/call benchmark with:
 .\tools\benchmark_kernel.ps1
 ```
 
-K5 adds a verified-module cache, direct predecoded function instruction pointers, an
-optional portable-C AOT backend, installable CMake SDK, and Python/Rust bindings. See
+K5 currently provides a verified-module cache, direct predecoded instruction pointers,
+a straight-line numeric portable-C AOT MVP, installable CMake SDK, and Python/Rust bindings. See
 [`K5.md`](K5.md). Build the release ZIP with:
 
 ```powershell

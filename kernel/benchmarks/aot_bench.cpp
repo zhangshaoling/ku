@@ -1,4 +1,6 @@
 #include <chrono>
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <iomanip>
@@ -27,7 +29,13 @@ int main(int argc, char** argv) {
     void* library = dlopen(argv[1], RTLD_NOW); Function aot = reinterpret_cast<Function>(library ? dlsym(library, "dao_aot_fn_0") : nullptr); Function native = reinterpret_cast<Function>(library ? dlsym(library, "dao_aot_native_add_baseline") : nullptr);
 #endif
     if (!aot || !native) return EXIT_FAILURE;
-    constexpr uint64_t iterations = 2'000'000; const double native_ns = run(native, iterations); const double aot_ns = run(aot, iterations);
+    constexpr uint64_t iterations = 5'000'000; std::array<double, 7> native_samples{}; std::array<double, 7> aot_samples{};
+    for (size_t i = 0; i < native_samples.size(); ++i) {
+        if ((i & 1u) == 0) { native_samples[i] = run(native, iterations); aot_samples[i] = run(aot, iterations); }
+        else { aot_samples[i] = run(aot, iterations); native_samples[i] = run(native, iterations); }
+    }
+    std::sort(native_samples.begin(), native_samples.end()); std::sort(aot_samples.begin(), aot_samples.end());
+    const double native_ns = native_samples[native_samples.size() / 2]; const double aot_ns = aot_samples[aot_samples.size() / 2];
     const double ratio = native_ns / aot_ns;
     std::cout << std::fixed << std::setprecision(2) << "native_ns=" << native_ns << "\naot_ns=" << aot_ns << "\naot_native_ratio=" << ratio << '\n';
 #ifdef _WIN32
