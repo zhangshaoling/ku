@@ -33,9 +33,10 @@ imports, proper diagnostics, register-overflow checks, or canonical self-rebuild
 
 ## SH1b: Multi-Function Expression Modules (implemented)
 
-The `.ku` compiler now scans and emits consecutive zero-parameter `thought` declarations
-into one generated module, preserving each source function name as an export. Parameters,
-identifiers, assignments, and inter-function calls remain the next parser slice.
+The `.ku` compiler now scans and emits consecutive `thought` declarations into one generated
+module, preserving each source function name as an export. Parameters and identifier reads
+lower directly to parameter registers. Assignments and inter-function calls remain the next
+parser slice.
 
 ## SH1: Real Frontend Remaining
 

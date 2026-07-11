@@ -38,11 +38,20 @@ thought parse_number(source, index, size, handle, next_reg) {
   pack(index, next_reg + 1, result_reg)
 }
 
-thought parse_primary(source, index, size, handle, next_reg) {
+thought lookup_reg(names, regs, name_hash) {
+  i = 0
+  while i < len(names) {
+    if names[i] == name_hash { return regs[i] }
+    i = i + 1
+  }
+  0
+}
+
+thought parse_primary(source, index, size, handle, next_reg, names, regs) {
   index = skip_space(source, index, size)
   byte = source_byte(source, index)
   if byte == 45 {
-    parsed = parse_primary(source, index + 1, size, handle, next_reg)
+    parsed = parse_primary(source, index + 1, size, handle, next_reg, names, regs)
     index = packed_index(parsed)
     next_reg = packed_next(parsed)
     value_reg = packed_result(parsed)
@@ -54,16 +63,25 @@ thought parse_primary(source, index, size, handle, next_reg) {
     return pack(index, next_reg + 1, result_reg)
   }
   if byte == 40 {
-    parsed = parse_expression(source, index + 1, size, handle, next_reg)
+    parsed = parse_expression(source, index + 1, size, handle, next_reg, names, regs)
     index = skip_space(source, packed_index(parsed), size)
     if source_byte(source, index) == 41 { index = index + 1 }
     return pack(index, packed_next(parsed), packed_result(parsed))
   }
+  if (byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122) or byte == 95 {
+    name_start = index
+    while index < size {
+      byte = source_byte(source, index)
+      if not ((byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122) or (byte >= 48 and byte <= 57) or byte == 95) { break }
+      index = index + 1
+    }
+    return pack(index, next_reg, lookup_reg(names, regs, source_hash(source, name_start, index - name_start)))
+  }
   parse_number(source, index, size, handle, next_reg)
 }
 
-thought parse_multiplicative(source, index, size, handle, next_reg) {
-  parsed = parse_primary(source, index, size, handle, next_reg)
+thought parse_multiplicative(source, index, size, handle, next_reg, names, regs) {
+  parsed = parse_primary(source, index, size, handle, next_reg, names, regs)
   index = packed_index(parsed)
   next_reg = packed_next(parsed)
   result_reg = packed_result(parsed)
@@ -75,7 +93,7 @@ thought parse_multiplicative(source, index, size, handle, next_reg) {
     if byte == 47 { opcode = 6 }
     if byte == 37 { opcode = 18 }
     if opcode == 0 { break }
-    parsed = parse_primary(source, index + 1, size, handle, next_reg)
+    parsed = parse_primary(source, index + 1, size, handle, next_reg, names, regs)
     index = packed_index(parsed)
     next_reg = packed_next(parsed)
     value_reg = packed_result(parsed)
@@ -87,8 +105,8 @@ thought parse_multiplicative(source, index, size, handle, next_reg) {
   pack(index, next_reg, result_reg)
 }
 
-thought parse_expression(source, index, size, handle, next_reg) {
-  parsed = parse_multiplicative(source, index, size, handle, next_reg)
+thought parse_expression(source, index, size, handle, next_reg, names, regs) {
+  parsed = parse_multiplicative(source, index, size, handle, next_reg, names, regs)
   index = packed_index(parsed)
   next_reg = packed_next(parsed)
   result_reg = packed_result(parsed)
@@ -99,7 +117,7 @@ thought parse_expression(source, index, size, handle, next_reg) {
     if byte == 43 { opcode = 3 }
     if byte == 45 { opcode = 4 }
     if opcode == 0 { break }
-    parsed = parse_multiplicative(source, index + 1, size, handle, next_reg)
+    parsed = parse_multiplicative(source, index + 1, size, handle, next_reg, names, regs)
     index = packed_index(parsed)
     next_reg = packed_next(parsed)
     value_reg = packed_result(parsed)
@@ -130,12 +148,36 @@ thought compile(source) {
     }
     name_length = index - name_start
     export_symbol = source_hash(source, name_start, name_length)
-    builder_begin(handle, 0, 64)
+    names = []
+    regs = []
+    param_count = 0
+    index = index + 1
+    while index < size {
+      index = skip_space(source, index, size)
+      if source_byte(source, index) == 41 { index = index + 1 break }
+      param_start = index
+      while index < size {
+        byte = source_byte(source, index)
+        if byte == 44 or byte == 41 { break }
+        index = index + 1
+      }
+      param_end = index
+      while param_end > param_start {
+        if source_byte(source, param_end - 1) != 32 { break }
+        param_end = param_end - 1
+      }
+      names = names + [source_hash(source, param_start, param_end - param_start)]
+      regs = regs + [param_count]
+      param_count = param_count + 1
+      if source_byte(source, index) == 44 { index = index + 1 }
+      if source_byte(source, index) == 41 { index = index + 1 break }
+    }
+    builder_begin(handle, param_count, 64)
     while index < size {
       if source_byte(source, index) == 123 { index = index + 1 break }
       index = index + 1
     }
-    parsed = parse_expression(source, index, size, handle, 0)
+    parsed = parse_expression(source, index, size, handle, param_count, names, regs)
     result_reg = packed_result(parsed)
     builder_emit(handle, 15, 0, result_reg, 0, 0)
     builder_finish(handle, export_symbol)
