@@ -18,8 +18,8 @@
 - Lexer + Pratt parser -> `ModuleBuilder`.
 - Implemented: integer/null/bool literals, assignment, `and/or/not`, unary minus,
   `+ - * / %`, integer comparisons, and forward/internal function calls within a unit.
-- Implemented by VM ABI v6: module-owned UTF-8 string constants, lists, string-keyed maps,
-  and dynamic list/map indexing.
+- Implemented by VM ABI v7: module-owned UTF-8 string constants, lists, string-keyed maps,
+  dynamic list/map indexing, and verified list append.
 - Per-function header: registers/parameters/instructions derived from actual code.
 - Verification: every output passes `loader+verifier` and round-trips back through the assembler (existing tools).
 
@@ -46,8 +46,8 @@
   strings, and protected exceptions. Both files compile through `dao-ku` in CTest.
 - `kernel/stdlib/math.ku` is a direct migration of the integer/list-compatible functions
   from `ku/std/math.ku`, exercised through legacy module import and VM execution.
-- `kernel/stdlib/list.ku` migrates list reads, membership, counting, and extrema from
-  `ku/std/list.ku`; higher-order and list-building helpers remain pending.
+- `kernel/stdlib/list.ku` migrates reads, membership, counting, extrema, and list-building
+  helpers from `ku/std/list.ku`; higher-order helpers remain pending.
 
 ### Phase V — MVP acceptance (full legacy parity pending)
 - Native execution covers arithmetic, comparisons, Trit logic, calls, host imports,

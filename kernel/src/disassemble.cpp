@@ -222,6 +222,7 @@ const char* opcode_name(Opcode opcode) {
     case Opcode::MakeList: return "MAKE_LIST";
     case Opcode::ListLength: return "LIST_LEN";
     case Opcode::ListGet: return "LIST_GET";
+    case Opcode::ListAppend: return "LIST_APPEND";
     case Opcode::MakeMap: return "MAKE_MAP";
     case Opcode::IndexGet: return "INDEX_GET";
     case Opcode::IndexSet: return "INDEX_SET";
@@ -278,6 +279,7 @@ void append_instruction_text(std::ostream& out,
         break;
     case Opcode::Move:
     case Opcode::ListLength:
+    case Opcode::ListAppend:
         out << " r" << instruction.dst << ", r" << instruction.a;
         break;
     case Opcode::AddI64:

@@ -1,4 +1,4 @@
-# Dao Binary Module v1 and Register Bytecode ABI v6
+# Dao Binary Module v1 and Register Bytecode ABI v7
 
 All multibyte values use little-endian encoding. Offsets are relative to the start of the module.
 
@@ -37,7 +37,7 @@ Initial section types:
 | 4 | `IMPORT` | 8 |
 | 5 | `DATA` | variable |
 
-Sections must lie after the section table, remain inside the module, and not overlap. Duplicate or unknown section types are rejected. VM ABI v6 requires all five sections; `IMPORT` and `DATA` may contain zero records.
+Sections must lie after the section table, remain inside the module, and not overlap. Duplicate or unknown section types are rejected. VM ABI v7 requires all five sections; `IMPORT` and `DATA` may contain zero records.
 
 ## Runtime Value ABI
 
@@ -140,6 +140,7 @@ Branch targets are function-local instruction indexes.
 | 34 | `CATCH` | load the current caught value |
 | 35 | `LOAD_NULL` | load the typed null value |
 | 36 | `INDEX_SET` | mutate a VM-owned list element or string-keyed map entry |
+| 37 | `LIST_APPEND` | append register `a` to VM-owned list register `dst` |
 
 Arithmetic requires `i64`. Trit operations and branches require payload `-1`, `0`, or `+1`. Type mismatches trap with a structured status.
 
@@ -169,4 +170,4 @@ Instruction budget is shared by nested calls. These limits are part of host poli
 
 ## Versioning
 
-Changing an opcode's meaning, record layout, register convention, or value ABI requires a VM ABI version change. VM ABI v2 added `IMPORT` and `CALL_HOST`. VM ABI v3 added borrowed views. VM ABI v4 added Trit constants, remainder, and comparisons. VM ABI v5 added module DATA constants, initial containers, indexing, and structured exceptions. VM ABI v6 replaces container pointers with generation handles and adds `INDEX_SET`. Older modules are intentionally rejected rather than guessed.
+Changing an opcode's meaning, record layout, register convention, or value ABI requires a VM ABI version change. VM ABI v2 added `IMPORT` and `CALL_HOST`. VM ABI v3 added borrowed views. VM ABI v4 added Trit constants, remainder, and comparisons. VM ABI v5 added module DATA constants, initial containers, indexing, and structured exceptions. VM ABI v6 replaces container pointers with generation handles and adds `INDEX_SET`. VM ABI v7 adds `LIST_APPEND`. Older modules are intentionally rejected rather than guessed.

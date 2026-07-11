@@ -85,6 +85,12 @@ thought mutate() {
   mapping["answer"] = values[0] + values[1]
   return mapping["answer"]
 }
+thought appended() {
+  values = []
+  values = values + [40]
+  values = values + [2]
+  values
+}
 thought raises() { throw "bad" }
 thought catches() {
   try { raises() } catch err { return err }
@@ -153,6 +159,10 @@ thought catches() {
     CHECK("inspect map item", dao_value_map_get(vm, &result, {answer_key, sizeof(answer_key)}, &item) == DAO_OK && item.type == DAO_VALUE_I64 && item.payload == 42);
     CHECK("find mutate", dao_module_find_export(module, symbol_id("mutate"), &fn) == DAO_OK);
     CHECK("execute index mutation", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK && result.type == DAO_VALUE_I64 && result.payload == 42);
+    CHECK("find appended", dao_module_find_export(module, symbol_id("appended"), &fn) == DAO_OK);
+    CHECK("execute list append", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK && result.type == DAO_VALUE_LIST);
+    CHECK("inspect appended size", dao_value_list_size(vm, &result, &list_size) == DAO_OK && list_size == 2);
+    CHECK("inspect appended item", dao_value_list_get(vm, &result, 0, &item) == DAO_OK && item.type == DAO_VALUE_I64 && item.payload == 40);
     CHECK("find catches", dao_module_find_export(module, symbol_id("catches"), &fn) == DAO_OK);
     CHECK("execute cross-call catch", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
     CHECK("read caught value", dao_value_get_view(&result, &string_view) == DAO_OK);

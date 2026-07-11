@@ -282,7 +282,7 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
                               const dao::Instruction& instruction, uint32_t function_index,
                               uint32_t pc, dao_error* error) {
     if (instruction.flags != 0) {
-        return fail(error, DAO_VERIFY_ERROR, "instruction flags must be zero in VM ABI v6",
+        return fail(error, DAO_VERIFY_ERROR, "instruction flags must be zero in VM ABI v7",
                     function_index, pc);
     }
 
@@ -321,6 +321,9 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
         break;
     }
     case Opcode::ListLength:
+        if (valid_register(instruction.dst) && valid_register(instruction.a)) return DAO_OK;
+        break;
+    case Opcode::ListAppend:
         if (valid_register(instruction.dst) && valid_register(instruction.a)) return DAO_OK;
         break;
     case Opcode::ListGet:
@@ -483,6 +486,17 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
             const auto* list = resolve_container(vm->lists, vm->container_generation, registers[instruction.a]);
             if (list == nullptr) return fail(error, DAO_RUNTIME_ERROR, "stale list handle", function_index, pc);
             registers[instruction.dst] = dao_value{DAO_VALUE_I64, 0, static_cast<int64_t>(list->values.size())}; ++pc; break;
+        }
+        case Opcode::ListAppend: {
+            if (registers[instruction.dst].type != DAO_VALUE_LIST)
+                return fail(error, DAO_TYPE_ERROR, "LIST_APPEND requires a list", function_index, pc);
+            auto* list = const_cast<dao_vm::List*>(
+                resolve_container(vm->lists, vm->container_generation, registers[instruction.dst]));
+            if (list == nullptr)
+                return fail(error, DAO_RUNTIME_ERROR, "stale list handle", function_index, pc);
+            list->values.push_back(registers[instruction.a]);
+            ++pc;
+            break;
         }
         case Opcode::ListGet: {
             if (registers[instruction.a].type != DAO_VALUE_LIST || !require_i64(instruction.b)) return fail(error, DAO_TYPE_ERROR, "LIST_GET requires list and i64 index", function_index, pc);

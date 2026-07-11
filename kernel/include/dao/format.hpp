@@ -9,7 +9,7 @@
 namespace dao {
 
 inline constexpr uint16_t kFormatVersion = 1;
-inline constexpr uint16_t kVmAbiVersion = 6;
+inline constexpr uint16_t kVmAbiVersion = 7;
 inline constexpr uint32_t kHeaderSize = 16;
 inline constexpr uint32_t kSectionEntrySize = 16;
 inline constexpr uint32_t kFunctionRecordSize = 16;
@@ -64,6 +64,7 @@ enum class Opcode : uint8_t {
     Catch = 34,
     LoadNull = 35,
     IndexSet = 36,
+    ListAppend = 37,
 };
 
 struct Instruction {

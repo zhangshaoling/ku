@@ -534,6 +534,13 @@ class Emitter {
             else code_.push_back(instruction(Opcode::Call, dst, base, static_cast<uint16_t>(e.children.size()), found->second.index));
             return dst;
         }
+        if (e.type == Expr::Type::Binary && e.value == "+" &&
+            e.children[1].type == Expr::Type::List && e.children[1].children.size() == 1) {
+            const uint16_t list = expr(e.children[0]);
+            const uint16_t value = expr(e.children[1].children[0]);
+            code_.push_back(instruction(Opcode::ListAppend, list, value));
+            return list;
+        }
         const std::string& op = e.value;
         const uint16_t left = expr(e.children[0]); const uint16_t right = expr(e.children[1]); const uint16_t dst = temporary();
         Opcode opcode = Opcode::AddI64;
