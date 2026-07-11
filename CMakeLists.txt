@@ -117,6 +117,11 @@ target_link_libraries(ku_std_list_tests PRIVATE dao_kernel dao_module_builder da
 dao_enable_strict_warnings(ku_std_list_tests)
 dao_enable_sanitizers(ku_std_list_tests)
 
+add_executable(ku_std_fs_tests kernel/tests/ku_std_fs_tests.cpp)
+target_link_libraries(ku_std_fs_tests PRIVATE dao_kernel dao_module_builder dao_ku_migration)
+dao_enable_strict_warnings(ku_std_fs_tests)
+dao_enable_sanitizers(ku_std_fs_tests)
+
 add_executable(selfhost_tests kernel/tests/selfhost_tests.cpp)
 target_link_libraries(selfhost_tests PRIVATE dao_kernel dao_module_builder dao_ku_migration)
 dao_enable_strict_warnings(selfhost_tests)
@@ -202,6 +207,11 @@ add_test(NAME ku_compile_std_list COMMAND dao-ku
     "${CMAKE_BINARY_DIR}/stdlib_list.dao")
 add_test(NAME ku_std_list COMMAND ku_std_list_tests
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/list.ku")
+add_test(NAME ku_compile_std_fs COMMAND dao-ku
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/fs.ku"
+    "${CMAKE_BINARY_DIR}/stdlib_fs.dao")
+add_test(NAME ku_std_fs COMMAND ku_std_fs_tests
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/fs.ku")
 add_test(NAME ku_compile_acceptance COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/language_acceptance.ku"
     "${CMAKE_BINARY_DIR}/language_acceptance.dao")
@@ -245,6 +255,8 @@ set(DAO_RUNTIME_TESTS
     ku_std_math
     ku_compile_std_list
     ku_std_list
+    ku_compile_std_fs
+    ku_std_fs
     ku_compile_acceptance
     ku_compile_legacy_import
     ku_reject_import_escape
