@@ -1,0 +1,140 @@
+import source_len(1)
+import source_byte(2)
+import source_hash(3)
+import builder_new(0)
+import builder_begin(3)
+import builder_emit(6)
+import builder_finish(2)
+import builder_encode(1)
+
+thought pack(index, next_reg, result_reg) {
+  index * 1000000 + next_reg * 1000 + result_reg
+}
+
+thought packed_index(value) { value / 1000000 }
+thought packed_next(value) { value / 1000 % 1000 }
+thought packed_result(value) { value % 1000 }
+
+thought skip_space(source, index, size) {
+  while index < size {
+    byte = source_byte(source, index)
+    if byte != 32 and byte != 10 and byte != 13 and byte != 9 { break }
+    index = index + 1
+  }
+  index
+}
+
+thought parse_number(source, index, size, handle, next_reg) {
+  index = skip_space(source, index, size)
+  value = 0
+  while index < size {
+    byte = source_byte(source, index)
+    if byte < 48 or byte > 57 { break }
+    value = value * 10 + byte - 48
+    index = index + 1
+  }
+  result_reg = next_reg
+  builder_emit(handle, 1, result_reg, 0, 0, value)
+  pack(index, next_reg + 1, result_reg)
+}
+
+thought parse_primary(source, index, size, handle, next_reg) {
+  index = skip_space(source, index, size)
+  byte = source_byte(source, index)
+  if byte == 45 {
+    parsed = parse_primary(source, index + 1, size, handle, next_reg)
+    index = packed_index(parsed)
+    next_reg = packed_next(parsed)
+    value_reg = packed_result(parsed)
+    zero_reg = next_reg
+    builder_emit(handle, 1, zero_reg, 0, 0, 0)
+    next_reg = next_reg + 1
+    result_reg = next_reg
+    builder_emit(handle, 4, result_reg, zero_reg, value_reg, 0)
+    return pack(index, next_reg + 1, result_reg)
+  }
+  if byte == 40 {
+    parsed = parse_expression(source, index + 1, size, handle, next_reg)
+    index = skip_space(source, packed_index(parsed), size)
+    if source_byte(source, index) == 41 { index = index + 1 }
+    return pack(index, packed_next(parsed), packed_result(parsed))
+  }
+  parse_number(source, index, size, handle, next_reg)
+}
+
+thought parse_multiplicative(source, index, size, handle, next_reg) {
+  parsed = parse_primary(source, index, size, handle, next_reg)
+  index = packed_index(parsed)
+  next_reg = packed_next(parsed)
+  result_reg = packed_result(parsed)
+  while index < size {
+    index = skip_space(source, index, size)
+    opcode = 0
+    byte = source_byte(source, index)
+    if byte == 42 { opcode = 5 }
+    if byte == 47 { opcode = 6 }
+    if byte == 37 { opcode = 18 }
+    if opcode == 0 { break }
+    parsed = parse_primary(source, index + 1, size, handle, next_reg)
+    index = packed_index(parsed)
+    next_reg = packed_next(parsed)
+    value_reg = packed_result(parsed)
+    combined_reg = next_reg
+    builder_emit(handle, opcode, combined_reg, result_reg, value_reg, 0)
+    next_reg = next_reg + 1
+    result_reg = combined_reg
+  }
+  pack(index, next_reg, result_reg)
+}
+
+thought parse_expression(source, index, size, handle, next_reg) {
+  parsed = parse_multiplicative(source, index, size, handle, next_reg)
+  index = packed_index(parsed)
+  next_reg = packed_next(parsed)
+  result_reg = packed_result(parsed)
+  while index < size {
+    index = skip_space(source, index, size)
+    opcode = 0
+    byte = source_byte(source, index)
+    if byte == 43 { opcode = 3 }
+    if byte == 45 { opcode = 4 }
+    if opcode == 0 { break }
+    parsed = parse_multiplicative(source, index + 1, size, handle, next_reg)
+    index = packed_index(parsed)
+    next_reg = packed_next(parsed)
+    value_reg = packed_result(parsed)
+    combined_reg = next_reg
+    builder_emit(handle, opcode, combined_reg, result_reg, value_reg, 0)
+    next_reg = next_reg + 1
+    result_reg = combined_reg
+  }
+  pack(index, next_reg, result_reg)
+}
+
+thought compile(source) {
+  handle = builder_new()
+  builder_begin(handle, 0, 64)
+  size = source_len(source)
+  index = 0
+  while index < size {
+    if source_byte(source, index) == 32 { break }
+    index = index + 1
+  }
+  index = skip_space(source, index, size)
+  name_start = index
+  while index < size {
+    if source_byte(source, index) == 40 { break }
+    index = index + 1
+  }
+  name_length = index - name_start
+  export_symbol = source_hash(source, name_start, name_length)
+  while index < size {
+    if source_byte(source, index) == 123 { index = index + 1 break }
+    index = index + 1
+  }
+  parsed = parse_expression(source, index, size, handle, 0)
+  result_reg = packed_result(parsed)
+  builder_emit(handle, 15, 0, result_reg, 0, 0)
+  builder_finish(handle, export_symbol)
+  builder_encode(handle)
+}

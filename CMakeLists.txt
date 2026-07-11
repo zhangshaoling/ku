@@ -107,6 +107,11 @@ target_link_libraries(ku_migration_tests PRIVATE dao_kernel dao_module_builder d
 dao_enable_strict_warnings(ku_migration_tests)
 dao_enable_sanitizers(ku_migration_tests)
 
+add_executable(selfhost_tests kernel/tests/selfhost_tests.cpp)
+target_link_libraries(selfhost_tests PRIVATE dao_kernel dao_module_builder dao_ku_migration)
+dao_enable_strict_warnings(selfhost_tests)
+dao_enable_sanitizers(selfhost_tests)
+
 add_executable(dao-ku kernel/tools/ku_compile.cpp)
 target_link_libraries(dao-ku PRIVATE dao_kernel dao_module_builder dao_ku_migration)
 dao_enable_strict_warnings(dao-ku)
@@ -173,6 +178,7 @@ add_test(NAME pure_c_abi COMMAND c_header_smoke)
 add_test(NAME disassemble COMMAND disassemble_tests)
 add_test(NAME assemble COMMAND assemble_tests)
 add_test(NAME ku_migration COMMAND ku_migration_tests)
+add_test(NAME ku_selfhost_seed COMMAND selfhost_tests "${CMAKE_SOURCE_DIR}/kernel/selfhost/compiler.ku")
 add_test(NAME ku_compile_stdlib COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/core.ku"
     "${CMAKE_BINARY_DIR}/stdlib_core.dao")
@@ -196,6 +202,26 @@ set_tests_properties(aot_execute_native PROPERTIES DEPENDS aot_compile_native)
 add_test(NAME aot_performance_gate COMMAND aot_bench
     "${CMAKE_BINARY_DIR}/aot_numeric${CMAKE_SHARED_LIBRARY_SUFFIX}")
 set_tests_properties(aot_performance_gate PROPERTIES DEPENDS aot_compile_native)
+
+# LLVM-MinGW links C++ targets against shared libc++/libunwind runtimes. Make
+# CTest self-contained instead of requiring callers to activate the toolchain.
+set(DAO_RUNTIME_TESTS
+    kernel_conformance
+    dynamic_cpp_abi
+    pure_c_abi
+    disassemble
+    assemble
+    ku_migration
+    ku_selfhost_seed
+    ku_compile_stdlib
+    ku_compile_acceptance
+    aot_compile_module
+    aot_generate_c
+    aot_execute_native
+    aot_performance_gate)
+set_tests_properties(${DAO_RUNTIME_TESTS} PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${DAO_COMPILER_DIR}")
+
 if(Python3_Interpreter_FOUND)
     add_test(NAME python_binding COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_SOURCE_DIR}/bindings/python/test_binding.py"
@@ -217,6 +243,8 @@ install(TARGETS dao_kernel dao_module_builder dao_disassembly dao_assembly dao_k
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY kernel/include/dao DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES kernel/FORMAT.md kernel/FFI.md kernel/README.md kernel/BENCHMARKS.md kernel/K5.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(FILES kernel/selfhost/compiler.ku DESTINATION share/dao/selfhost)
+install(FILES docs/KU_SELFHOST.md docs/ABI_FREEZE_AUDIT.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(DIRECTORY bindings/python/dao_kernel DESTINATION bindings/python
     PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)
 install(DIRECTORY bindings/rust/dao-kernel-sys DESTINATION bindings/rust

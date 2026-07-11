@@ -56,6 +56,9 @@
 - parity against the complete legacy Python/Ku corpus;
 - stable, benchmark-selected owned container ABI.
 
+The `.ku` self-hosting replacement is tracked in `docs/KU_SELFHOST.md`. SH0 is complete;
+SH1 parser/compiler parity and SH2 byte-identical self-rebuild remain pending.
+
 ## Non-negotiable (per guide §12 / §14)
 - Must go through typed builder; no offset-patching or handwritten binary in the hot path.
 - Round-trip byte-identity is the correctness criterion.

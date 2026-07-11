@@ -1,0 +1,40 @@
+#include "dao/ku_migration.hpp"
+
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <iostream>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace {
+uint32_t symbol(std::string_view name) { uint32_t h=2166136261u; for(unsigned char c:name){h^=c;h*=16777619u;} return h; }
+struct State { dao::ModuleBuilder builder; dao::FunctionSpec function; std::vector<uint8_t> bytes; };
+struct Context { std::vector<std::unique_ptr<State>> states; };
+bool i64(const dao_value& v) { return v.type == DAO_VALUE_I64; }
+State* state(Context* c, const dao_value& v) { if(!i64(v)||v.payload<=0||static_cast<size_t>(v.payload)>c->states.size()) return nullptr; return c->states[static_cast<size_t>(v.payload)-1].get(); }
+dao_status source_len(void*,const dao_value*a,size_t n,dao_value*out){if(n!=1||a[0].type!=DAO_VALUE_STRING)return DAO_TYPE_ERROR;*out={DAO_VALUE_I64,0,a[0].reserved};return DAO_OK;}
+dao_status source_byte(void*,const dao_value*a,size_t n,dao_value*out){if(n!=2||a[0].type!=DAO_VALUE_STRING||!i64(a[1]))return DAO_TYPE_ERROR;dao_bytes b{};if(dao_value_get_view(&a[0],&b)!=DAO_OK||a[1].payload<0||static_cast<uint64_t>(a[1].payload)>=b.size)return DAO_INVALID_ARGUMENT;*out={DAO_VALUE_I64,0,b.data[a[1].payload]};return DAO_OK;}
+dao_status source_hash(void*,const dao_value*a,size_t n,dao_value*out){if(n!=3||a[0].type!=DAO_VALUE_STRING||!i64(a[1])||!i64(a[2]))return DAO_TYPE_ERROR;dao_bytes b{};if(dao_value_get_view(&a[0],&b)!=DAO_OK||a[1].payload<0||a[2].payload<0||static_cast<uint64_t>(a[1].payload+a[2].payload)>b.size)return DAO_INVALID_ARGUMENT;uint32_t h=2166136261u;for(int64_t i=0;i<a[2].payload;++i){h^=b.data[a[1].payload+i];h*=16777619u;}*out={DAO_VALUE_I64,0,h};return DAO_OK;}
+dao_status builder_new(void* u,const dao_value*,size_t n,dao_value*out){if(n)return DAO_INVALID_ARGUMENT;auto*c=static_cast<Context*>(u);c->states.push_back(std::make_unique<State>());*out={DAO_VALUE_I64,0,static_cast<int64_t>(c->states.size())};return DAO_OK;}
+dao_status builder_begin(void*u,const dao_value*a,size_t n,dao_value*out){auto*s=n==3?state(static_cast<Context*>(u),a[0]):nullptr;if(!s||!i64(a[1])||!i64(a[2]))return DAO_INVALID_ARGUMENT;s->function={static_cast<uint16_t>(a[1].payload),static_cast<uint16_t>(a[2].payload),{}};*out={DAO_VALUE_NULL,0,0};return DAO_OK;}
+dao_status builder_emit(void*u,const dao_value*a,size_t n,dao_value*out){auto*s=n==6?state(static_cast<Context*>(u),a[0]):nullptr;if(!s)return DAO_INVALID_ARGUMENT;for(size_t i=1;i<6;++i)if(!i64(a[i]))return DAO_TYPE_ERROR;s->function.code.push_back({static_cast<dao::Opcode>(a[1].payload),0,static_cast<uint16_t>(a[2].payload),static_cast<uint16_t>(a[3].payload),static_cast<uint16_t>(a[4].payload),a[5].payload});*out={DAO_VALUE_NULL,0,0};return DAO_OK;}
+dao_status builder_finish(void*u,const dao_value*a,size_t n,dao_value*out){auto*s=n==2?state(static_cast<Context*>(u),a[0]):nullptr;if(!s||!i64(a[1]))return DAO_INVALID_ARGUMENT;try{const uint32_t f=s->builder.add_function(std::move(s->function));s->builder.add_export(static_cast<uint32_t>(a[1].payload),f);}catch(...){return DAO_RUNTIME_ERROR;}*out={DAO_VALUE_NULL,0,0};return DAO_OK;}
+dao_status builder_encode(void*u,const dao_value*a,size_t n,dao_value*out){auto*s=n==1?state(static_cast<Context*>(u),a[0]):nullptr;if(!s)return DAO_INVALID_ARGUMENT;try{s->bytes=s->builder.encode();}catch(...){return DAO_RUNTIME_ERROR;}return dao_value_make_bytes_view({s->bytes.data(),s->bytes.size()},out);}
+}
+
+int main(int argc,char**argv){
+    if(argc!=2)return EXIT_FAILURE;std::ifstream in(argv[1],std::ios::binary);const std::string compiler((std::istreambuf_iterator<char>(in)),{});
+    dao::ModuleBuilder bootstrap;dao_error error{};if(!dao::km::compile(compiler,bootstrap,&error)){std::cerr<<error.message<<'\n';return EXIT_FAILURE;}const auto compiler_bytes=bootstrap.encode();
+    dao_vm*vm=dao_vm_create(nullptr);dao_module*module=nullptr;if(dao_vm_load_module(vm,{compiler_bytes.data(),compiler_bytes.size()},&module,&error)!=DAO_OK)return EXIT_FAILURE;
+    Context context;struct Host{const char*name;uint32_t arity;dao_host_callback callback;};
+    const Host hosts[]={{"source_len",1,source_len},{"source_byte",2,source_byte},{"source_hash",3,source_hash},{"builder_new",0,builder_new},{"builder_begin",3,builder_begin},{"builder_emit",6,builder_emit},{"builder_finish",2,builder_finish},{"builder_encode",1,builder_encode}};
+    for(const auto&h:hosts){dao_host_function f{sizeof(f),symbol(h.name),h.arity,0,h.callback,&context};if(dao_vm_register_host_function(vm,&f)!=DAO_OK)return EXIT_FAILURE;}
+    dao_function function=0;if(dao_module_find_export(module,symbol("compile"),&function)!=DAO_OK)return EXIT_FAILURE;
+    struct Case{const char*source;const char*name;int64_t expected;};const Case cases[]={{"thought main() { 40 + 2 }","main",42},{"thought product() { 6 * 7 }","product",42},{"thought difference() { 50 - 8 }","difference",42},{"thought quotient() { 84 / 2 }","quotient",42},{"thought precedence() { 2 + 3 * 4 }","precedence",14},{"thought mixed() { 20 / 2 + 32 }","mixed",42},{"thought remainder() { 86 % 44 }","remainder",42},{"thought chain() { 100 - 8 * 7 - 2 }","chain",42},{"thought parens() { (2 + 3) * 8 + 2 }","parens",42},{"thought unary() { 50 + -8 }","unary",42},{"thought nested() { 2 * (10 + 11) }","nested",42}};
+    for(const auto&test:cases){const std::string source=test.source;dao_value arg{};if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(source.data()),source.size()},&arg)!=DAO_OK)return EXIT_FAILURE;dao_value generated{};if(dao_vm_call(vm,module,function,&arg,1,&generated,&error)!=DAO_OK){std::cerr<<error.message<<'\n';return EXIT_FAILURE;}dao_bytes output{};if(dao_value_get_view(&generated,&output)!=DAO_OK)return EXIT_FAILURE;dao_module*result_module=nullptr;if(dao_vm_load_module(vm,output,&result_module,&error)!=DAO_OK)return EXIT_FAILURE;dao_function generated_fn=0;if(dao_module_find_export(result_module,symbol(test.name),&generated_fn)!=DAO_OK)return EXIT_FAILURE;dao_value result{};const bool ok=dao_vm_call(vm,result_module,generated_fn,nullptr,0,&result,&error)==DAO_OK&&result.type==DAO_VALUE_I64&&result.payload==test.expected;dao_module_release(result_module);if(!ok)return EXIT_FAILURE;}
+    dao_module_release(module);dao_vm_destroy(vm);std::cout<<"dao .ku self-host seed passed\n";return EXIT_SUCCESS;
+}

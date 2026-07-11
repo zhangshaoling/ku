@@ -43,6 +43,10 @@ Compile the supported scalar Ku subset to a verified Dao module with:
 .\kernel\out\cmake\bin\dao-ku.exe input.ku output.dao
 ```
 
+The frontend self-hosting path has started: `kernel/selfhost/compiler.ku` implements the
+SH0 seed and the SH1a expression parser, generating a verified executable module through
+the typed-builder Host ABI. See [`../docs/KU_SELFHOST.md`](../docs/KU_SELFHOST.md).
+
 The migration frontend supports functions (`thought`, `func`, or `思`), integer, Trit,
 and string literals, lists, string-keyed maps, indexing, variables, assignment,
 arithmetic, comparisons, internal calls, explicit host imports, `if/else`, `while`,
