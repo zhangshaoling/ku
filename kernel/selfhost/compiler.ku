@@ -6,6 +6,7 @@ import builder_new(0)
 import builder_begin(3)
 import builder_emit(6)
 import builder_add_string(2)
+import builder_import(3)
 import builder_position(1)
 import builder_patch(3)
 import builder_patch_marked(5)
@@ -40,6 +41,14 @@ thought is_space(byte) {
 
 thought is_word_end(byte) {
   is_space(byte) or byte == 59 or byte == 125
+}
+
+thought is_import(source, index, size) {
+  source_at(source, index, size) == 105 and source_at(source, index + 1, size) == 109 and source_at(source, index + 2, size) == 112 and source_at(source, index + 3, size) == 111 and source_at(source, index + 4, size) == 114 and source_at(source, index + 5, size) == 116 and is_space(source_at(source, index + 6, size))
+}
+
+thought is_thought(source, index, size) {
+  source_at(source, index, size) == 116 and source_at(source, index + 1, size) == 104 and source_at(source, index + 2, size) == 111 and source_at(source, index + 3, size) == 117 and source_at(source, index + 4, size) == 103 and source_at(source, index + 5, size) == 104 and source_at(source, index + 6, size) == 116 and is_space(source_at(source, index + 7, size))
 }
 
 thought parse_number(source, index, size, handle, next_reg) {
@@ -156,20 +165,49 @@ thought function_index(source, size, target_hash) {
   ordinal = 0
   while index < size {
     index = skip_space(source, index, size)
-    while index < size {
-      if source_byte(source, index) == 32 { break }
-      index = index + 1
+    if is_import(source, index, size) {
+      while index < size {
+        if source_at(source, index, size) == 41 { index = index + 1 break }
+        index = index + 1
+      }
+      continue
     }
-    index = skip_space(source, index, size)
+    if not is_thought(source, index, size) { return 0 }
+    index = skip_space(source, index + 7, size)
     name_start = index
-    while index < size {
-      if source_byte(source, index) == 40 { break }
-      index = index + 1
-    }
+    while source_at(source, index, size) != 40 { index = index + 1 }
     if source_hash(source, name_start, index - name_start) == target_hash { return ordinal }
     ordinal = ordinal + 1
     while index < size {
-      if source_byte(source, index) == 125 { index = index + 1 break }
+      if source_at(source, index, size) == 123 { break }
+      index = index + 1
+    }
+    depth = 0
+    while index < size {
+      if source_at(source, index, size) == 123 { depth = depth + 1 }
+      if source_at(source, index, size) == 125 {
+        depth = depth - 1
+        if depth == 0 { index = index + 1 break }
+      }
+      index = index + 1
+    }
+  }
+  0
+}
+
+thought import_index(source, size, target_hash) {
+  index = 0
+  ordinal = 0
+  while index < size {
+    index = skip_space(source, index, size)
+    if not is_import(source, index, size) { return 0 }
+    index = skip_space(source, index + 6, size)
+    name_start = index
+    while source_at(source, index, size) != 40 { index = index + 1 }
+    if source_hash(source, name_start, index - name_start) == target_hash { return ordinal + 1 }
+    ordinal = ordinal + 1
+    while index < size {
+      if source_at(source, index, size) == 41 { index = index + 1 break }
       index = index + 1
     }
   }
@@ -243,7 +281,12 @@ thought parse_primary(source, index, size, handle, next_reg, names, regs) {
         argument_count = argument_count + 1
       }
       result_reg = next_reg
-      builder_emit(handle, 14, result_reg, argument_reg, argument_count, function_index(source, size, name_hash))
+      import_slot = import_index(source, size, name_hash)
+      if import_slot > 0 {
+        builder_emit(handle, 16, result_reg, argument_reg, argument_count, import_slot - 1)
+      } else {
+        builder_emit(handle, 14, result_reg, argument_reg, argument_count, function_index(source, size, name_hash))
+      }
       return pack(index, next_reg + 1, result_reg)
     }
     index = after_name
@@ -546,6 +589,24 @@ thought compile(source) {
   while index < size {
     index = skip_space(source, index, size)
     if index >= size { break }
+    if is_import(source, index, size) {
+      index = skip_space(source, index + 6, size)
+      name_start = index
+      while source_at(source, index, size) != 40 { index = index + 1 }
+      import_symbol = source_hash(source, name_start, index - name_start)
+      index = skip_space(source, index + 1, size)
+      arity = 0
+      if source_at(source, index, size) != 41 {
+        arity = 1
+        while source_at(source, index, size) != 41 {
+          if source_at(source, index, size) == 44 { arity = arity + 1 }
+          index = index + 1
+        }
+      }
+      if source_at(source, index, size) == 41 { index = index + 1 }
+      builder_import(handle, import_symbol, arity)
+      continue
+    }
     while index < size {
       if source_byte(source, index) == 32 { break }
       index = index + 1

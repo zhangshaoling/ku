@@ -54,10 +54,12 @@ lowers to `LIST_LENGTH`, and an identifier-backed list supports `items[index]` t
 cursor loop; its `continue` target advances the cursor before retesting.
 Map literals preserve string-key/value pairs before packing them into `MAKE_MAP`; existing
 identifier bindings use `INDEX_GET` for string-key lookup.
+Top-level `import name(arity)` declarations are registered before functions; matching named
+calls lower to `CALL_HOST` while local function indices exclude imports.
 
 This remains deliberately bounded: token streams, string escapes, containers, imports,
-diagnostics, register-overflow checks, indexed mutation, and canonical self-rebuild are still
-pending.
+diagnostics, register-overflow checks, indexed mutation, module-path imports, and canonical
+self-rebuild are still pending.
 
 ## SH1: Real Frontend Remaining
 
