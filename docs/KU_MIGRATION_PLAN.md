@@ -58,6 +58,9 @@
 - `kernel/stdlib/debug.ku` migrates scalar logging, explicit timer tokens, function
   measurement, assertions, and memory counters. Clock, logging, and process metrics remain
   explicit Host capabilities; dynamic recursive object inspection still requires type reflection.
+- `kernel/stdlib/string.ku` migrates length/empty checks, trim, ASCII case conversion,
+  replacement, containment, prefix/suffix checks, substring, and indexed character access.
+  Borrowed results are supplied by explicit `host_string_*` capabilities with stable storage.
 
 ### Phase V — MVP acceptance (full legacy parity pending)
 - Native execution covers arithmetic, comparisons, Trit logic, calls, host imports,
