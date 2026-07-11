@@ -55,6 +55,9 @@ class Runtime:
         lib.dao_module_release.argtypes = [c.c_void_p]
         lib.dao_module_find_export.argtypes = [c.c_void_p, c.c_uint32, c.POINTER(c.c_uint32)]
         lib.dao_vm_call.argtypes = [c.c_void_p, c.c_void_p, c.c_uint32, c.POINTER(DaoValue), c.c_size_t, c.POINTER(DaoValue), c.POINTER(DaoError)]
+        lib.dao_value_list_size.argtypes = [c.c_void_p, c.POINTER(DaoValue), c.POINTER(c.c_size_t)]
+        lib.dao_value_list_get.argtypes = [c.c_void_p, c.POINTER(DaoValue), c.c_size_t, c.POINTER(DaoValue)]
+        lib.dao_value_map_get.argtypes = [c.c_void_p, c.POINTER(DaoValue), DaoBytes, c.POINTER(DaoValue)]
 
     def load(self, payload: bytes) -> "Module":
         storage = (c.c_uint8 * len(payload)).from_buffer_copy(payload)
@@ -63,6 +66,25 @@ class Runtime:
         if status != DAO_OK:
             raise DaoKernelError(error.message.decode("utf-8", "replace"))
         return Module(self, handle)
+
+    def list_values(self, value: DaoValue) -> list[DaoValue]:
+        size = c.c_size_t()
+        if self._lib.dao_value_list_size(self._vm, c.byref(value), c.byref(size)) != DAO_OK:
+            raise DaoKernelError("invalid or stale list handle")
+        result = []
+        for index in range(size.value):
+            item = DaoValue()
+            if self._lib.dao_value_list_get(self._vm, c.byref(value), index, c.byref(item)) != DAO_OK:
+                raise DaoKernelError("list access failed")
+            result.append(item)
+        return result
+
+    def map_value(self, value: DaoValue, key: str) -> DaoValue:
+        encoded = key.encode("utf-8"); storage = (c.c_uint8 * len(encoded)).from_buffer_copy(encoded)
+        result = DaoValue()
+        if self._lib.dao_value_map_get(self._vm, c.byref(value), DaoBytes(storage, len(encoded)), c.byref(result)) != DAO_OK:
+            raise DaoKernelError(f"map key {key!r} not found or handle is stale")
+        return result
 
     def close(self) -> None:
         if self._vm:
@@ -75,6 +97,10 @@ class Runtime:
 class Module:
     def __init__(self, runtime: Runtime, handle: c.c_void_p): self._runtime, self._handle = runtime, handle
     def call_i64(self, symbol: int, *values: int) -> int:
+        result = self.call(symbol, *values)
+        if result.type != DAO_VALUE_I64: raise DaoKernelError("result is not i64")
+        return result.payload
+    def call(self, symbol: int, *values: int) -> DaoValue:
         function = c.c_uint32(); lib = self._runtime._lib
         if lib.dao_module_find_export(self._handle, symbol, c.byref(function)) != DAO_OK:
             raise DaoKernelError(f"export {symbol} not found")
@@ -82,8 +108,7 @@ class Module:
         result, error = DaoValue(), DaoError()
         status = lib.dao_vm_call(self._runtime._vm, self._handle, function, args, len(values), c.byref(result), c.byref(error))
         if status != DAO_OK: raise DaoKernelError(error.message.decode("utf-8", "replace"))
-        if result.type != DAO_VALUE_I64: raise DaoKernelError("result is not i64")
-        return result.payload
+        return result
     def close(self) -> None:
         if self._handle: self._runtime._lib.dao_module_release(self._handle); self._handle = None
     def __enter__(self) -> "Module": return self

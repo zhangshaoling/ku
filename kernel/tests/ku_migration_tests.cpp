@@ -66,6 +66,15 @@ thought map_read() {
   values = {"answer": 42, "other": 7}
   return values["answer"]
 }
+thought return_list() { [4, 5, 6] }
+thought return_map() { {"answer": 42} }
+thought mutate() {
+  values = [1, 2]
+  values[0] = 40
+  mapping = {}
+  mapping["answer"] = values[0] + values[1]
+  return mapping["answer"]
+}
 thought raises() { throw "bad" }
 thought catches() {
   try { raises() } catch err { return err }
@@ -122,6 +131,18 @@ thought catches() {
     CHECK("find map_read", dao_module_find_export(module, symbol_id("map_read"), &fn) == DAO_OK);
     CHECK("execute map read", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
     CHECK("map read result", result.type == DAO_VALUE_I64 && result.payload == 42);
+    CHECK("find return_list", dao_module_find_export(module, symbol_id("return_list"), &fn) == DAO_OK);
+    CHECK("execute return_list", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    const dao_value old_list = result; size_t list_size = 0; dao_value item{};
+    CHECK("inspect list size", dao_value_list_size(vm, &result, &list_size) == DAO_OK && list_size == 3);
+    CHECK("inspect list item", dao_value_list_get(vm, &result, 1, &item) == DAO_OK && item.type == DAO_VALUE_I64 && item.payload == 5);
+    CHECK("find return_map", dao_module_find_export(module, symbol_id("return_map"), &fn) == DAO_OK);
+    CHECK("execute return_map", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("stale list rejected", dao_value_list_size(vm, &old_list, &list_size) == DAO_RUNTIME_ERROR);
+    const uint8_t answer_key[] = {'a','n','s','w','e','r'};
+    CHECK("inspect map item", dao_value_map_get(vm, &result, {answer_key, sizeof(answer_key)}, &item) == DAO_OK && item.type == DAO_VALUE_I64 && item.payload == 42);
+    CHECK("find mutate", dao_module_find_export(module, symbol_id("mutate"), &fn) == DAO_OK);
+    CHECK("execute index mutation", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK && result.type == DAO_VALUE_I64 && result.payload == 42);
     CHECK("find catches", dao_module_find_export(module, symbol_id("catches"), &fn) == DAO_OK);
     CHECK("execute cross-call catch", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
     CHECK("read caught value", dao_value_get_view(&result, &string_view) == DAO_OK);

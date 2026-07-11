@@ -18,6 +18,9 @@ extern "C" {
     pub fn dao_module_release(module: *mut dao_module);
     pub fn dao_module_find_export(module: *const dao_module, symbol: u32, out: *mut dao_function) -> i32;
     pub fn dao_vm_call(vm: *mut dao_vm, module: *const dao_module, function: dao_function, args: *const dao_value, count: usize, out: *mut dao_value, error: *mut dao_error) -> i32;
+    pub fn dao_value_list_size(vm: *const dao_vm, value: *const dao_value, out: *mut usize) -> i32;
+    pub fn dao_value_list_get(vm: *const dao_vm, value: *const dao_value, index: usize, out: *mut dao_value) -> i32;
+    pub fn dao_value_map_get(vm: *const dao_vm, value: *const dao_value, key: dao_bytes, out: *mut dao_value) -> i32;
 }
 
 const _: Option<*mut c_void> = None;

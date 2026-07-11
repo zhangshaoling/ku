@@ -206,7 +206,10 @@ Opcode parse_opcode(std::string_view token) {
             if (token == "CALL_HOST" || token == "call_host") return Opcode::CallHost;
             if (token == "CATCH" || token == "catch") return Opcode::Catch;
             break;
-        case 'I': case 'i': if (token == "INDEX_GET" || token == "index_get") return Opcode::IndexGet; break;
+        case 'I': case 'i':
+            if (token == "INDEX_GET" || token == "index_get") return Opcode::IndexGet;
+            if (token == "INDEX_SET" || token == "index_set") return Opcode::IndexSet;
+            break;
         case 'R':
         case 'r':
             if (token == "RETURN" || token == "return") return Opcode::Return;
@@ -408,7 +411,8 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
     case Opcode::MakeList:
     case Opcode::MakeMap:
     case Opcode::ListGet:
-    case Opcode::IndexGet: {
+    case Opcode::IndexGet:
+    case Opcode::IndexSet: {
         if (fields.size() - operand_start < 3) {
             return fail(error, "instruction: expected dst, a, b");
         }

@@ -224,6 +224,7 @@ const char* opcode_name(Opcode opcode) {
     case Opcode::ListGet: return "LIST_GET";
     case Opcode::MakeMap: return "MAKE_MAP";
     case Opcode::IndexGet: return "INDEX_GET";
+    case Opcode::IndexSet: return "INDEX_SET";
     case Opcode::TryBegin: return "TRY_BEGIN";
     case Opcode::TryEnd: return "TRY_END";
     case Opcode::Throw: return "THROW";
@@ -294,6 +295,7 @@ void append_instruction_text(std::ostream& out,
     case Opcode::MakeMap:
     case Opcode::ListGet:
     case Opcode::IndexGet:
+    case Opcode::IndexSet:
         out << " r" << instruction.dst << ", r" << instruction.a << ", r" << instruction.b;
         break;
     case Opcode::TritNot:

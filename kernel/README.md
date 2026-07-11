@@ -30,7 +30,7 @@ Run the initial load/call benchmark with:
 ```
 
 K5 currently provides a verified-module cache, direct predecoded instruction pointers,
-a straight-line numeric portable-C AOT MVP, installable CMake SDK, and Python/Rust bindings. See
+a numeric portable-C AOT backend with branch/loop/internal-call support, installable CMake SDK, and Python/Rust bindings. See
 [`K5.md`](K5.md). Build the release ZIP with:
 
 ```powershell

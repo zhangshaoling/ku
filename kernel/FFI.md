@@ -75,3 +75,11 @@ The verified-module cache defaults to 64 entries. Configure it through
 compatibility. Cache identity is fingerprint plus full byte equality. Use
 `dao_vm_get_cache_stats` for hit/miss counters and `dao_vm_clear_module_cache` to release
 cache-owned references. Caller-owned module references remain valid after a clear.
+
+## VM-Owned Container Handles
+
+List and map payloads are opaque generation handles, not process pointers. They remain
+valid until the next top-level call on the same VM. Hosts can inspect returned containers
+with `dao_value_list_size`, `dao_value_list_get`, and `dao_value_map_get`. Stale handles
+return `DAO_RUNTIME_ERROR`; hosts cannot manufacture container handles. Construction and
+mutation APIs remain experimental and are not part of the frozen C ABI.

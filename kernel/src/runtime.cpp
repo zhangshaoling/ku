@@ -238,6 +238,7 @@ struct dao_vm {
     uint64_t cache_hits = 0;
     uint64_t cache_misses = 0;
     uint32_t max_cached_modules = 64;
+    uint32_t container_generation = 1;
 };
 
 struct dao_module {
@@ -253,6 +254,21 @@ struct dao_module {
 
 namespace {
 
+int64_t container_handle(uint32_t generation, size_t index) {
+    return static_cast<int64_t>((static_cast<uint64_t>(generation) << 32) |
+                                static_cast<uint32_t>(index + 1));
+}
+
+template <typename T>
+const T* resolve_container(const std::vector<std::unique_ptr<T>>& values, uint32_t generation,
+                           const dao_value& value) {
+    const uint64_t handle = static_cast<uint64_t>(value.payload);
+    if (static_cast<uint32_t>(handle >> 32) != generation) return nullptr;
+    const uint32_t encoded_index = static_cast<uint32_t>(handle);
+    if (encoded_index == 0 || encoded_index > values.size()) return nullptr;
+    return values[encoded_index - 1].get();
+}
+
 const SectionRecord* find_section(const std::vector<SectionRecord>& sections,
                                   dao::SectionType type) {
     const uint32_t wanted = static_cast<uint32_t>(type);
@@ -266,7 +282,7 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
                               const dao::Instruction& instruction, uint32_t function_index,
                               uint32_t pc, dao_error* error) {
     if (instruction.flags != 0) {
-        return fail(error, DAO_VERIFY_ERROR, "instruction flags must be zero in VM ABI v5",
+        return fail(error, DAO_VERIFY_ERROR, "instruction flags must be zero in VM ABI v6",
                     function_index, pc);
     }
 
@@ -309,6 +325,7 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
         break;
     case Opcode::ListGet:
     case Opcode::IndexGet:
+    case Opcode::IndexSet:
         if (valid_register(instruction.dst) && valid_register(instruction.a) && valid_register(instruction.b)) return DAO_OK;
         break;
     case Opcode::TryBegin:
@@ -447,8 +464,8 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
         case Opcode::MakeList: {
             auto list = std::make_unique<dao_vm::List>();
             list->values.assign(registers.begin() + instruction.a, registers.begin() + instruction.a + instruction.b);
-            auto* pointer = list.get(); vm->lists.push_back(std::move(list));
-            registers[instruction.dst] = dao_value{DAO_VALUE_LIST, 0, static_cast<int64_t>(reinterpret_cast<intptr_t>(pointer))};
+            vm->lists.push_back(std::move(list));
+            registers[instruction.dst] = dao_value{DAO_VALUE_LIST, 0, container_handle(vm->container_generation, vm->lists.size() - 1)};
             ++pc; break;
         }
         case Opcode::MakeMap: {
@@ -458,17 +475,19 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
                 if (key.type != DAO_VALUE_STRING) return fail(error, DAO_TYPE_ERROR, "map keys must be strings", function_index, pc);
                 map->values[std::string(reinterpret_cast<const char*>(view_data(key)), key.reserved)] = value;
             }
-            auto* pointer = map.get(); vm->maps.push_back(std::move(map));
-            registers[instruction.dst] = dao_value{DAO_VALUE_MAP, 0, static_cast<int64_t>(reinterpret_cast<intptr_t>(pointer))}; ++pc; break;
+            vm->maps.push_back(std::move(map));
+            registers[instruction.dst] = dao_value{DAO_VALUE_MAP, 0, container_handle(vm->container_generation, vm->maps.size() - 1)}; ++pc; break;
         }
         case Opcode::ListLength: {
             if (registers[instruction.a].type != DAO_VALUE_LIST) return fail(error, DAO_TYPE_ERROR, "LIST_LEN requires a list", function_index, pc);
-            const auto* list = reinterpret_cast<const dao_vm::List*>(static_cast<intptr_t>(registers[instruction.a].payload));
+            const auto* list = resolve_container(vm->lists, vm->container_generation, registers[instruction.a]);
+            if (list == nullptr) return fail(error, DAO_RUNTIME_ERROR, "stale list handle", function_index, pc);
             registers[instruction.dst] = dao_value{DAO_VALUE_I64, 0, static_cast<int64_t>(list->values.size())}; ++pc; break;
         }
         case Opcode::ListGet: {
             if (registers[instruction.a].type != DAO_VALUE_LIST || !require_i64(instruction.b)) return fail(error, DAO_TYPE_ERROR, "LIST_GET requires list and i64 index", function_index, pc);
-            const auto* list = reinterpret_cast<const dao_vm::List*>(static_cast<intptr_t>(registers[instruction.a].payload));
+            const auto* list = resolve_container(vm->lists, vm->container_generation, registers[instruction.a]);
+            if (list == nullptr) return fail(error, DAO_RUNTIME_ERROR, "stale list handle", function_index, pc);
             const int64_t index = registers[instruction.b].payload;
             if (index < 0 || static_cast<uint64_t>(index) >= list->values.size()) return fail(error, DAO_RUNTIME_ERROR, "list index out of range", function_index, pc);
             registers[instruction.dst] = list->values[static_cast<size_t>(index)]; ++pc; break;
@@ -477,16 +496,32 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
             const dao_value& object = registers[instruction.a]; const dao_value& key = registers[instruction.b];
             if (object.type == DAO_VALUE_LIST) {
                 if (key.type != DAO_VALUE_I64) return fail(error, DAO_TYPE_ERROR, "list index must be i64", function_index, pc);
-                const auto* list = reinterpret_cast<const dao_vm::List*>(static_cast<intptr_t>(object.payload)); const int64_t index = key.payload;
+                const auto* list = resolve_container(vm->lists, vm->container_generation, object); if (list == nullptr) return fail(error, DAO_RUNTIME_ERROR, "stale list handle", function_index, pc); const int64_t index = key.payload;
                 if (index < 0 || static_cast<uint64_t>(index) >= list->values.size()) return fail(error, DAO_RUNTIME_ERROR, "list index out of range", function_index, pc);
                 registers[instruction.dst] = list->values[static_cast<size_t>(index)];
             } else if (object.type == DAO_VALUE_MAP) {
                 if (key.type != DAO_VALUE_STRING) return fail(error, DAO_TYPE_ERROR, "map key must be string", function_index, pc);
-                const auto* map = reinterpret_cast<const dao_vm::Map*>(static_cast<intptr_t>(object.payload));
+                const auto* map = resolve_container(vm->maps, vm->container_generation, object); if (map == nullptr) return fail(error, DAO_RUNTIME_ERROR, "stale map handle", function_index, pc);
                 const auto found = map->values.find(std::string(reinterpret_cast<const char*>(view_data(key)), key.reserved));
                 if (found == map->values.end()) return fail(error, DAO_RUNTIME_ERROR, "map key not found", function_index, pc);
                 registers[instruction.dst] = found->second;
             } else return fail(error, DAO_TYPE_ERROR, "indexing requires list or map", function_index, pc);
+            ++pc; break;
+        }
+        case Opcode::IndexSet: {
+            dao_value& object = registers[instruction.dst]; const dao_value& key = registers[instruction.a]; const dao_value& value = registers[instruction.b];
+            if (object.type == DAO_VALUE_LIST) {
+                if (key.type != DAO_VALUE_I64) return fail(error, DAO_TYPE_ERROR, "list index must be i64", function_index, pc);
+                auto* list = const_cast<dao_vm::List*>(resolve_container(vm->lists, vm->container_generation, object)); const int64_t index = key.payload;
+                if (list == nullptr) return fail(error, DAO_RUNTIME_ERROR, "stale list handle", function_index, pc);
+                if (index < 0 || static_cast<uint64_t>(index) >= list->values.size()) return fail(error, DAO_RUNTIME_ERROR, "list index out of range", function_index, pc);
+                list->values[static_cast<size_t>(index)] = value;
+            } else if (object.type == DAO_VALUE_MAP) {
+                if (key.type != DAO_VALUE_STRING) return fail(error, DAO_TYPE_ERROR, "map key must be string", function_index, pc);
+                auto* map = const_cast<dao_vm::Map*>(resolve_container(vm->maps, vm->container_generation, object));
+                if (map == nullptr) return fail(error, DAO_RUNTIME_ERROR, "stale map handle", function_index, pc);
+                map->values[std::string(reinterpret_cast<const char*>(view_data(key)), key.reserved)] = value;
+            } else return fail(error, DAO_TYPE_ERROR, "index assignment requires list or map", function_index, pc);
             ++pc; break;
         }
         case Opcode::TryBegin:
@@ -688,6 +723,34 @@ dao_status dao_value_get_view(const dao_value* value, dao_bytes* out_bytes) {
     }
     *out_bytes = dao_bytes{view_data(*value), value->reserved};
     return DAO_OK;
+}
+
+dao_status dao_value_list_size(const dao_vm* vm, const dao_value* value, size_t* out_size) {
+    if (vm == nullptr || value == nullptr || out_size == nullptr || value->type != DAO_VALUE_LIST) return DAO_INVALID_ARGUMENT;
+    const auto* list = resolve_container(vm->lists, vm->container_generation, *value);
+    if (list == nullptr) return DAO_RUNTIME_ERROR;
+    *out_size = list->values.size(); return DAO_OK;
+}
+
+dao_status dao_value_list_get(const dao_vm* vm, const dao_value* value, size_t index,
+                              dao_value* out_value) {
+    if (vm == nullptr || value == nullptr || out_value == nullptr || value->type != DAO_VALUE_LIST) return DAO_INVALID_ARGUMENT;
+    const auto* list = resolve_container(vm->lists, vm->container_generation, *value);
+    if (list == nullptr) return DAO_RUNTIME_ERROR;
+    if (index >= list->values.size()) return DAO_INVALID_ARGUMENT;
+    *out_value = list->values[index]; return DAO_OK;
+}
+
+dao_status dao_value_map_get(const dao_vm* vm, const dao_value* value, dao_bytes utf8_key,
+                             dao_value* out_value) {
+    if (vm == nullptr || value == nullptr || out_value == nullptr || value->type != DAO_VALUE_MAP ||
+        (utf8_key.size != 0 && utf8_key.data == nullptr) || !is_valid_utf8(utf8_key.data, utf8_key.size)) return DAO_INVALID_ARGUMENT;
+    const auto* map = resolve_container(vm->maps, vm->container_generation, *value);
+    if (map == nullptr) return DAO_RUNTIME_ERROR;
+    const char* key_data = utf8_key.data == nullptr ? "" : reinterpret_cast<const char*>(utf8_key.data);
+    const auto found = map->values.find(std::string(key_data, utf8_key.size));
+    if (found == map->values.end()) return DAO_EXPORT_NOT_FOUND;
+    *out_value = found->second; return DAO_OK;
 }
 
 dao_vm_config dao_vm_config_default(void) {
@@ -1008,8 +1071,8 @@ dao_status dao_vm_call(dao_vm* vm, const dao_module* module, dao_function functi
             return fail(error, DAO_INVALID_ARGUMENT, "VM-owned containers cannot be reused across top-level calls");
         }
     }
-    vm->lists.clear();
-    vm->maps.clear();
+    vm->lists.clear(); vm->maps.clear();
+    if (++vm->container_generation == 0) ++vm->container_generation;
     uint64_t budget = vm->config.max_instructions_per_call;
     dao_value thrown = null_value();
     const dao_status status = execute_function(vm, module, function, args, arg_count, 0, budget, out_value, &thrown, error);

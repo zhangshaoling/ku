@@ -1,1 +1,17 @@
 thought add(a, b) { return a + b }
+thought sum_to(n) {
+  total = 0
+  while n > 0 {
+    total = add(total, n)
+    n = n - 1
+  }
+  return total
+}
+thought sum_direct(n) {
+  total = 0
+  while n > 0 {
+    total = total + n
+    n = n - 1
+  }
+  return total
+}

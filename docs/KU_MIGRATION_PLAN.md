@@ -18,7 +18,7 @@
 - Lexer + Pratt parser -> `ModuleBuilder`.
 - Implemented: integer/null/bool literals, assignment, `and/or/not`, unary minus,
   `+ - * / %`, integer comparisons, and forward/internal function calls within a unit.
-- Implemented by VM ABI v5: module-owned UTF-8 string constants, lists, string-keyed maps,
+- Implemented by VM ABI v6: module-owned UTF-8 string constants, lists, string-keyed maps,
   and dynamic list/map indexing.
 - Per-function header: registers/parameters/instructions derived from actual code.
 - Verification: every output passes `loader+verifier` and round-trips back through the assembler (existing tools).
@@ -52,7 +52,7 @@
 
 - legacy `引 "std/..." 别 ...` import compatibility;
 - real `ku/std/*.ku` migration instead of representative replacements;
-- index mutation, function references/closures, floats, and remaining dynamic semantics;
+- function references/closures, floats, and remaining dynamic semantics;
 - parity against the complete legacy Python/Ku corpus;
 - stable, benchmark-selected owned container ABI.
 

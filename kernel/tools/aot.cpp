@@ -15,6 +15,8 @@ bool supported(dao::Opcode op) {
            op == Opcode::SubI64 || op == Opcode::MulI64 || op == Opcode::DivI64 ||
            op == Opcode::RemI64 || (op >= Opcode::CompareEqI64 && op <= Opcode::CompareGeI64) ||
            op == Opcode::TritNot || op == Opcode::TritAnd || op == Opcode::TritOr ||
+           op == Opcode::BranchTritNegative || op == Opcode::BranchTritZero ||
+           op == Opcode::BranchTritPositive || op == Opcode::Jump || op == Opcode::Call ||
            op == Opcode::Return;
 }
 }
@@ -37,11 +39,16 @@ int main(int argc, char** argv) {
            "static int sub64(int64_t a,int64_t b,int64_t*o){if((b<0&&a>INT64_MAX+b)||(b>0&&a<INT64_MIN+b))return 0;*o=a-b;return 1;}\n"
            "static int mul64(int64_t a,int64_t b,int64_t*o){if(a==0||b==0){*o=0;return 1;}if((a==-1&&b==INT64_MIN)||(b==-1&&a==INT64_MIN))return 0;if(a>0?b>0?a>INT64_MAX/b:b<INT64_MIN/a:b>0?a<INT64_MIN/b:b<INT64_MAX/a)return 0;*o=a*b;return 1;}\n";
     out << "DAO_AOT_EXPORT int dao_aot_native_add_baseline(const int64_t*args,size_t argc,int64_t*out){if(!out||argc!=2||!args)return DAO_AOT_BAD_ARGS;return add64(args[0],args[1],out)?DAO_AOT_OK:DAO_AOT_OVERFLOW;}\n";
+    out << "DAO_AOT_EXPORT int dao_aot_native_sum_baseline(const int64_t*args,size_t argc,int64_t*out){if(!out||argc!=1||!args)return DAO_AOT_BAD_ARGS;int64_t n=args[0],total=0,next;while(n>0){if(!add64(total,n,&next))return DAO_AOT_OVERFLOW;total=next;if(!sub64(n,1,&next))return DAO_AOT_OVERFLOW;n=next;}*out=total;return DAO_AOT_OK;}\n";
+    for (const auto& fn : module.functions)
+        out << "DAO_AOT_EXPORT int dao_aot_fn_" << fn.index << "(const int64_t*,size_t,int64_t*);\n";
     for (const auto& fn : module.functions) {
         out << "DAO_AOT_EXPORT int dao_aot_fn_" << fn.index << "(const int64_t*args,size_t argc,int64_t*out){\n"
             << "if(!out||argc!=" << fn.parameter_count << "||(" << fn.parameter_count << "&& !args))return DAO_AOT_BAD_ARGS;\n"
             << "int64_t r[" << (fn.register_count == 0 ? 1 : fn.register_count) << "]={0};for(size_t i=0;i<argc;i++)r[i]=args[i];\n";
-        for (const auto& i : fn.instructions) {
+        for (size_t pc = 0; pc < fn.instructions.size(); ++pc) {
+            const auto& i = fn.instructions[pc];
+            out << "L" << pc << ":;\n";
             using dao::Opcode;
             switch (i.opcode) {
             case Opcode::Nop: break;
@@ -61,6 +68,14 @@ int main(int argc, char** argv) {
             case Opcode::TritNot: out << "r["<<i.dst<<"]=-r["<<i.a<<"];\n"; break;
             case Opcode::TritAnd: out << "r["<<i.dst<<"]=r["<<i.a<<"]<r["<<i.b<<"]?r["<<i.a<<"]:r["<<i.b<<"];\n"; break;
             case Opcode::TritOr: out << "r["<<i.dst<<"]=r["<<i.a<<"]>r["<<i.b<<"]?r["<<i.a<<"]:r["<<i.b<<"];\n"; break;
+            case Opcode::BranchTritNegative: out << "if(r["<<i.a<<"]<0)goto L"<<i.immediate<<";\n"; break;
+            case Opcode::BranchTritZero: out << "if(r["<<i.a<<"]==0)goto L"<<i.immediate<<";\n"; break;
+            case Opcode::BranchTritPositive: out << "if(r["<<i.a<<"]>0)goto L"<<i.immediate<<";\n"; break;
+            case Opcode::Jump: out << "goto L"<<i.immediate<<";\n"; break;
+            case Opcode::Call:
+                out << "{int64_t ca[" << (i.b == 0 ? 1 : i.b) << "];";
+                for (uint16_t argument = 0; argument < i.b; ++argument) out << "ca["<<argument<<"]=r["<<(i.a + argument)<<"];";
+                out << "int st=dao_aot_fn_"<<i.immediate<<"(ca,"<<i.b<<",&r["<<i.dst<<"]);if(st)return st;}\n"; break;
             case Opcode::Return: out << "*out=r["<<i.a<<"];return DAO_AOT_OK;\n"; break;
             default: break;
             }

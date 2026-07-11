@@ -103,9 +103,10 @@ struct Expr {
     size_t offset = 0;
 };
 struct Stmt {
-    enum class Type { Expression, Assign, Return, If, While, For, Try, Throw, Break, Continue } type = Type::Expression;
+    enum class Type { Expression, Assign, IndexAssign, Return, If, While, For, Try, Throw, Break, Continue } type = Type::Expression;
     std::string target;
     Expr expr;
+    Expr assignment_target;
     std::vector<Stmt> body;
     std::vector<Stmt> alternate;
 };
@@ -196,7 +197,12 @@ class Parser {
         if (peek().kind == Kind::Name && peek(1).kind == Kind::Op && peek(1).text == "=") {
             stmt.type = Stmt::Type::Assign; stmt.target = take().text; take(); stmt.expr = expression(); return stmt;
         }
-        stmt.expr = expression(); return stmt;
+        stmt.expr = expression();
+        if (peek().kind == Kind::Op && peek().text == "=") {
+            if (stmt.expr.type != Expr::Type::Index) error("invalid assignment target");
+            take(); stmt.type = Stmt::Type::IndexAssign; stmt.assignment_target = std::move(stmt.expr); stmt.expr = expression();
+        }
+        return stmt;
     }
     static int precedence(const Token& token) {
         if (token.kind == Kind::Name && token.text == "or") return 1;
@@ -341,6 +347,12 @@ class Emitter {
             if (stmt.type == Stmt::Type::Continue) {
                 if (loops_.empty()) throw std::runtime_error("continue used outside a loop");
                 loops_.back().continues.push_back(code_.size()); code_.push_back(instruction(Opcode::Jump)); continue;
+            }
+            if (stmt.type == Stmt::Type::IndexAssign) {
+                const uint16_t object = expr(stmt.assignment_target.children[0]);
+                const uint16_t key = expr(stmt.assignment_target.children[1]);
+                const uint16_t value = expr(stmt.expr);
+                code_.push_back(instruction(Opcode::IndexSet, object, key, value)); continue;
             }
             const uint16_t value = expr(stmt.expr);
             if (stmt.type == Stmt::Type::Assign) {
