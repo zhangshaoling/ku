@@ -517,6 +517,27 @@ class Emitter {
             return dst;
         }
         if (e.type == Expr::Type::Call) {
+            if (e.value == "bind") {
+                if (e.children.empty() || e.children[0].type != Expr::Type::Name)
+                    throw std::runtime_error("bind expects a named function at offset " +
+                                             std::to_string(e.offset));
+                const auto target = indices_.find(e.children[0].value);
+                if (target == indices_.end())
+                    throw std::runtime_error("bind target is not a local function at offset " +
+                                             std::to_string(e.offset));
+                std::vector<uint16_t> captured;
+                for (size_t index = 1; index < e.children.size(); ++index)
+                    captured.push_back(expr(e.children[index]));
+                const uint16_t base = static_cast<uint16_t>(next_);
+                for (const uint16_t value : captured) {
+                    const uint16_t slot = temporary();
+                    code_.push_back(instruction(Opcode::Move, slot, value));
+                }
+                const uint16_t dst = temporary();
+                code_.push_back(instruction(Opcode::MakeClosure, dst, base,
+                                            static_cast<uint16_t>(captured.size()), target->second.index));
+                return dst;
+            }
             if (e.value == "len") {
                 if (e.children.size() != 1)
                     throw std::runtime_error("len expects exactly one argument at offset " +

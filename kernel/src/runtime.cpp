@@ -202,6 +202,8 @@ bool is_valid_value(const dao_value& value) {
         return value.reserved == 0 && value.payload != 0;
     if (value.type == DAO_VALUE_FUNCTION)
         return value.reserved == 0 && value.payload >= 0;
+    if (value.type == DAO_VALUE_CLOSURE)
+        return value.reserved == 0 && value.payload != 0;
     if (value.type != DAO_VALUE_BYTES && value.type != DAO_VALUE_STRING)
         return false;
 
@@ -231,10 +233,12 @@ dao_status make_view(dao_bytes bytes, uint32_t type, dao_value* out_value) {
 struct dao_vm {
     struct List { std::vector<dao_value> values; };
     struct Map { std::unordered_map<std::string, dao_value> values; };
+    struct Closure { uint32_t function_index; std::vector<dao_value> captured; };
     dao_vm_config config;
     std::unordered_map<uint32_t, HostFunction> host_functions;
     std::vector<std::unique_ptr<List>> lists;
     std::vector<std::unique_ptr<Map>> maps;
+    std::vector<std::unique_ptr<Closure>> closures;
     mutable std::mutex cache_mutex;
     std::unordered_map<uint64_t, std::vector<dao_module*>> module_cache;
     uint64_t cache_hits = 0;
@@ -284,7 +288,7 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
                               const dao::Instruction& instruction, uint32_t function_index,
                               uint32_t pc, dao_error* error) {
     if (instruction.flags != 0) {
-        return fail(error, DAO_VERIFY_ERROR, "instruction flags must be zero in VM ABI v8",
+        return fail(error, DAO_VERIFY_ERROR, "instruction flags must be zero in VM ABI v9",
                     function_index, pc);
     }
 
@@ -313,6 +317,13 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
         if (valid_register(instruction.dst) && instruction.immediate >= 0 &&
             static_cast<uint64_t>(instruction.immediate) < module.functions.size()) return DAO_OK;
         break;
+    case Opcode::MakeClosure: {
+        const uint64_t end = static_cast<uint64_t>(instruction.a) + instruction.b;
+        if (valid_register(instruction.dst) && end <= function.register_count &&
+            instruction.immediate >= 0 &&
+            static_cast<uint64_t>(instruction.immediate) < module.functions.size()) return DAO_OK;
+        break;
+    }
     case Opcode::LoadNull:
         if (valid_register(instruction.dst)) return DAO_OK;
         break;
@@ -480,6 +491,17 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
             registers[instruction.dst] = dao_value{DAO_VALUE_FUNCTION, 0, instruction.immediate};
             ++pc;
             break;
+        case Opcode::MakeClosure: {
+            auto closure = std::make_unique<dao_vm::Closure>();
+            closure->function_index = static_cast<uint32_t>(instruction.immediate);
+            closure->captured.assign(registers.begin() + instruction.a,
+                                     registers.begin() + instruction.a + instruction.b);
+            vm->closures.push_back(std::move(closure));
+            registers[instruction.dst] = dao_value{DAO_VALUE_CLOSURE, 0,
+                container_handle(vm->container_generation, vm->closures.size() - 1)};
+            ++pc;
+            break;
+        }
         case Opcode::LoadNull:
             registers[instruction.dst] = null_value(); ++pc; break;
         case Opcode::MakeList: {
@@ -684,16 +706,26 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
         }
         case Opcode::CallValue: {
             const dao_value& target = registers[instruction.a];
-            if (target.type != DAO_VALUE_FUNCTION || target.payload < 0 ||
-                static_cast<uint64_t>(target.payload) >= module->functions.size()) {
+            uint32_t target_index = 0;
+            std::vector<dao_value> arguments;
+            if (target.type == DAO_VALUE_FUNCTION && target.payload >= 0 &&
+                static_cast<uint64_t>(target.payload) < module->functions.size()) {
+                target_index = static_cast<uint32_t>(target.payload);
+            } else if (target.type == DAO_VALUE_CLOSURE) {
+                const auto* closure = resolve_container(vm->closures, vm->container_generation, target);
+                if (closure == nullptr) return fail(error, DAO_RUNTIME_ERROR, "stale closure handle", function_index, pc);
+                target_index = closure->function_index;
+                arguments = closure->captured;
+            } else {
                 return fail(error, DAO_TYPE_ERROR, "CALL_VALUE requires a local function reference",
                             function_index, pc);
             }
+            arguments.insert(arguments.end(), registers.begin() + instruction.b,
+                             registers.begin() + instruction.b + instruction.immediate);
             dao_value result = null_value();
             const dao_status status = execute_function(
-                vm, module, static_cast<uint32_t>(target.payload),
-                instruction.immediate == 0 ? nullptr : registers.data() + instruction.b,
-                static_cast<size_t>(instruction.immediate), depth + 1, budget, &result, thrown, error);
+                vm, module, target_index, arguments.empty() ? nullptr : arguments.data(),
+                arguments.size(), depth + 1, budget, &result, thrown, error);
             if (status == DAO_RUNTIME_ERROR && thrown->type != DAO_VALUE_NULL && !handlers.empty()) {
                 pc = handlers.back(); handlers.pop_back(); break;
             }
@@ -735,7 +767,7 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
                             function_index, pc);
             }
             if (result.type == DAO_VALUE_LIST || result.type == DAO_VALUE_MAP ||
-                result.type == DAO_VALUE_FUNCTION) {
+                result.type == DAO_VALUE_FUNCTION || result.type == DAO_VALUE_CLOSURE) {
                 return fail(error, DAO_TYPE_ERROR, "host callbacks cannot manufacture VM-owned containers",
                             function_index, pc);
             }
@@ -1121,11 +1153,11 @@ dao_status dao_vm_call(dao_vm* vm, const dao_module* module, dao_function functi
             return fail(error, DAO_TYPE_ERROR, "argument contains an invalid value");
         }
         if (args[index].type == DAO_VALUE_LIST || args[index].type == DAO_VALUE_MAP ||
-            args[index].type == DAO_VALUE_FUNCTION) {
+            args[index].type == DAO_VALUE_FUNCTION || args[index].type == DAO_VALUE_CLOSURE) {
             return fail(error, DAO_INVALID_ARGUMENT, "VM-owned containers cannot be reused across top-level calls");
         }
     }
-    vm->lists.clear(); vm->maps.clear();
+    vm->lists.clear(); vm->maps.clear(); vm->closures.clear();
     if (++vm->container_generation == 0) ++vm->container_generation;
     uint64_t budget = vm->config.max_instructions_per_call;
     dao_value thrown = null_value();

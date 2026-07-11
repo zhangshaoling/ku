@@ -46,7 +46,8 @@ typedef enum dao_value_type {
     DAO_VALUE_STRING = 4,
     DAO_VALUE_LIST = 5,
     DAO_VALUE_MAP = 6,
-    DAO_VALUE_FUNCTION = 7
+    DAO_VALUE_FUNCTION = 7,
+    DAO_VALUE_CLOSURE = 8
 } dao_value_type;
 
 typedef struct dao_value {

@@ -18,7 +18,7 @@ reuse or reinterpret a reserved C ABI field.
 - `DAO_VALUE_LIST` and `DAO_VALUE_MAP` ownership and cross-call behavior.
 - Container construction and mutation from host bindings.
 - The VM call-arena strategy and future generation-handle representation.
-- VM ABI v8 container, exception, and local function-reference opcodes.
+- VM ABI v9 container, exception, function-reference, and same-call closure opcodes.
 - The portable-C AOT subset and its exported native function convention.
 
 These interfaces must not be advertised as long-term stable until representation

@@ -169,6 +169,7 @@ Opcode parse_opcode(std::string_view token) {
             if (token == "MOVE" || token == "move") return Opcode::Move;
             if (token == "MUL_I64" || token == "mul_i64") return Opcode::MulI64;
             if (token == "MAKE_LIST" || token == "make_list") return Opcode::MakeList;
+            if (token == "MAKE_CLOSURE" || token == "make_closure") return Opcode::MakeClosure;
             if (token == "MAKE_MAP" || token == "make_map") return Opcode::MakeMap;
             break;
         case 'A':
@@ -425,6 +426,18 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
             !parse_register(fields[operand_start + 2], instruction.b)) {
             return fail(error, "instruction: bad operand");
         }
+        break;
+    }
+    case Opcode::MakeClosure: {
+        if (fields.size() - operand_start < 4) return fail(error, "make_closure: expected dst, base, count, function");
+        uint16_t count = 0;
+        if (!parse_register(fields[operand_start], instruction.dst) ||
+            !parse_register(fields[operand_start + 1], instruction.a) ||
+            !parse_uint16_strict(fields[operand_start + 2], count) ||
+            !parse_int64_strict(fields[operand_start + 3], instruction.immediate)) {
+            return fail(error, "make_closure: bad operand");
+        }
+        instruction.b = count;
         break;
     }
     case Opcode::LoadI64:

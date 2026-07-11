@@ -221,6 +221,7 @@ const char* opcode_name(Opcode opcode) {
     case Opcode::LoadFunction: return "LOAD_FUNCTION";
     case Opcode::LoadNull: return "LOAD_NULL";
     case Opcode::MakeList: return "MAKE_LIST";
+    case Opcode::MakeClosure: return "MAKE_CLOSURE";
     case Opcode::ListLength: return "LIST_LEN";
     case Opcode::ListGet: return "LIST_GET";
     case Opcode::ListAppend: return "LIST_APPEND";
@@ -303,6 +304,10 @@ void append_instruction_text(std::ostream& out,
     case Opcode::IndexGet:
     case Opcode::IndexSet:
         out << " r" << instruction.dst << ", r" << instruction.a << ", r" << instruction.b;
+        break;
+    case Opcode::MakeClosure:
+        out << " r" << instruction.dst << ", r" << instruction.a << ", "
+            << instruction.b << ", " << instruction.immediate;
         break;
     case Opcode::TritNot:
         out << " r" << instruction.dst << ", r" << instruction.a;

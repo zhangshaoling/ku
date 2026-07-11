@@ -101,6 +101,8 @@ thought reduce_case() { list_reduce([1, 2, 3, 4], add, 0) }
 thought find_case() { list_find([1, 3, 4, 5], even) }
 thought all_case() { list_all([2, 4, 6], even) }
 thought any_case() { list_any([1, 3, 4], even) }
+thought add_base(base, value) { base + value }
+thought bound_map_case() { list_map([1, 2], bind(add_base, 40)) }
 )";
     dao::km::Options options{};
     options.import_resolver = resolve_list;
@@ -140,6 +142,8 @@ thought any_case() { list_any([1, 3, 4], even) }
         check(expect_value(vm, module, "find_case", DAO_VALUE_I64, 4, &error), "list find");
         check(expect_value(vm, module, "all_case", DAO_VALUE_TRIT, 1, &error), "list all");
         check(expect_value(vm, module, "any_case", DAO_VALUE_TRIT, 1, &error), "list any");
+        check(expect_list_i64(vm, module, "bound_map_case", {41, 42}, &error),
+              "list bound closure");
         dao_function zip{};
         dao_value zipped{};
         size_t size = 0;
