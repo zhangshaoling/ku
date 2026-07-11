@@ -35,6 +35,7 @@ struct DisassembledExport {
 };
 
 struct DisassembledModule {
+    std::vector<std::string> strings;
     std::vector<DisassembledFunction> functions;
     std::vector<DisassembledImport> imports;
     std::vector<DisassembledExport> exports;

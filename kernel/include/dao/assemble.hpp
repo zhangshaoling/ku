@@ -26,6 +26,7 @@ struct ParsedExport {
 };
 
 struct ParsedModule {
+    std::vector<std::string> strings;
     std::vector<ParsedImport> imports;
     std::vector<ParsedFunction> functions;
     std::vector<ParsedExport> exports;

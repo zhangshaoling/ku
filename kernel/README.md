@@ -29,6 +29,21 @@ Run the initial load/call benchmark with:
 .\tools\benchmark_kernel.ps1
 ```
 
+Compile the supported scalar Ku subset to a verified Dao module with:
+
+```powershell
+.\kernel\out\cmake\bin\dao-ku.exe input.ku output.dao
+```
+
+The migration frontend supports functions (`thought`, `func`, or `思`), integer, Trit,
+and string literals, lists, string-keyed maps, indexing, variables, assignment,
+arithmetic, comparisons, internal calls, explicit host imports, `if/else`, `while`,
+`for..in`, `break`, `continue`, `try/catch/throw`, and `return`.
+Host dependencies use `import name(arity)` and are resolved through the numeric C ABI.
+Lists and maps are owned by the VM's top-level call arena. A returned container remains
+valid until the next call on that VM; VM-owned containers cannot be passed back as
+arguments to a later top-level call.
+
 Run the module loader and verifier under libFuzzer, ASan, and UBSan with:
 
 ```powershell

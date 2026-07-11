@@ -41,6 +41,13 @@ struct SectionBytes {
 
 } // namespace
 
+uint32_t ModuleBuilder::add_string(std::string_view value) {
+    const auto found = std::find(strings_.begin(), strings_.end(), value);
+    if (found != strings_.end()) return static_cast<uint32_t>(found - strings_.begin());
+    if (strings_.size() >= std::numeric_limits<uint32_t>::max()) throw std::length_error("too many string constants");
+    strings_.emplace_back(value); return static_cast<uint32_t>(strings_.size() - 1);
+}
+
 uint32_t ModuleBuilder::add_import(uint32_t symbol_id, uint16_t parameter_count) {
     const auto duplicate =
         std::find_if(imports_.begin(), imports_.end(),
@@ -84,6 +91,20 @@ std::vector<uint8_t> ModuleBuilder::encode() const {
     SectionBytes code{SectionType::Code, 0, {}, 0};
     SectionBytes exports{SectionType::Exports, static_cast<uint32_t>(exports_.size()), {}, 0};
     SectionBytes imports{SectionType::Imports, static_cast<uint32_t>(imports_.size()), {}, 0};
+    SectionBytes data{SectionType::Data, static_cast<uint32_t>(strings_.size()), {}, 0};
+
+    const size_t records_size = strings_.size() * kDataRecordSize;
+    data.bytes.resize(records_size, 0);
+    for (size_t index = 0; index < strings_.size(); ++index) {
+        const auto& value = strings_[index];
+        if (data.bytes.size() > std::numeric_limits<uint32_t>::max() || value.size() > std::numeric_limits<uint32_t>::max())
+            throw std::length_error("string constant data exceeds v1 range");
+        const uint32_t offset = static_cast<uint32_t>(data.bytes.size());
+        const uint32_t length = static_cast<uint32_t>(value.size());
+        for (int shift = 0; shift < 32; shift += 8) data.bytes[index * 8 + static_cast<size_t>(shift / 8)] = static_cast<uint8_t>(offset >> shift);
+        for (int shift = 0; shift < 32; shift += 8) data.bytes[index * 8 + 4 + static_cast<size_t>(shift / 8)] = static_cast<uint8_t>(length >> shift);
+        data.bytes.insert(data.bytes.end(), value.begin(), value.end());
+    }
 
     for (const auto& item : imports_) {
         append_u32(imports.bytes, item.symbol_id);
@@ -129,6 +150,7 @@ std::vector<uint8_t> ModuleBuilder::encode() const {
     sections.push_back(std::move(code));
     sections.push_back(std::move(exports));
     sections.push_back(std::move(imports));
+    sections.push_back(std::move(data));
 
     std::vector<uint8_t> out;
     out.insert(out.end(), {'D', 'A', 'O', 0});

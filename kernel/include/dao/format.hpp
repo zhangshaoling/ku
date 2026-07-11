@@ -2,24 +2,28 @@
 #define DAO_KERNEL_FORMAT_HPP
 
 #include <cstdint>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace dao {
 
 inline constexpr uint16_t kFormatVersion = 1;
-inline constexpr uint16_t kVmAbiVersion = 3;
+inline constexpr uint16_t kVmAbiVersion = 5;
 inline constexpr uint32_t kHeaderSize = 16;
 inline constexpr uint32_t kSectionEntrySize = 16;
 inline constexpr uint32_t kFunctionRecordSize = 16;
 inline constexpr uint32_t kInstructionSize = 16;
 inline constexpr uint32_t kExportRecordSize = 8;
 inline constexpr uint32_t kImportRecordSize = 8;
+inline constexpr uint32_t kDataRecordSize = 8;
 
 enum class SectionType : uint32_t {
     Functions = 1,
     Code = 2,
     Exports = 3,
     Imports = 4,
+    Data = 5,
 };
 
 enum class Opcode : uint8_t {
@@ -40,6 +44,25 @@ enum class Opcode : uint8_t {
     Call = 14,
     Return = 15,
     CallHost = 16,
+    LoadTrit = 17,
+    RemI64 = 18,
+    CompareEqI64 = 19,
+    CompareNeI64 = 20,
+    CompareLtI64 = 21,
+    CompareLeI64 = 22,
+    CompareGtI64 = 23,
+    CompareGeI64 = 24,
+    LoadString = 25,
+    MakeList = 26,
+    ListLength = 27,
+    ListGet = 28,
+    MakeMap = 29,
+    IndexGet = 30,
+    TryBegin = 31,
+    TryEnd = 32,
+    Throw = 33,
+    Catch = 34,
+    LoadNull = 35,
 };
 
 struct Instruction {
@@ -59,6 +82,7 @@ struct FunctionSpec {
 
 class ModuleBuilder {
   public:
+    uint32_t add_string(std::string_view value);
     uint32_t add_import(uint32_t symbol_id, uint16_t parameter_count);
     uint32_t add_function(FunctionSpec function);
     void add_export(uint32_t symbol_id, uint32_t function_index);
@@ -78,6 +102,7 @@ class ModuleBuilder {
     std::vector<ImportSpec> imports_;
     std::vector<FunctionSpec> functions_;
     std::vector<ExportSpec> exports_;
+    std::vector<std::string> strings_;
 };
 
 } // namespace dao

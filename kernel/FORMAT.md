@@ -1,4 +1,4 @@
-# Dao Binary Module v1 and Register Bytecode ABI v3
+# Dao Binary Module v1 and Register Bytecode ABI v5
 
 All multibyte values use little-endian encoding. Offsets are relative to the start of the module.
 
@@ -10,9 +10,9 @@ Size: 16 bytes.
 | ---: | ---: | --- | --- |
 | 0 | 4 | magic | `44 41 4f 00` (`DAO\0`) |
 | 4 | 2 | format version | `1` |
-| 6 | 2 | VM ABI version | `3` |
+| 6 | 2 | VM ABI version | `5` |
 | 8 | 4 | flags | `0` |
-| 12 | 4 | section count | `4` |
+| 12 | 4 | section count | `5` |
 
 Unknown versions or nonzero v1 flags are rejected.
 
@@ -35,8 +35,9 @@ Initial section types:
 | 2 | `CODE` | 16 |
 | 3 | `EXPORT` | 8 |
 | 4 | `IMPORT` | 8 |
+| 5 | `DATA` | variable |
 
-Sections must lie after the section table, remain inside the module, and not overlap. Duplicate or unknown section types are rejected. VM ABI v3 requires all four sections; `IMPORT` may contain zero records.
+Sections must lie after the section table, remain inside the module, and not overlap. Duplicate or unknown section types are rejected. VM ABI v5 requires all five sections; `IMPORT` and `DATA` may contain zero records.
 
 ## Runtime Value ABI
 
@@ -44,11 +45,18 @@ Sections must lie after the section table, remain inside the module, and not ove
 
 | Offset | Size | Field | Scalar | Borrowed view |
 | ---: | ---: | --- | --- | --- |
-| 0 | 4 | type | `NULL/I64/TRIT` | `BYTES/STRING` |
+| 0 | 4 | type | `NULL/I64/TRIT/LIST/MAP` | `BYTES/STRING` |
 | 4 | 4 | reserved | zero | byte length |
 | 8 | 8 | payload | scalar payload | pointer encoded through `intptr_t` |
 
 Borrowed views are limited to `UINT32_MAX` bytes so the register value stays 16 bytes. A nonempty view requires a non-null pointer. `STRING` must contain strict UTF-8: overlong encodings, surrogate code points, invalid continuation bytes, truncation, and values above `U+10FFFF` are rejected. The VM never copies, owns, frees, or extends the lifetime of view storage.
+
+## Data String Record
+
+The `DATA` section begins with `count` 8-byte records containing a section-relative
+`uint32` byte offset and `uint32` byte length. Payload bytes follow the records. Ranges
+must remain inside `DATA`, may not point into the record table, and must be strict UTF-8.
+The loader copies strings into immutable module-owned storage.
 
 ## Import Record
 
@@ -112,6 +120,25 @@ Branch targets are function-local instruction indexes.
 | 14 | `CALL` | call function `immediate`, args start at `a`, count `b`, result to `dst` |
 | 15 | `RETURN` | return register `a` |
 | 16 | `CALL_HOST` | call import `immediate`, args start at `a`, count `b`, result to `dst` |
+| 17 | `LOAD_TRIT` | load `-1`, `0`, or `+1` into `dst` |
+| 18 | `REM_I64` | integer remainder `dst = a % b` |
+| 19 | `EQ_I64` | integer equality, returning Trit true/false |
+| 20 | `NE_I64` | integer inequality, returning Trit true/false |
+| 21 | `LT_I64` | integer less-than, returning Trit true/false |
+| 22 | `LE_I64` | integer less-than-or-equal, returning Trit true/false |
+| 23 | `GT_I64` | integer greater-than, returning Trit true/false |
+| 24 | `GE_I64` | integer greater-than-or-equal, returning Trit true/false |
+| 25 | `LOAD_STRING` | load a module-owned UTF-8 constant |
+| 26 | `MAKE_LIST` | construct a VM-owned list from consecutive registers |
+| 27 | `LIST_LEN` | return list length as i64 |
+| 28 | `LIST_GET` | read list element by i64 index |
+| 29 | `MAKE_MAP` | construct a string-keyed map from key/value register pairs |
+| 30 | `INDEX_GET` | dynamically index a list or map |
+| 31 | `TRY_BEGIN` | push a function-local exception handler target |
+| 32 | `TRY_END` | pop the active exception handler |
+| 33 | `THROW` | propagate a value to the nearest handler |
+| 34 | `CATCH` | load the current caught value |
+| 35 | `LOAD_NULL` | load the typed null value |
 
 Arithmetic requires `i64`. Trit operations and branches require payload `-1`, `0`, or `+1`. Type mismatches trap with a structured status.
 
@@ -141,4 +168,4 @@ Instruction budget is shared by nested calls. These limits are part of host poli
 
 ## Versioning
 
-Changing an opcode's meaning, record layout, register convention, or value ABI requires a VM ABI version change. VM ABI v2 added `IMPORT` and `CALL_HOST`. VM ABI v3 adds the 16-byte borrowed `BYTES` and UTF-8 `STRING` value representations. Older modules are intentionally rejected rather than guessed. Adding an optional container feature requires a declared flag and compatible loader behavior.
+Changing an opcode's meaning, record layout, register convention, or value ABI requires a VM ABI version change. VM ABI v2 added `IMPORT` and `CALL_HOST`. VM ABI v3 added borrowed views. VM ABI v4 added Trit constants, remainder, and comparisons. VM ABI v5 adds module DATA constants, VM-owned containers, indexing, and structured exceptions. Older modules are intentionally rejected rather than guessed.

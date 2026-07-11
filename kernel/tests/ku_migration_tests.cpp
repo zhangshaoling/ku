@@ -1,0 +1,149 @@
+#include "dao/assemble.hpp"
+#include "dao/disassemble.hpp"
+#include "dao/ku_migration.hpp"
+
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <string>
+#include <vector>
+
+namespace {
+int failures = 0;
+void check(bool condition, const char* message) { if (!condition) { ++failures; std::cerr << "FAIL " << message << '\n'; } }
+uint32_t symbol_id(std::string_view name) { uint32_t hash = 2166136261u; for (const unsigned char c : name) { hash ^= c; hash *= 16777619u; } return hash; }
+dao_status host_double(void*, const dao_value* args, size_t count, dao_value* out) {
+    if (count != 1 || args[0].type != DAO_VALUE_I64) return DAO_TYPE_ERROR;
+    *out = {DAO_VALUE_I64, 0, args[0].payload * 2}; return DAO_OK;
+}
+}
+#define CHECK(name, expression) check((expression), (name))
+
+int main() {
+    const char* source = R"(
+import host_double(1)
+thought add(a, b) { return a + b }
+thought use_host(x) { host_double(x) }
+thought literal() { "Dao道" }
+thought calculate(x) {
+  doubled = add(x, x)
+  (doubled * 3) % 100
+}
+thought compare(x) { x >= 7 }
+thought logic() { true and not false }
+thought nothing() { null }
+thought choose(x) {
+  if x > 0 { return 10 } else { return 20 }
+}
+thought sum_to(n) {
+  total = 0
+  while n > 0 {
+    total = total + n
+    n = n - 1
+  }
+  return total
+}
+thought loop_control(n) {
+  total = 0
+  while n > 0 {
+    n = n - 1
+    if n == 3 { continue }
+    if n == 1 { break }
+    total = total + n
+  }
+  return total
+}
+thought list_sum() {
+  values = [1, 2, 3, 4]
+  total = values[0]
+  for value in values {
+    if value == 2 { continue }
+    total = total + value
+  }
+  return total
+}
+thought map_read() {
+  values = {"answer": 42, "other": 7}
+  return values["answer"]
+}
+thought raises() { throw "bad" }
+thought catches() {
+  try { raises() } catch err { return err }
+}
+)";
+    dao::ModuleBuilder builder;
+    dao_error error{};
+    CHECK("compile source", dao::km::compile(source, builder, &error));
+    const auto bytes = builder.encode();
+
+    dao_vm_config config = dao_vm_config_default();
+    dao_vm* vm = dao_vm_create(&config); dao_module* module = nullptr;
+    CHECK("load generated module", dao_vm_load_module(vm, {bytes.data(), bytes.size()}, &module, &error) == DAO_OK);
+    dao_function fn{}; CHECK("find calculate", dao_module_find_export(module, symbol_id("calculate"), &fn) == DAO_OK);
+    const dao_value args[] = {{DAO_VALUE_I64, 0, 7}}; dao_value result{};
+    dao_host_function host{sizeof(dao_host_function), symbol_id("host_double"), 1, 0, host_double, nullptr};
+    CHECK("register compiled host import", dao_vm_register_host_function(vm, &host) == DAO_OK);
+    CHECK("find host wrapper", dao_module_find_export(module, symbol_id("use_host"), &fn) == DAO_OK);
+    CHECK("execute host wrapper", dao_vm_call(vm, module, fn, args, 1, &result, &error) == DAO_OK);
+    CHECK("host wrapper result", result.type == DAO_VALUE_I64 && result.payload == 14);
+    CHECK("find string literal", dao_module_find_export(module, symbol_id("literal"), &fn) == DAO_OK);
+    CHECK("execute string literal", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    dao_bytes string_view{};
+    CHECK("read string literal", dao_value_get_view(&result, &string_view) == DAO_OK);
+    CHECK("string literal bytes", string_view.size == 6 && std::memcmp(string_view.data, "Dao\xe9\x81\x93", 6) == 0);
+    CHECK("refind calculate", dao_module_find_export(module, symbol_id("calculate"), &fn) == DAO_OK);
+    CHECK("execute calculate", dao_vm_call(vm, module, fn, args, 1, &result, &error) == DAO_OK);
+    CHECK("calculate result", result.type == DAO_VALUE_I64 && result.payload == 42);
+    CHECK("find compare", dao_module_find_export(module, symbol_id("compare"), &fn) == DAO_OK);
+    CHECK("execute compare", dao_vm_call(vm, module, fn, args, 1, &result, &error) == DAO_OK);
+    CHECK("compare result", result.type == DAO_VALUE_TRIT && result.payload == 1);
+    CHECK("find logic", dao_module_find_export(module, symbol_id("logic"), &fn) == DAO_OK);
+    CHECK("execute logic", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("logic result", result.type == DAO_VALUE_TRIT && result.payload == 1);
+    CHECK("find null", dao_module_find_export(module, symbol_id("nothing"), &fn) == DAO_OK);
+    CHECK("execute null", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("null result", result.type == DAO_VALUE_NULL);
+    CHECK("find choose", dao_module_find_export(module, symbol_id("choose"), &fn) == DAO_OK);
+    CHECK("execute true branch", dao_vm_call(vm, module, fn, args, 1, &result, &error) == DAO_OK);
+    CHECK("true branch result", result.type == DAO_VALUE_I64 && result.payload == 10);
+    const dao_value negative[] = {{DAO_VALUE_I64, 0, -1}};
+    CHECK("execute false branch", dao_vm_call(vm, module, fn, negative, 1, &result, &error) == DAO_OK);
+    CHECK("false branch result", result.type == DAO_VALUE_I64 && result.payload == 20);
+    CHECK("find sum_to", dao_module_find_export(module, symbol_id("sum_to"), &fn) == DAO_OK);
+    const dao_value five[] = {{DAO_VALUE_I64, 0, 5}};
+    CHECK("execute while", dao_vm_call(vm, module, fn, five, 1, &result, &error) == DAO_OK);
+    CHECK("while result", result.type == DAO_VALUE_I64 && result.payload == 15);
+    CHECK("find loop_control", dao_module_find_export(module, symbol_id("loop_control"), &fn) == DAO_OK);
+    CHECK("execute break continue", dao_vm_call(vm, module, fn, five, 1, &result, &error) == DAO_OK);
+    CHECK("break continue result", result.type == DAO_VALUE_I64 && result.payload == 6);
+    CHECK("find list_sum", dao_module_find_export(module, symbol_id("list_sum"), &fn) == DAO_OK);
+    CHECK("execute list for", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("list for result", result.type == DAO_VALUE_I64 && result.payload == 9);
+    CHECK("find map_read", dao_module_find_export(module, symbol_id("map_read"), &fn) == DAO_OK);
+    CHECK("execute map read", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("map read result", result.type == DAO_VALUE_I64 && result.payload == 42);
+    CHECK("find catches", dao_module_find_export(module, symbol_id("catches"), &fn) == DAO_OK);
+    CHECK("execute cross-call catch", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("read caught value", dao_value_get_view(&result, &string_view) == DAO_OK);
+    CHECK("caught value", string_view.size == 3 && std::memcmp(string_view.data, "bad", 3) == 0);
+    CHECK("find raises", dao_module_find_export(module, symbol_id("raises"), &fn) == DAO_OK);
+    CHECK("uncaught throw", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_RUNTIME_ERROR);
+
+    dao::DisassembledModule disassembled{};
+    CHECK("disassemble", dao::disassemble({bytes.data(), bytes.size()}, &disassembled, &error) == DAO_OK);
+    std::vector<uint8_t> round_trip;
+    const bool assembled = dao::assemble_text(dao::to_text(disassembled), &round_trip, &error);
+    if (!assembled) std::cerr << "assemble error: " << error.message << '\n';
+    CHECK("assemble text", assembled);
+    CHECK("round trip identical", round_trip == bytes);
+
+    dao::ModuleBuilder invalid;
+    CHECK("reject break outside loop", !dao::km::compile("thought bad() { break }", invalid, &error));
+    dao::ModuleBuilder bad_arity;
+    CHECK("reject internal arity mismatch", !dao::km::compile("thought f(x) { x } thought g() { f() }", bad_arity, &error));
+
+    dao_module_release(module); dao_vm_destroy(vm);
+    if (failures) return EXIT_FAILURE;
+    std::cout << "dao ku migration tests passed\n";
+    return EXIT_SUCCESS;
+}

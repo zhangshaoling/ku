@@ -96,7 +96,7 @@ dao_status parse_sections(const uint8_t* data, size_t size, uint32_t section_cou
         const uint8_t* entry = data + kHeaderSize + static_cast<size_t>(index) * kSectionEntrySize;
         Section section{static_cast<SectionType>(read_u32(entry)), read_u32(entry + 4),
                         read_u32(entry + 8), read_u32(entry + 12)};
-        if (section.type < SectionType::Functions || section.type > SectionType::Imports) {
+        if (section.type < SectionType::Functions || section.type > SectionType::Data) {
             return fail(error, DAO_BAD_MODULE, "unknown section type");
         }
         const uint64_t end = static_cast<uint64_t>(section.offset) + section.size;
@@ -137,8 +137,19 @@ dao_status disassemble(dao_bytes bytes, DisassembledModule* out_module, dao_erro
     const Section* code_section = find_section(sections, SectionType::Code);
     const Section* exports_section = find_section(sections, SectionType::Exports);
     const Section* imports_section = find_section(sections, SectionType::Imports);
-    if (!functions_section || !code_section || !exports_section || !imports_section) {
+    const Section* data_section = find_section(sections, SectionType::Data);
+    if (!functions_section || !code_section || !exports_section || !imports_section || !data_section) {
         return fail(error, DAO_BAD_MODULE, "required section is missing");
+    }
+
+    const uint64_t records_size = static_cast<uint64_t>(data_section->count) * kDataRecordSize;
+    if (records_size > data_section->size) return fail(error, DAO_BAD_MODULE, "truncated data records");
+    for (uint32_t index = 0; index < data_section->count; ++index) {
+        const uint8_t* record = bytes.data + data_section->offset + static_cast<size_t>(index) * kDataRecordSize;
+        const uint32_t offset = read_u32(record); const uint32_t length = read_u32(record + 4);
+        if (offset < records_size || static_cast<uint64_t>(offset) + length > data_section->size)
+            return fail(error, DAO_BAD_MODULE, "invalid data record");
+        out_module->strings.emplace_back(reinterpret_cast<const char*>(bytes.data + data_section->offset + offset), length);
     }
 
     out_module->imports.reserve(imports_section->count);
@@ -205,6 +216,25 @@ const char* opcode_name(Opcode opcode) {
         return "MUL_I64";
     case Opcode::DivI64:
         return "DIV_I64";
+    case Opcode::LoadTrit: return "LOAD_TRIT";
+    case Opcode::LoadString: return "LOAD_STRING";
+    case Opcode::LoadNull: return "LOAD_NULL";
+    case Opcode::MakeList: return "MAKE_LIST";
+    case Opcode::ListLength: return "LIST_LEN";
+    case Opcode::ListGet: return "LIST_GET";
+    case Opcode::MakeMap: return "MAKE_MAP";
+    case Opcode::IndexGet: return "INDEX_GET";
+    case Opcode::TryBegin: return "TRY_BEGIN";
+    case Opcode::TryEnd: return "TRY_END";
+    case Opcode::Throw: return "THROW";
+    case Opcode::Catch: return "CATCH";
+    case Opcode::RemI64: return "REM_I64";
+    case Opcode::CompareEqI64: return "EQ_I64";
+    case Opcode::CompareNeI64: return "NE_I64";
+    case Opcode::CompareLtI64: return "LT_I64";
+    case Opcode::CompareLeI64: return "LE_I64";
+    case Opcode::CompareGtI64: return "GT_I64";
+    case Opcode::CompareGeI64: return "GE_I64";
     case Opcode::TritNot:
         return "TRIT_NOT";
     case Opcode::TritAnd:
@@ -235,23 +265,43 @@ void append_instruction_text(std::ostream& out,
         << opcode_name(instruction.opcode);
     switch (instruction.opcode) {
     case Opcode::Nop:
+    case Opcode::TryEnd:
         break;
     case Opcode::LoadI64:
+    case Opcode::LoadTrit:
+    case Opcode::LoadString:
         out << " r" << instruction.dst << ", " << instruction.immediate;
         break;
+    case Opcode::LoadNull:
+        out << " r" << instruction.dst;
+        break;
     case Opcode::Move:
+    case Opcode::ListLength:
         out << " r" << instruction.dst << ", r" << instruction.a;
         break;
     case Opcode::AddI64:
     case Opcode::SubI64:
     case Opcode::MulI64:
     case Opcode::DivI64:
+    case Opcode::RemI64:
+    case Opcode::CompareEqI64:
+    case Opcode::CompareNeI64:
+    case Opcode::CompareLtI64:
+    case Opcode::CompareLeI64:
+    case Opcode::CompareGtI64:
+    case Opcode::CompareGeI64:
+    case Opcode::MakeList:
+    case Opcode::MakeMap:
+    case Opcode::ListGet:
+    case Opcode::IndexGet:
         out << " r" << instruction.dst << ", r" << instruction.a << ", r" << instruction.b;
         break;
     case Opcode::TritNot:
+        out << " r" << instruction.dst << ", r" << instruction.a;
+        break;
     case Opcode::TritAnd:
     case Opcode::TritOr:
-        out << " r" << instruction.dst << ", r" << instruction.a;
+        out << " r" << instruction.dst << ", r" << instruction.a << ", r" << instruction.b;
         break;
     case Opcode::BranchTritNegative:
     case Opcode::BranchTritZero:
@@ -261,16 +311,27 @@ void append_instruction_text(std::ostream& out,
     case Opcode::Jump:
         out << " ->" << instruction.immediate;
         break;
+    case Opcode::TryBegin:
+        out << " ->" << instruction.immediate;
+        break;
+    case Opcode::Throw:
+        out << " r" << instruction.a;
+        break;
+    case Opcode::Catch:
+        out << " r" << instruction.dst;
+        break;
     case Opcode::Call:
-        out << " fn" << instruction.immediate << ", args r" << instruction.a << ".."
-            << (instruction.a + instruction.b - 1) << ", dst r" << instruction.dst;
+        out << " fn" << instruction.immediate << ", args ";
+        if (instruction.b == 0) out << "none"; else out << "r" << instruction.a << ".." << (instruction.a + instruction.b - 1);
+        out << ", dst r" << instruction.dst;
         break;
     case Opcode::Return:
         out << " r" << instruction.a;
         break;
     case Opcode::CallHost:
-        out << " import" << instruction.immediate << ", args r" << instruction.a << ".."
-            << (instruction.a + instruction.b - 1) << ", dst r" << instruction.dst;
+        out << " import" << instruction.immediate << ", args ";
+        if (instruction.b == 0) out << "none"; else out << "r" << instruction.a << ".." << (instruction.a + instruction.b - 1);
+        out << ", dst r" << instruction.dst;
         break;
     }
 }
@@ -289,6 +350,14 @@ std::string to_text(const DisassembledModule& module) {
     for (const auto& export_ : module.exports) {
         out << "  symbol=" << export_.symbol_id << " -> function " << export_.function_index
             << "\n";
+    }
+
+    out << "strings: " << module.strings.size() << "\n";
+    constexpr char hex[] = "0123456789abcdef";
+    for (const auto& value : module.strings) {
+        out << "  hex=";
+        for (const unsigned char byte : value) out << hex[byte >> 4] << hex[byte & 15];
+        out << "\n";
     }
 
     out << "functions: " << module.functions.size() << "\n";

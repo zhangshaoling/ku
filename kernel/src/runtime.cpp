@@ -5,6 +5,7 @@
 #include <cstring>
 #include <limits>
 #include <new>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -192,6 +193,10 @@ bool is_valid_value(const dao_value& value) {
         return value.reserved == 0;
     if (value.type == DAO_VALUE_TRIT)
         return value.reserved == 0 && is_trit(value);
+    if (value.type == DAO_VALUE_LIST)
+        return value.reserved == 0 && value.payload != 0;
+    if (value.type == DAO_VALUE_MAP)
+        return value.reserved == 0 && value.payload != 0;
     if (value.type != DAO_VALUE_BYTES && value.type != DAO_VALUE_STRING)
         return false;
 
@@ -219,8 +224,12 @@ dao_status make_view(dao_bytes bytes, uint32_t type, dao_value* out_value) {
 } // namespace
 
 struct dao_vm {
+    struct List { std::vector<dao_value> values; };
+    struct Map { std::unordered_map<std::string, dao_value> values; };
     dao_vm_config config;
     std::unordered_map<uint32_t, HostFunction> host_functions;
+    std::vector<std::unique_ptr<List>> lists;
+    std::vector<std::unique_ptr<Map>> maps;
 };
 
 struct dao_module {
@@ -228,6 +237,7 @@ struct dao_module {
     std::vector<dao::Instruction> code;
     std::vector<ImportRecord> imports;
     std::unordered_map<uint32_t, uint32_t> exports;
+    std::vector<std::string> strings;
     uint64_t fingerprint = 0;
 };
 
@@ -246,7 +256,7 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
                               const dao::Instruction& instruction, uint32_t function_index,
                               uint32_t pc, dao_error* error) {
     if (instruction.flags != 0) {
-        return fail(error, DAO_VERIFY_ERROR, "instruction flags must be zero in VM ABI v3",
+        return fail(error, DAO_VERIFY_ERROR, "instruction flags must be zero in VM ABI v5",
                     function_index, pc);
     }
 
@@ -262,8 +272,45 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
     case Opcode::Nop:
         return DAO_OK;
     case Opcode::LoadI64:
+    case Opcode::LoadTrit:
         if (valid_register(instruction.dst))
-            return DAO_OK;
+            if (instruction.opcode != Opcode::LoadTrit ||
+                (instruction.immediate >= -1 && instruction.immediate <= 1)) return DAO_OK;
+        break;
+    case Opcode::LoadString:
+        if (valid_register(instruction.dst) && instruction.immediate >= 0 &&
+            static_cast<uint64_t>(instruction.immediate) < module.strings.size()) return DAO_OK;
+        break;
+    case Opcode::LoadNull:
+        if (valid_register(instruction.dst)) return DAO_OK;
+        break;
+    case Opcode::MakeList: {
+        const uint32_t end = static_cast<uint32_t>(instruction.a) + instruction.b;
+        if (valid_register(instruction.dst) && end <= function.register_count) return DAO_OK;
+        break;
+    }
+    case Opcode::MakeMap: {
+        const uint32_t end = static_cast<uint32_t>(instruction.a) + static_cast<uint32_t>(instruction.b) * 2u;
+        if (valid_register(instruction.dst) && end <= function.register_count) return DAO_OK;
+        break;
+    }
+    case Opcode::ListLength:
+        if (valid_register(instruction.dst) && valid_register(instruction.a)) return DAO_OK;
+        break;
+    case Opcode::ListGet:
+    case Opcode::IndexGet:
+        if (valid_register(instruction.dst) && valid_register(instruction.a) && valid_register(instruction.b)) return DAO_OK;
+        break;
+    case Opcode::TryBegin:
+        if (valid_target(instruction.immediate)) return DAO_OK;
+        break;
+    case Opcode::TryEnd:
+        return DAO_OK;
+    case Opcode::Throw:
+        if (valid_register(instruction.a)) return DAO_OK;
+        break;
+    case Opcode::Catch:
+        if (valid_register(instruction.dst)) return DAO_OK;
         break;
     case Opcode::Move:
     case Opcode::TritNot:
@@ -274,6 +321,13 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
     case Opcode::SubI64:
     case Opcode::MulI64:
     case Opcode::DivI64:
+    case Opcode::RemI64:
+    case Opcode::CompareEqI64:
+    case Opcode::CompareNeI64:
+    case Opcode::CompareLtI64:
+    case Opcode::CompareLeI64:
+    case Opcode::CompareGtI64:
+    case Opcode::CompareGeI64:
     case Opcode::TritAnd:
     case Opcode::TritOr:
         if (valid_register(instruction.dst) && valid_register(instruction.a) &&
@@ -327,7 +381,7 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
 
 dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t function_index,
                             const dao_value* args, size_t arg_count, uint32_t depth,
-                            uint64_t& budget, dao_value* out, dao_error* error) {
+                            uint64_t& budget, dao_value* out, dao_value* thrown, dao_error* error) {
     if (depth >= vm->config.max_call_depth) {
         return fail(error, DAO_CALL_DEPTH_EXCEEDED, "maximum call depth exceeded", function_index);
     }
@@ -346,6 +400,7 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
         registers[index] = args[index];
 
     uint32_t pc = 0;
+    std::vector<uint32_t> handlers;
     while (pc < function.code_count) {
         if (budget == 0) {
             return fail(error, DAO_INSTRUCTION_LIMIT_EXCEEDED, "instruction budget exhausted",
@@ -367,6 +422,74 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
             registers[instruction.dst] = dao_value{DAO_VALUE_I64, 0, instruction.immediate};
             ++pc;
             break;
+        case Opcode::LoadTrit:
+            registers[instruction.dst] = dao_value{DAO_VALUE_TRIT, 0, instruction.immediate};
+            ++pc;
+            break;
+        case Opcode::LoadString: {
+            const auto& value = module->strings[static_cast<size_t>(instruction.immediate)];
+            registers[instruction.dst] = dao_value{DAO_VALUE_STRING, static_cast<uint32_t>(value.size()),
+                static_cast<int64_t>(reinterpret_cast<intptr_t>(value.data()))};
+            ++pc; break;
+        }
+        case Opcode::LoadNull:
+            registers[instruction.dst] = null_value(); ++pc; break;
+        case Opcode::MakeList: {
+            auto list = std::make_unique<dao_vm::List>();
+            list->values.assign(registers.begin() + instruction.a, registers.begin() + instruction.a + instruction.b);
+            auto* pointer = list.get(); vm->lists.push_back(std::move(list));
+            registers[instruction.dst] = dao_value{DAO_VALUE_LIST, 0, static_cast<int64_t>(reinterpret_cast<intptr_t>(pointer))};
+            ++pc; break;
+        }
+        case Opcode::MakeMap: {
+            auto map = std::make_unique<dao_vm::Map>();
+            for (uint16_t i = 0; i < instruction.b; ++i) {
+                const dao_value& key = registers[instruction.a + i * 2]; const dao_value& value = registers[instruction.a + i * 2 + 1];
+                if (key.type != DAO_VALUE_STRING) return fail(error, DAO_TYPE_ERROR, "map keys must be strings", function_index, pc);
+                map->values[std::string(reinterpret_cast<const char*>(view_data(key)), key.reserved)] = value;
+            }
+            auto* pointer = map.get(); vm->maps.push_back(std::move(map));
+            registers[instruction.dst] = dao_value{DAO_VALUE_MAP, 0, static_cast<int64_t>(reinterpret_cast<intptr_t>(pointer))}; ++pc; break;
+        }
+        case Opcode::ListLength: {
+            if (registers[instruction.a].type != DAO_VALUE_LIST) return fail(error, DAO_TYPE_ERROR, "LIST_LEN requires a list", function_index, pc);
+            const auto* list = reinterpret_cast<const dao_vm::List*>(static_cast<intptr_t>(registers[instruction.a].payload));
+            registers[instruction.dst] = dao_value{DAO_VALUE_I64, 0, static_cast<int64_t>(list->values.size())}; ++pc; break;
+        }
+        case Opcode::ListGet: {
+            if (registers[instruction.a].type != DAO_VALUE_LIST || !require_i64(instruction.b)) return fail(error, DAO_TYPE_ERROR, "LIST_GET requires list and i64 index", function_index, pc);
+            const auto* list = reinterpret_cast<const dao_vm::List*>(static_cast<intptr_t>(registers[instruction.a].payload));
+            const int64_t index = registers[instruction.b].payload;
+            if (index < 0 || static_cast<uint64_t>(index) >= list->values.size()) return fail(error, DAO_RUNTIME_ERROR, "list index out of range", function_index, pc);
+            registers[instruction.dst] = list->values[static_cast<size_t>(index)]; ++pc; break;
+        }
+        case Opcode::IndexGet: {
+            const dao_value& object = registers[instruction.a]; const dao_value& key = registers[instruction.b];
+            if (object.type == DAO_VALUE_LIST) {
+                if (key.type != DAO_VALUE_I64) return fail(error, DAO_TYPE_ERROR, "list index must be i64", function_index, pc);
+                const auto* list = reinterpret_cast<const dao_vm::List*>(static_cast<intptr_t>(object.payload)); const int64_t index = key.payload;
+                if (index < 0 || static_cast<uint64_t>(index) >= list->values.size()) return fail(error, DAO_RUNTIME_ERROR, "list index out of range", function_index, pc);
+                registers[instruction.dst] = list->values[static_cast<size_t>(index)];
+            } else if (object.type == DAO_VALUE_MAP) {
+                if (key.type != DAO_VALUE_STRING) return fail(error, DAO_TYPE_ERROR, "map key must be string", function_index, pc);
+                const auto* map = reinterpret_cast<const dao_vm::Map*>(static_cast<intptr_t>(object.payload));
+                const auto found = map->values.find(std::string(reinterpret_cast<const char*>(view_data(key)), key.reserved));
+                if (found == map->values.end()) return fail(error, DAO_RUNTIME_ERROR, "map key not found", function_index, pc);
+                registers[instruction.dst] = found->second;
+            } else return fail(error, DAO_TYPE_ERROR, "indexing requires list or map", function_index, pc);
+            ++pc; break;
+        }
+        case Opcode::TryBegin:
+            handlers.push_back(static_cast<uint32_t>(instruction.immediate)); ++pc; break;
+        case Opcode::TryEnd:
+            if (handlers.empty()) return fail(error, DAO_RUNTIME_ERROR, "TRY_END without handler", function_index, pc);
+            handlers.pop_back(); ++pc; break;
+        case Opcode::Throw:
+            *thrown = registers[instruction.a];
+            if (handlers.empty()) return DAO_RUNTIME_ERROR;
+            pc = handlers.back(); handlers.pop_back(); break;
+        case Opcode::Catch:
+            registers[instruction.dst] = *thrown; *thrown = null_value(); ++pc; break;
         case Opcode::Move:
             registers[instruction.dst] = registers[instruction.a];
             ++pc;
@@ -374,7 +497,14 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
         case Opcode::AddI64:
         case Opcode::SubI64:
         case Opcode::MulI64:
-        case Opcode::DivI64: {
+        case Opcode::DivI64:
+        case Opcode::RemI64:
+        case Opcode::CompareEqI64:
+        case Opcode::CompareNeI64:
+        case Opcode::CompareLtI64:
+        case Opcode::CompareLeI64:
+        case Opcode::CompareGtI64:
+        case Opcode::CompareGeI64: {
             if (!require_i64(instruction.a) || !require_i64(instruction.b)) {
                 return fail(error, DAO_TYPE_ERROR, "integer opcode requires i64 operands",
                             function_index, pc);
@@ -398,6 +528,24 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
                     valid = false;
                 else
                     result = left / right;
+            }
+            if (instruction.opcode == Opcode::RemI64) {
+                if (right == 0) return fail(error, DAO_DIVIDE_BY_ZERO, "integer remainder by zero", function_index, pc);
+                result = left == std::numeric_limits<int64_t>::min() && right == -1 ? 0 : left % right;
+            }
+            const bool comparison = instruction.opcode >= Opcode::CompareEqI64 &&
+                                    instruction.opcode <= Opcode::CompareGeI64;
+            if (comparison) {
+                bool truth = false;
+                if (instruction.opcode == Opcode::CompareEqI64) truth = left == right;
+                if (instruction.opcode == Opcode::CompareNeI64) truth = left != right;
+                if (instruction.opcode == Opcode::CompareLtI64) truth = left < right;
+                if (instruction.opcode == Opcode::CompareLeI64) truth = left <= right;
+                if (instruction.opcode == Opcode::CompareGtI64) truth = left > right;
+                if (instruction.opcode == Opcode::CompareGeI64) truth = left >= right;
+                registers[instruction.dst] = dao_value{DAO_VALUE_TRIT, 0, truth ? 1 : -1};
+                ++pc;
+                break;
             }
             if (!valid) {
                 return fail(error, DAO_INTEGER_OVERFLOW, "integer overflow", function_index, pc);
@@ -449,7 +597,8 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
             const dao_status status =
                 execute_function(vm, module, static_cast<uint32_t>(instruction.immediate),
                                  instruction.b == 0 ? nullptr : registers.data() + instruction.a,
-                                 instruction.b, depth + 1, budget, &result, error);
+                                 instruction.b, depth + 1, budget, &result, thrown, error);
+            if (status == DAO_RUNTIME_ERROR && thrown->type != DAO_VALUE_NULL && !handlers.empty()) { pc = handlers.back(); handlers.pop_back(); break; }
             if (status != DAO_OK)
                 return status;
             registers[instruction.dst] = result;
@@ -486,6 +635,10 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
             }
             if (!is_valid_value(result)) {
                 return fail(error, DAO_TYPE_ERROR, "host callback returned an invalid value",
+                            function_index, pc);
+            }
+            if (result.type == DAO_VALUE_LIST || result.type == DAO_VALUE_MAP) {
+                return fail(error, DAO_TYPE_ERROR, "host callbacks cannot manufacture VM-owned containers",
                             function_index, pc);
             }
             registers[instruction.dst] = result;
@@ -548,7 +701,7 @@ dao_vm* dao_vm_create(const dao_vm_config* requested) {
         config.max_instructions_per_call == 0) {
         return nullptr;
     }
-    return new (std::nothrow) dao_vm{config, {}};
+    return new (std::nothrow) dao_vm{config, {}, {}, {}};
 }
 
 void dao_vm_destroy(dao_vm* vm) { delete vm; }
@@ -615,7 +768,7 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
         SectionRecord section{read_u32(entry), read_u32(entry + 4), read_u32(entry + 8),
                               read_u32(entry + 12)};
         if (section.type < static_cast<uint32_t>(dao::SectionType::Functions) ||
-            section.type > static_cast<uint32_t>(dao::SectionType::Imports)) {
+            section.type > static_cast<uint32_t>(dao::SectionType::Data)) {
             return fail(error, DAO_BAD_MODULE, "unknown section type");
         }
         const uint64_t end = static_cast<uint64_t>(section.offset) + section.size;
@@ -646,8 +799,9 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
     const SectionRecord* code_section = find_section(sections, dao::SectionType::Code);
     const SectionRecord* exports_section = find_section(sections, dao::SectionType::Exports);
     const SectionRecord* imports_section = find_section(sections, dao::SectionType::Imports);
+    const SectionRecord* data_section = find_section(sections, dao::SectionType::Data);
     if (functions_section == nullptr || code_section == nullptr || exports_section == nullptr ||
-        imports_section == nullptr) {
+        imports_section == nullptr || data_section == nullptr) {
         return fail(error, DAO_BAD_MODULE, "required section is missing");
     }
     if (functions_section->size !=
@@ -706,6 +860,22 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
                 return fail(error, DAO_VERIFY_ERROR, "invalid or duplicate import");
             }
             module->imports.push_back(import);
+        }
+
+        const uint64_t data_records_size = static_cast<uint64_t>(data_section->count) * dao::kDataRecordSize;
+        if (data_records_size > data_section->size) {
+            delete module; return fail(error, DAO_BAD_MODULE, "truncated data records");
+        }
+        module->strings.reserve(data_section->count);
+        for (uint32_t index = 0; index < data_section->count; ++index) {
+            const uint8_t* record = bytes.data + data_section->offset + static_cast<size_t>(index) * dao::kDataRecordSize;
+            const uint32_t offset = read_u32(record); const uint32_t length = read_u32(record + 4);
+            const uint64_t end = static_cast<uint64_t>(offset) + length;
+            if (offset < data_records_size || end > data_section->size ||
+                !is_valid_utf8(bytes.data + data_section->offset + offset, length)) {
+                delete module; return fail(error, DAO_VERIFY_ERROR, "invalid string constant");
+            }
+            module->strings.emplace_back(reinterpret_cast<const char*>(bytes.data + data_section->offset + offset), length);
         }
 
         for (uint32_t function_index = 0; function_index < module->functions.size();
@@ -772,9 +942,17 @@ dao_status dao_vm_call(dao_vm* vm, const dao_module* module, dao_function functi
         if (!is_valid_value(args[index])) {
             return fail(error, DAO_TYPE_ERROR, "argument contains an invalid value");
         }
+        if (args[index].type == DAO_VALUE_LIST || args[index].type == DAO_VALUE_MAP) {
+            return fail(error, DAO_INVALID_ARGUMENT, "VM-owned containers cannot be reused across top-level calls");
+        }
     }
+    vm->lists.clear();
+    vm->maps.clear();
     uint64_t budget = vm->config.max_instructions_per_call;
-    return execute_function(vm, module, function, args, arg_count, 0, budget, out_value, error);
+    dao_value thrown = null_value();
+    const dao_status status = execute_function(vm, module, function, args, arg_count, 0, budget, out_value, &thrown, error);
+    if (status == DAO_RUNTIME_ERROR && thrown.type != DAO_VALUE_NULL) return fail(error, DAO_RUNTIME_ERROR, "uncaught exception");
+    return status;
 }
 
 const char* dao_status_name(dao_status status) {

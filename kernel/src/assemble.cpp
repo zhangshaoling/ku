@@ -13,6 +13,7 @@ enum class Section {
     None = 0,
     Imports,
     Exports,
+    Strings,
     Functions,
 };
 
@@ -22,6 +23,8 @@ struct ParsedContext {
     uint32_t parsed_import_count = 0;
     uint32_t declared_export_count = 0;
     uint32_t parsed_export_count = 0;
+    uint32_t declared_string_count = 0;
+    uint32_t parsed_string_count = 0;
     uint32_t declared_function_count = 0;
     uint32_t parsed_function_count = 0;
     ParsedFunction* current_function = nullptr;
@@ -146,15 +149,25 @@ Opcode parse_opcode(std::string_view token) {
         case 'N':
         case 'n':
             if (token == "NOP" || token == "nop") return Opcode::Nop;
+            if (token == "NE_I64" || token == "ne_i64") return Opcode::CompareNeI64;
             break;
         case 'L':
         case 'l':
             if (token == "LOAD_I64" || token == "load_i64") return Opcode::LoadI64;
+            if (token == "LOAD_TRIT" || token == "load_trit") return Opcode::LoadTrit;
+            if (token == "LOAD_STRING" || token == "load_string") return Opcode::LoadString;
+            if (token == "LOAD_NULL" || token == "load_null") return Opcode::LoadNull;
+            if (token == "LIST_LEN" || token == "list_len") return Opcode::ListLength;
+            if (token == "LIST_GET" || token == "list_get") return Opcode::ListGet;
+            if (token == "LT_I64" || token == "lt_i64") return Opcode::CompareLtI64;
+            if (token == "LE_I64" || token == "le_i64") return Opcode::CompareLeI64;
             break;
         case 'M':
         case 'm':
             if (token == "MOVE" || token == "move") return Opcode::Move;
             if (token == "MUL_I64" || token == "mul_i64") return Opcode::MulI64;
+            if (token == "MAKE_LIST" || token == "make_list") return Opcode::MakeList;
+            if (token == "MAKE_MAP" || token == "make_map") return Opcode::MakeMap;
             break;
         case 'A':
         case 'a':
@@ -173,6 +186,9 @@ Opcode parse_opcode(std::string_view token) {
             if (token == "TRIT_NOT" || token == "trit_not") return Opcode::TritNot;
             if (token == "TRIT_AND" || token == "trit_and") return Opcode::TritAnd;
             if (token == "TRIT_OR" || token == "trit_or") return Opcode::TritOr;
+            if (token == "TRY_BEGIN" || token == "try_begin") return Opcode::TryBegin;
+            if (token == "TRY_END" || token == "try_end") return Opcode::TryEnd;
+            if (token == "THROW" || token == "throw") return Opcode::Throw;
             break;
         case 'B':
         case 'b':
@@ -188,10 +204,18 @@ Opcode parse_opcode(std::string_view token) {
         case 'c':
             if (token == "CALL" || token == "call") return Opcode::Call;
             if (token == "CALL_HOST" || token == "call_host") return Opcode::CallHost;
+            if (token == "CATCH" || token == "catch") return Opcode::Catch;
             break;
+        case 'I': case 'i': if (token == "INDEX_GET" || token == "index_get") return Opcode::IndexGet; break;
         case 'R':
         case 'r':
             if (token == "RETURN" || token == "return") return Opcode::Return;
+            if (token == "REM_I64" || token == "rem_i64") return Opcode::RemI64;
+            break;
+        case 'E': case 'e': if (token == "EQ_I64" || token == "eq_i64") return Opcode::CompareEqI64; break;
+        case 'G': case 'g':
+            if (token == "GT_I64" || token == "gt_i64") return Opcode::CompareGtI64;
+            if (token == "GE_I64" || token == "ge_i64") return Opcode::CompareGeI64;
             break;
         }
     }
@@ -354,11 +378,11 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
 
     switch (opcode) {
     case Opcode::Nop:
+    case Opcode::TryEnd:
         break;
     case Opcode::Move:
     case Opcode::TritNot:
-    case Opcode::TritAnd:
-    case Opcode::TritOr: {
+    case Opcode::ListLength: {
         if (fields.size() - operand_start < 2) {
             return fail(error, "instruction: expected dst, a");
         }
@@ -371,7 +395,20 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
     case Opcode::AddI64:
     case Opcode::SubI64:
     case Opcode::MulI64:
-    case Opcode::DivI64: {
+    case Opcode::DivI64:
+    case Opcode::TritAnd:
+    case Opcode::TritOr:
+    case Opcode::RemI64:
+    case Opcode::CompareEqI64:
+    case Opcode::CompareNeI64:
+    case Opcode::CompareLtI64:
+    case Opcode::CompareLeI64:
+    case Opcode::CompareGtI64:
+    case Opcode::CompareGeI64:
+    case Opcode::MakeList:
+    case Opcode::MakeMap:
+    case Opcode::ListGet:
+    case Opcode::IndexGet: {
         if (fields.size() - operand_start < 3) {
             return fail(error, "instruction: expected dst, a, b");
         }
@@ -382,7 +419,9 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
         }
         break;
     }
-    case Opcode::LoadI64: {
+    case Opcode::LoadI64:
+    case Opcode::LoadTrit:
+    case Opcode::LoadString: {
         if (fields.size() - operand_start < 2) {
             return fail(error, "instruction: expected dst, immediate");
         }
@@ -398,6 +437,10 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
         }
         break;
     }
+    case Opcode::LoadNull: {
+        if (fields.size() - operand_start < 1 || !parse_register(fields[operand_start], instruction.dst)) return fail(error, "load_null: expected destination register");
+        break;
+    }
     case Opcode::Return: {
         if (fields.size() - operand_start < 1) {
             return fail(error, "instruction: expected return register");
@@ -407,7 +450,8 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
         }
         break;
     }
-    case Opcode::Jump: {
+    case Opcode::Jump:
+    case Opcode::TryBegin: {
         if (fields.size() - operand_start < 1) {
             return fail(error, "instruction: expected jump target");
         }
@@ -416,6 +460,14 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
         if (!parse_int64_strict(imm_raw, instruction.immediate)) {
             return fail(error, "instruction: bad target");
         }
+        break;
+    }
+    case Opcode::Throw: {
+        if (fields.size() - operand_start < 1 || !parse_register(fields[operand_start], instruction.a)) return fail(error, "throw: expected register");
+        break;
+    }
+    case Opcode::Catch: {
+        if (fields.size() - operand_start < 1 || !parse_register(fields[operand_start], instruction.dst)) return fail(error, "catch: expected register");
         break;
     }
     case Opcode::BranchTritNegative:
@@ -461,6 +513,8 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
             return fail(error, "call instruction: missing 'args'");
         }
         std::string_view operands_field = fields[operand_start + 2];
+        if (operands_field == "none" || operands_field == "NONE") { instruction.a = 0; instruction.b = 0; }
+        else {
         if (starts_with(operands_field, "r")) operands_field.remove_prefix(1);
         size_t dotdot = operands_field.find("..");
         if (dotdot == std::string_view::npos) {
@@ -481,6 +535,7 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
             return fail(error, "call instruction: empty args range");
         }
         instruction.b = static_cast<uint16_t>(end_value - a_value + 1);
+        }
 
         std::string_view dst_field = fields[operand_start + 3];
         if (!strip_prefix(dst_field, "dst") && !strip_prefix(dst_field, "DST")) {
@@ -519,6 +574,8 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
             return fail(error, "call_host instruction: missing 'args'");
         }
         std::string_view operands_field = fields[operand_start + 2];
+        if (operands_field == "none" || operands_field == "NONE") { instruction.a = 0; instruction.b = 0; }
+        else {
         if (starts_with(operands_field, "r")) operands_field.remove_prefix(1);
         size_t dotdot = operands_field.find("..");
         if (dotdot == std::string_view::npos) {
@@ -539,6 +596,7 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
             return fail(error, "call_host instruction: empty args range");
         }
         instruction.b = static_cast<uint16_t>(end_value - a_value + 1);
+        }
 
         std::string_view dst_field = fields[operand_start + 3];
         if (!strip_prefix(dst_field, "dst") && !strip_prefix(dst_field, "DST")) {
@@ -618,7 +676,7 @@ bool asm_parse_module(const std::string& text, ParsedModule* out_module, dao_err
         }
 
         if (starts_with(trimmed_view, "functions:")) {
-            if (ctx.section == Section::None || ctx.section == Section::Functions) {
+            if (ctx.section != Section::Strings && ctx.section != Section::Exports) {
                 return fail(error, "unexpected section order");
             }
             std::string_view body = trimmed_view;
@@ -631,6 +689,13 @@ bool asm_parse_module(const std::string& text, ParsedModule* out_module, dao_err
             continue;
         }
 
+        if (starts_with(trimmed_view, "strings:")) {
+            if (ctx.section != Section::Exports) return fail(error, "unexpected section order");
+            std::string_view body = trimmed_view; body.remove_prefix(strlen("strings:"));
+            if (!parse_uint32_strict(trim(body), ctx.declared_string_count)) return fail(error, "strings: invalid count");
+            ctx.section = Section::Strings; continue;
+        }
+
         switch (ctx.section) {
         case Section::None:
             return fail(error, "line appears before any section");
@@ -640,6 +705,15 @@ bool asm_parse_module(const std::string& text, ParsedModule* out_module, dao_err
         case Section::Exports:
             if (!parse_export_line(std::string(trimmed_view), *out_module, ctx, error)) return false;
             break;
+        case Section::Strings: {
+            if (!starts_with(trimmed_view, "hex=")) return fail(error, "string constant: expected hex=");
+            std::string_view hex = trimmed_view; hex.remove_prefix(4);
+            if (hex.size() % 2 != 0) return fail(error, "string constant: odd hex length");
+            std::string value; value.reserve(hex.size() / 2);
+            auto digit = [](char c) -> int { if (c >= '0' && c <= '9') return c - '0'; if (c >= 'a' && c <= 'f') return c - 'a' + 10; if (c >= 'A' && c <= 'F') return c - 'A' + 10; return -1; };
+            for (size_t i = 0; i < hex.size(); i += 2) { const int hi = digit(hex[i]); const int lo = digit(hex[i + 1]); if (hi < 0 || lo < 0) return fail(error, "string constant: invalid hex"); value.push_back(static_cast<char>((hi << 4) | lo)); }
+            out_module->strings.push_back(std::move(value)); ++ctx.parsed_string_count; break;
+        }
         case Section::Functions: {
             std::string t = std::string(trimmed_view);
             if (starts_with(t, "[function") || starts_with(t, "[FUNCTION")) {
@@ -675,6 +749,7 @@ bool asm_parse_module(const std::string& text, ParsedModule* out_module, dao_err
     if (ctx.parsed_function_count != ctx.declared_function_count) {
         return fail(error, "function count mismatch");
     }
+    if (ctx.parsed_string_count != ctx.declared_string_count) return fail(error, "string count mismatch");
     return true;
 }
 
@@ -684,6 +759,9 @@ bool asm_assemble_to_builder(const std::string& text, ModuleBuilder* builder, da
     }
     ParsedModule module;
     if (!asm_parse_module(text, &module, error)) return false;
+    for (const auto& value : module.strings) {
+        try { builder->add_string(value); } catch (const std::exception& e) { return fail(error, e.what()); }
+    }
     for (const auto& import : module.imports) {
         try {
             builder->add_import(import.symbol_id, import.parameter_count);
