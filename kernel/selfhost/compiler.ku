@@ -247,10 +247,30 @@ thought parse_body(source, index, size, handle, next_reg, names, regs) {
       parsed = parse_body(source, index, size, handle, next_reg, names, regs)
       index = packed_index(parsed)
       next_reg = packed_next(parsed)
+      if source_at(source, index, size) == 125 { index = index + 1 }
+      index = skip_space(source, index, size)
+      if source_at(source, index, size) == 101 and source_at(source, index + 1, size) == 108 and source_at(source, index + 2, size) == 115 and source_at(source, index + 3, size) == 101 and (is_space(source_at(source, index + 4, size)) or source_at(source, index + 4, size) == 123) {
+        end_branch = builder_position(handle)
+        builder_emit(handle, 13, 0, 0, 0, 0)
+        alternate_start = builder_position(handle)
+        builder_patch(handle, negative_branch, alternate_start)
+        builder_patch(handle, zero_branch, alternate_start)
+        index = index + 4
+        while index < size {
+          if source_at(source, index, size) == 123 { index = index + 1 break }
+          index = index + 1
+        }
+        parsed = parse_body(source, index, size, handle, next_reg, names, regs)
+        index = packed_index(parsed)
+        next_reg = packed_next(parsed)
+        if source_at(source, index, size) == 125 { index = index + 1 }
+        target = builder_position(handle)
+        builder_patch(handle, end_branch, target)
+        continue
+      }
       target = builder_position(handle)
       builder_patch(handle, negative_branch, target)
       builder_patch(handle, zero_branch, target)
-      if source_at(source, index, size) == 125 { index = index + 1 }
       continue
     }
     if source_at(source, index, size) == 114 and source_at(source, index + 1, size) == 101 and source_at(source, index + 2, size) == 116 and source_at(source, index + 3, size) == 117 and source_at(source, index + 4, size) == 114 and source_at(source, index + 5, size) == 110 and is_space(source_at(source, index + 6, size)) {

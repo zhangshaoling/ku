@@ -41,10 +41,11 @@ expression arguments. The compiler preserves argument values and packs them into
 contiguous register range required by the VM call ABI. Later assignments shadow earlier
 local bindings. Integer comparisons (`==`, `!=`, `<`, `<=`, `>`, and `>=`) lower to VM trits.
 Whitespace-delimited `if <condition> { ... }` blocks and explicit `return <expression>` statements
-emit and patch VM branch targets in the self-hosted compiler.
+emit and patch VM branch targets in the self-hosted compiler. `else { ... }` produces the
+matching branch-over-alternate jump.
 
 This remains deliberately bounded: token streams, strings, containers, imports, diagnostics,
-register-overflow checks, `else`, loops, and canonical self-rebuild are still pending.
+register-overflow checks, loops, and canonical self-rebuild are still pending.
 
 ## SH1: Real Frontend Remaining
 
