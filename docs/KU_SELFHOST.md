@@ -118,7 +118,10 @@ has reached a deterministic fixed point.
 The rebuilt compiler runs the same positive parity matrix as the bootstrap compiler,
 covering arithmetic, precedence, local and inter-function calls, comparisons, trit
 logic, null, control flow, strings and escapes, lists, maps, indexing, and iteration.
+Host imports, indexed mutation, exception recovery, malformed-source rejection,
+duplicate declarations and parameters, and register overflow are also checked through
+both compiler generations.
 
-Remaining SH2 work is extending rebuilt-compiler parity to the Host import, mutation,
-exception, and rejection corpora. The C++ frontend remains recovery/bootstrap tooling
-until those checks pass.
+This closes SH2 acceptance for the current self-hosted frontend surface. The C++ frontend
+remains recovery/bootstrap tooling. Full legacy-language parity is a separate K4 closure
+item tracked in `KU_MIGRATION_PLAN.md`.

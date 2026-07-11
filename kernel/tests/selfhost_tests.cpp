@@ -76,71 +76,45 @@ int main(int argc,char**argv){
       return run_group(cases,std::size(cases))&&run_group(logic_cases,std::size(logic_cases));
     };
     if(!run_cases(module,function))return EXIT_FAILURE;
-    const std::string imported_source="import host_add(2) thought add(left, right) { host_add(left, right) } thought call_host() { add(40, 2) }";
-    dao_value imported_arg{};
-    if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(imported_source.data()),imported_source.size()},&imported_arg)!=DAO_OK)return EXIT_FAILURE;
-    dao_value imported_generated{};
-    if(dao_vm_call(vm,module,function,&imported_arg,1,&imported_generated,&error)!=DAO_OK)return EXIT_FAILURE;
-    dao_bytes imported_output{};
-    if(dao_value_get_view(&imported_generated,&imported_output)!=DAO_OK)return EXIT_FAILURE;
-    dao_module*imported_module=nullptr;
-    if(dao_vm_load_module(vm,imported_output,&imported_module,&error)!=DAO_OK)return EXIT_FAILURE;
-    dao_function imported_function=0;
-    if(dao_module_find_export(imported_module,symbol("call_host"),&imported_function)!=DAO_OK)return EXIT_FAILURE;
-    dao_value imported_result{};
-    const bool imported_ok=dao_vm_call(vm,imported_module,imported_function,nullptr,0,&imported_result,&error)==DAO_OK&&imported_result.type==DAO_VALUE_I64&&imported_result.payload==42;
-    dao_module_release(imported_module);
-    if(!imported_ok)return EXIT_FAILURE;
-    const std::string mutation_source="thought mutate() { items = [2, 3]; items[1] = 42; mapping = {\"bonus\": 2}; mapping[\"bonus\"] = items[1]; mapping[\"bonus\"] }";
-    dao_value mutation_arg{};
-    if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(mutation_source.data()),mutation_source.size()},&mutation_arg)!=DAO_OK)return EXIT_FAILURE;
-    dao_value mutation_generated{};
-    if(dao_vm_call(vm,module,function,&mutation_arg,1,&mutation_generated,&error)!=DAO_OK)return EXIT_FAILURE;
-    dao_bytes mutation_output{};
-    if(dao_value_get_view(&mutation_generated,&mutation_output)!=DAO_OK)return EXIT_FAILURE;
-    dao_module*mutation_module=nullptr;
-    if(dao_vm_load_module(vm,mutation_output,&mutation_module,&error)!=DAO_OK)return EXIT_FAILURE;
-    dao_function mutation_function=0;
-    if(dao_module_find_export(mutation_module,symbol("mutate"),&mutation_function)!=DAO_OK)return EXIT_FAILURE;
-    dao_value mutation_result{};
-    const bool mutation_ok=dao_vm_call(vm,mutation_module,mutation_function,nullptr,0,&mutation_result,&error)==DAO_OK&&mutation_result.type==DAO_VALUE_I64&&mutation_result.payload==42;
-    dao_module_release(mutation_module);
-    if(!mutation_ok)return EXIT_FAILURE;
-    const std::string exception_source="thought recover() { try { throw \"handled\" } catch error { return error } }";
-    dao_value exception_arg{};
-    if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(exception_source.data()),exception_source.size()},&exception_arg)!=DAO_OK)return EXIT_FAILURE;
-    dao_value exception_generated{};
-    if(dao_vm_call(vm,module,function,&exception_arg,1,&exception_generated,&error)!=DAO_OK)return EXIT_FAILURE;
-    dao_bytes exception_output{};
-    if(dao_value_get_view(&exception_generated,&exception_output)!=DAO_OK)return EXIT_FAILURE;
-    dao_module*exception_module=nullptr;
-    if(dao_vm_load_module(vm,exception_output,&exception_module,&error)!=DAO_OK)return EXIT_FAILURE;
-    dao_function exception_function=0;
-    if(dao_module_find_export(exception_module,symbol("recover"),&exception_function)!=DAO_OK)return EXIT_FAILURE;
-    dao_value exception_result{};
-    dao_bytes exception_text{};
-    const bool exception_ok=dao_vm_call(vm,exception_module,exception_function,nullptr,0,&exception_result,&error)==DAO_OK&&exception_result.type==DAO_VALUE_STRING&&dao_value_get_view(&exception_result,&exception_text)==DAO_OK&&std::string_view(reinterpret_cast<const char*>(exception_text.data),exception_text.size)=="handled";
-    dao_module_release(exception_module);
-    if(!exception_ok)return EXIT_FAILURE;
+    const auto compile_module=[&](dao_module*compiler_module,dao_function compile_function,std::string_view source,dao_module**result_module){
+        dao_value arg{};if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(source.data()),source.size()},&arg)!=DAO_OK)return false;
+        dao_value generated{};if(dao_vm_call(vm,compiler_module,compile_function,&arg,1,&generated,&error)!=DAO_OK)return false;
+        dao_bytes output{};return dao_value_get_view(&generated,&output)==DAO_OK&&dao_vm_load_module(vm,output,result_module,&error)==DAO_OK;
+    };
+    const auto run_extended=[&](dao_module*compiler_module,dao_function compile_function){
+        dao_module*generated=nullptr;dao_function generated_function=0;dao_value result{};
+        if(!compile_module(compiler_module,compile_function,"import host_add(2) thought add(left, right) { host_add(left, right) } thought call_host() { add(40, 2) }",&generated))return false;
+        bool ok=dao_module_find_export(generated,symbol("call_host"),&generated_function)==DAO_OK&&dao_vm_call(vm,generated,generated_function,nullptr,0,&result,&error)==DAO_OK&&result.type==DAO_VALUE_I64&&result.payload==42;
+        dao_module_release(generated);if(!ok)return false;
+        generated=nullptr;
+        if(!compile_module(compiler_module,compile_function,"thought mutate() { items = [2, 3]; items[1] = 42; mapping = {\"bonus\": 2}; mapping[\"bonus\"] = items[1]; mapping[\"bonus\"] }",&generated))return false;
+        ok=dao_module_find_export(generated,symbol("mutate"),&generated_function)==DAO_OK&&dao_vm_call(vm,generated,generated_function,nullptr,0,&result,&error)==DAO_OK&&result.type==DAO_VALUE_I64&&result.payload==42;
+        dao_module_release(generated);if(!ok)return false;
+        generated=nullptr;
+        if(!compile_module(compiler_module,compile_function,"thought recover() { try { throw \"handled\" } catch error { return error } }",&generated))return false;
+        dao_bytes exception_text{};
+        ok=dao_module_find_export(generated,symbol("recover"),&generated_function)==DAO_OK&&dao_vm_call(vm,generated,generated_function,nullptr,0,&result,&error)==DAO_OK&&result.type==DAO_VALUE_STRING&&dao_value_get_view(&result,&exception_text)==DAO_OK&&std::string_view(reinterpret_cast<const char*>(exception_text.data),exception_text.size)=="handled";
+        dao_module_release(generated);return ok;
+    };
+    if(!run_extended(module,function))return EXIT_FAILURE;
     const char*invalid_sources[]={"thought bad() { \"unterminated }","thought bad() { missing }","thought bad() { [1, 2 }","thought bad() { {\"key\" 42} }","thought add(left, right) { left + right } thought bad() { add(1) }","import host_double(1) thought bad() { host_double(1, 2) }","thought bad() { absent() }","thought bad()","thought bad() { 42 ","thought bad() { @ }","thought bad() { [1, ","import host_double(x) thought bad() { 42 }","other bad() { 42 }","thought same() { 1 } thought same() { 2 }","import same(1) thought same() { 1 }","import same(1) import same(1) thought ok() { 1 }"};
-    for(const char*invalid_source:invalid_sources){
-        const std::string invalid=invalid_source;dao_value invalid_arg{};
-        if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(invalid.data()),invalid.size()},&invalid_arg)!=DAO_OK)return EXIT_FAILURE;
-        dao_value invalid_generated{};
-        if(dao_vm_call(vm,module,function,&invalid_arg,1,&invalid_generated,&error)==DAO_OK)return EXIT_FAILURE;
-    }
     const std::string duplicate_parameter="thought bad(value, value) { value }";
-    dao_value duplicate_parameter_arg{};
-    if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(duplicate_parameter.data()),duplicate_parameter.size()},&duplicate_parameter_arg)!=DAO_OK)return EXIT_FAILURE;
-    dao_value duplicate_parameter_generated{};
-    if(dao_vm_call(vm,module,function,&duplicate_parameter_arg,1,&duplicate_parameter_generated,&error)==DAO_OK)return EXIT_FAILURE;
     std::string register_overflow="thought bad() { ";
     for(int i=0;i<4100;++i)register_overflow+="1 + ";
     register_overflow+="1 }";
-    dao_value register_overflow_arg{};
-    if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(register_overflow.data()),register_overflow.size()},&register_overflow_arg)!=DAO_OK)return EXIT_FAILURE;
-    dao_value register_overflow_generated{};
-    if(dao_vm_call(vm,module,function,&register_overflow_arg,1,&register_overflow_generated,&error)==DAO_OK)return EXIT_FAILURE;
+    const auto run_rejections=[&](dao_module*compiler_module,dao_function compile_function){
+        for(const char*invalid_source:invalid_sources){
+            const std::string_view invalid=invalid_source;dao_value arg{};dao_value generated{};
+            if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(invalid.data()),invalid.size()},&arg)!=DAO_OK||dao_vm_call(vm,compiler_module,compile_function,&arg,1,&generated,&error)==DAO_OK)return false;
+        }
+        const std::string_view rejected[]={duplicate_parameter,register_overflow};
+        for(const auto source:rejected){
+            dao_value arg{};dao_value generated{};
+            if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(source.data()),source.size()},&arg)!=DAO_OK||dao_vm_call(vm,compiler_module,compile_function,&arg,1,&generated,&error)==DAO_OK)return false;
+        }
+        return true;
+    };
+    if(!run_rejections(module,function))return EXIT_FAILURE;
     dao_value compiler_source_arg{};
     if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(compiler.data()),compiler.size()},&compiler_source_arg)!=DAO_OK)return EXIT_FAILURE;
     dao_value rebuilt_compiler_value{};
@@ -151,7 +125,7 @@ int main(int argc,char**argv){
     if(dao_vm_load_module(vm,rebuilt_compiler_bytes,&rebuilt_compiler,&error)!=DAO_OK)return EXIT_FAILURE;
     dao_function rebuilt_compile=0;
     if(dao_module_find_export(rebuilt_compiler,symbol("compile"),&rebuilt_compile)!=DAO_OK)return EXIT_FAILURE;
-    if(!run_cases(rebuilt_compiler,rebuilt_compile))return EXIT_FAILURE;
+    if(!run_cases(rebuilt_compiler,rebuilt_compile)||!run_extended(rebuilt_compiler,rebuilt_compile)||!run_rejections(rebuilt_compiler,rebuilt_compile))return EXIT_FAILURE;
     dao_value second_rebuilt_compiler_value{};
     if(dao_vm_call(vm,rebuilt_compiler,rebuilt_compile,&compiler_source_arg,1,&second_rebuilt_compiler_value,&error)!=DAO_OK)return EXIT_FAILURE;
     dao_bytes second_rebuilt_compiler_bytes{};
