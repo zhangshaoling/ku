@@ -55,6 +55,9 @@
 - `kernel/stdlib/fs.ku` migrates filesystem capability wrappers for existence checks,
   text reads/writes, directory creation, fallback reads, copies, and safe deletion. OS access
   remains behind explicit fixed-arity Host imports and is tested with an in-memory Host.
+- `kernel/stdlib/debug.ku` migrates scalar logging, explicit timer tokens, function
+  measurement, assertions, and memory counters. Clock, logging, and process metrics remain
+  explicit Host capabilities; dynamic recursive object inspection still requires type reflection.
 
 ### Phase V — MVP acceptance (full legacy parity pending)
 - Native execution covers arithmetic, comparisons, Trit logic, calls, host imports,
