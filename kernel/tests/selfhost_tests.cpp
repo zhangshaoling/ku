@@ -142,6 +142,10 @@ int main(int argc,char**argv){
     if(dao_vm_load_module(vm,rebuilt_compiler_bytes,&rebuilt_compiler,&error)!=DAO_OK)return EXIT_FAILURE;
     dao_function rebuilt_compile=0;
     if(dao_module_find_export(rebuilt_compiler,symbol("compile"),&rebuilt_compile)!=DAO_OK)return EXIT_FAILURE;
+    dao_value second_rebuilt_compiler_value{};
+    if(dao_vm_call(vm,rebuilt_compiler,rebuilt_compile,&compiler_source_arg,1,&second_rebuilt_compiler_value,&error)!=DAO_OK)return EXIT_FAILURE;
+    dao_bytes second_rebuilt_compiler_bytes{};
+    if(dao_value_get_view(&second_rebuilt_compiler_value,&second_rebuilt_compiler_bytes)!=DAO_OK||second_rebuilt_compiler_bytes.size!=rebuilt_compiler_bytes.size||std::memcmp(second_rebuilt_compiler_bytes.data,rebuilt_compiler_bytes.data,rebuilt_compiler_bytes.size)!=0)return EXIT_FAILURE;
     const std::string rebuilt_source="thought rebuilt() { 40 + 2 }";
     dao_value rebuilt_source_arg{};
     if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(rebuilt_source.data()),rebuilt_source.size()},&rebuilt_source_arg)!=DAO_OK)return EXIT_FAILURE;

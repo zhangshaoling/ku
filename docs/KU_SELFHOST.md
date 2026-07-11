@@ -88,8 +88,8 @@ raw builder Host adapter; register indices and contiguous counts must remain bel
 do not truncate during the self-rebuild. New local bindings receive independent registers,
 preventing assignments such as `start = index` from aliasing later writes to `index`.
 
-This remains deliberately bounded: nested indexed mutation, module-path imports, and
-canonical byte-identical self-rebuild are still pending. Diagnostics
+This remains deliberately bounded: nested indexed mutation and module-path imports are
+still pending. Diagnostics
 now cover explicit `throw` paths (unterminated string/list/map literals, missing
 function body braces, empty number consumption, host/local arity mismatch,
 undefined identifiers, unexpected characters) but do not yet carry source
@@ -102,7 +102,7 @@ positions.
 - expand structured builder validation beyond register bounds;
 - compare SH1 bytes with the C++ recovery compiler for canonical identity.
 
-## SH2: Functional Self-Rebuild (implemented)
+## SH2: Canonical Self-Rebuild (implemented)
 
 `ku_selfhost_seed` now compiles `compiler.ku` with the bootstrap-produced compiler,
 loads that rebuilt compiler, and uses it to compile and execute a fresh module whose
@@ -111,6 +111,9 @@ capable of compiling downstream `.ku` source. The test uses an elevated instruct
 budget because the current token lookup and code generation paths are intentionally
 simple and not yet optimized.
 
-Remaining SH2 work is canonical byte identity between consecutive rebuilds and running
-the complete parity corpus through the rebuilt compiler. The C++ frontend remains
-recovery/bootstrap tooling until those checks pass.
+The rebuilt compiler also compiles `compiler.ku` again. The first and second rebuilt
+modules must have identical sizes and byte-for-byte contents, proving that self-rebuild
+has reached a deterministic fixed point.
+
+Remaining SH2 work is running the complete parity corpus through the rebuilt compiler.
+The C++ frontend remains recovery/bootstrap tooling until that check passes.
