@@ -99,6 +99,43 @@ thought parse_list(source, index, size, handle, next_reg, names, regs) {
   pack(index, next_reg + 1, result_reg)
 }
 
+thought parse_map(source, index, size, handle, next_reg, names, regs) {
+  index = skip_space(source, index + 1, size)
+  values = []
+  while source_at(source, index, size) != 125 {
+    parsed = parse_expression(source, index, size, handle, next_reg, names, regs)
+    key_reg = packed_result(parsed)
+    next_reg = packed_next(parsed)
+    saved_reg = next_reg
+    builder_emit(handle, 2, saved_reg, key_reg, 0, 0)
+    next_reg = next_reg + 1
+    values = values + [saved_reg]
+    index = skip_space(source, packed_index(parsed), size)
+    if source_at(source, index, size) == 58 { index = skip_space(source, index + 1, size) }
+    parsed = parse_expression(source, index, size, handle, next_reg, names, regs)
+    value_reg = packed_result(parsed)
+    next_reg = packed_next(parsed)
+    saved_reg = next_reg
+    builder_emit(handle, 2, saved_reg, value_reg, 0, 0)
+    next_reg = next_reg + 1
+    values = values + [saved_reg]
+    index = skip_space(source, packed_index(parsed), size)
+    if source_at(source, index, size) == 44 { index = skip_space(source, index + 1, size) continue }
+    break
+  }
+  if source_at(source, index, size) == 125 { index = index + 1 }
+  base_reg = next_reg
+  count = 0
+  while count < len(values) {
+    builder_emit(handle, 2, next_reg, values[count], 0, 0)
+    next_reg = next_reg + 1
+    count = count + 1
+  }
+  result_reg = next_reg
+  builder_emit(handle, 29, result_reg, base_reg, count / 2, 0)
+  pack(index, next_reg + 1, result_reg)
+}
+
 thought lookup_slot(names, name_hash) {
   i = len(names) - 1
   while i >= 0 {
@@ -144,6 +181,7 @@ thought parse_primary(source, index, size, handle, next_reg, names, regs) {
   byte = source_byte(source, index)
   if byte == 34 { return parse_string(source, index, size, handle, next_reg) }
   if byte == 91 { return parse_list(source, index, size, handle, next_reg, names, regs) }
+  if byte == 123 { return parse_map(source, index, size, handle, next_reg, names, regs) }
   if byte == 45 {
     parsed = parse_primary(source, index + 1, size, handle, next_reg, names, regs)
     index = packed_index(parsed)

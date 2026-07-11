@@ -52,9 +52,11 @@ List literals preserve nested expression results before packing them into `MAKE_
 lowers to `LIST_LENGTH`, and an identifier-backed list supports `items[index]` through
 `INDEX_GET`. `for item in list { ... }` lowers to list length, indexed element reads, and a
 cursor loop; its `continue` target advances the cursor before retesting.
+Map literals preserve string-key/value pairs before packing them into `MAKE_MAP`; existing
+identifier bindings use `INDEX_GET` for string-key lookup.
 
 This remains deliberately bounded: token streams, string escapes, containers, imports,
-diagnostics, register-overflow checks, list mutation, maps, and canonical self-rebuild are still
+diagnostics, register-overflow checks, indexed mutation, and canonical self-rebuild are still
 pending.
 
 ## SH1: Real Frontend Remaining
