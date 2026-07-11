@@ -60,8 +60,8 @@ Lists and maps are owned by the VM's top-level call arena. A returned container 
 valid until the next call on that VM; VM-owned containers cannot be passed back as
 arguments to a later top-level call.
 
-The packaged migrated standard-library subset includes `stdlib/core.ku` and the
-integer/list-compatible `stdlib/math.ku`.
+The packaged migrated standard-library subset includes `stdlib/core.ku`, the
+integer/list-compatible `stdlib/math.ku`, and the list-read subset in `stdlib/list.ku`.
 
 Run the module loader and verifier under libFuzzer, ASan, and UBSan with:
 

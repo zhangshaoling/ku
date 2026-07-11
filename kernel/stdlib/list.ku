@@ -1,0 +1,47 @@
+// Migrated from ku/std/list.ku for the Dao Binary Module list-read subset.
+// Import with: import "std/list" as list
+
+thought includes(items, target) {
+  for x in items {
+    if x == target { return true }
+  }
+  false
+}
+
+thought first(items) {
+  if len(items) > 0 { items[0] } else { null }
+}
+
+thought last(items) {
+  if len(items) > 0 { items[len(items) - 1] } else { null }
+}
+
+thought count(items, value) {
+  result = 0
+  for x in items {
+    if x == value { result = result + 1 }
+  }
+  result
+}
+
+thought min_of(items) {
+  if len(items) == 0 { null }
+  else {
+    result = items[0]
+    for x in items {
+      if x < result { result = x }
+    }
+    result
+  }
+}
+
+thought max_of(items) {
+  if len(items) == 0 { null }
+  else {
+    result = items[0]
+    for x in items {
+      if x > result { result = x }
+    }
+    result
+  }
+}
