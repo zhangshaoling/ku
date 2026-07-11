@@ -28,7 +28,7 @@ uint32_t symbol_id(std::string_view name) {
     return hash;
 }
 
-enum class Operation { Length, Trim, Upper, Lower, Replace, Contains, Starts, Ends, Substring, CharAt };
+enum class Operation { Length, Trim, Upper, Lower, Replace, Contains, Starts, Ends, Substring, CharAt, Concat };
 
 struct StringHost;
 struct CallbackContext { StringHost* host; Operation operation; };
@@ -115,6 +115,11 @@ dao_status string_callback(void* user_data, const dao_value* args, size_t count,
             static_cast<uint64_t>(args[1].payload) >= value.size()) return DAO_INVALID_ARGUMENT;
         return return_string(context->host,
                              value.substr(static_cast<size_t>(args[1].payload), 1), out);
+    case Operation::Concat: {
+        std::string right;
+        if (count != 2 || !string_arg(args[1], &right)) return DAO_TYPE_ERROR;
+        return return_string(context->host, value + right, out);
+    }
     }
     return DAO_RUNTIME_ERROR;
 }
@@ -152,6 +157,7 @@ int main(int argc, char** argv) {
     const char* program = R"(
 import "std/string" as string
 thought empty_case() { string_is_empty("") }
+thought length_case() { string_length("dao") }
 thought not_empty_case() { string_not_empty("dao") }
 thought trim_case() { string_trim("  dao \n") }
 thought upper_case() { string_upper("Dao42") }
@@ -162,6 +168,7 @@ thought starts_case() { string_starts_with("dao kernel", "dao") }
 thought ends_case() { string_ends_with("dao kernel", "kernel") }
 thought substring_case() { string_substring("abcdef", 1, 4) }
 thought char_case() { string_char_at("abc", 1) }
+thought concat_case() { string_concat("dao", " kernel") }
 )";
     dao::km::Options options{};
     options.import_resolver = resolve_string;
@@ -181,12 +188,14 @@ thought char_case() { string_char_at("abc", 1) }
         {&host, Operation::Lower}, {&host, Operation::Replace}, {&host, Operation::Contains},
         {&host, Operation::Starts}, {&host, Operation::Ends}, {&host, Operation::Substring},
         {&host, Operation::CharAt},
+        {&host, Operation::Concat},
     };
     const char* names[] = {"host_string_length", "host_string_trim", "host_string_upper",
                            "host_string_lower", "host_string_replace", "host_string_contains",
                            "host_string_starts_with", "host_string_ends_with",
-                           "host_string_substring", "host_string_char_at"};
-    const uint32_t arities[] = {1, 1, 1, 1, 3, 2, 2, 2, 3, 2};
+                           "host_string_substring", "host_string_char_at",
+                           "host_string_concat"};
+    const uint32_t arities[] = {1, 1, 1, 1, 3, 2, 2, 2, 3, 2, 2};
     for (size_t index = 0; index < std::size(contexts); ++index) {
         const dao_host_function function{sizeof(dao_host_function), symbol_id(names[index]),
                                          arities[index], 0, string_callback, &contexts[index]};
@@ -197,6 +206,8 @@ thought char_case() { string_char_at("abc", 1) }
         dao_value result{};
         check(call(vm, module, "empty_case", &result, &error) &&
                   result.type == DAO_VALUE_TRIT && result.payload == 1, "string empty");
+        check(call(vm, module, "length_case", &result, &error) &&
+                  result.type == DAO_VALUE_I64 && result.payload == 3, "string length");
         check(call(vm, module, "not_empty_case", &result, &error) &&
                   result.type == DAO_VALUE_TRIT && result.payload == 1, "string not empty");
         check(call(vm, module, "trim_case", &result, &error) && equals_string(result, "dao"),
@@ -217,6 +228,8 @@ thought char_case() { string_char_at("abc", 1) }
               "string substring");
         check(call(vm, module, "char_case", &result, &error) && equals_string(result, "b"),
               "string char at");
+        check(call(vm, module, "concat_case", &result, &error) &&
+                  equals_string(result, "dao kernel"), "string concat");
         dao_module_release(module);
     }
     dao_vm_destroy(vm);

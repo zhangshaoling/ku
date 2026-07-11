@@ -60,7 +60,11 @@
   explicit Host capabilities; dynamic recursive object inspection still requires type reflection.
 - `kernel/stdlib/string.ku` migrates length/empty checks, trim, ASCII case conversion,
   replacement, containment, prefix/suffix checks, substring, and indexed character access.
-  Borrowed results are supplied by explicit `host_string_*` capabilities with stable storage.
+  Concatenation is also exposed for higher-level modules. Borrowed results are supplied by
+  explicit `host_string_*` capabilities with stable storage.
+- `kernel/stdlib/io.ku` composes the migrated `fs` and `string` modules for file-size,
+  append, append-line, fallback read, copy, and safe-delete operations. Its tests exercise
+  recursive standard-library import rewriting against the same in-memory Host filesystem.
 
 ### Phase V — MVP acceptance (full legacy parity pending)
 - Native execution covers arithmetic, comparisons, Trit logic, calls, host imports,

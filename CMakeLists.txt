@@ -221,7 +221,9 @@ add_test(NAME ku_compile_std_fs COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/fs.ku"
     "${CMAKE_BINARY_DIR}/stdlib_fs.dao")
 add_test(NAME ku_std_fs COMMAND ku_std_fs_tests
-    "${CMAKE_SOURCE_DIR}/kernel/stdlib/fs.ku")
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/fs.ku"
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/string.ku"
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/io.ku")
 add_test(NAME ku_compile_std_debug COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/debug.ku"
     "${CMAKE_BINARY_DIR}/stdlib_debug.dao")
@@ -232,6 +234,9 @@ add_test(NAME ku_compile_std_string COMMAND dao-ku
     "${CMAKE_BINARY_DIR}/stdlib_string.dao")
 add_test(NAME ku_std_string COMMAND ku_std_string_tests
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/string.ku")
+add_test(NAME ku_compile_std_io COMMAND dao-ku
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/io.ku"
+    "${CMAKE_BINARY_DIR}/stdlib_io.dao")
 add_test(NAME ku_compile_acceptance COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/language_acceptance.ku"
     "${CMAKE_BINARY_DIR}/language_acceptance.dao")
@@ -281,6 +286,7 @@ set(DAO_RUNTIME_TESTS
     ku_std_debug
     ku_compile_std_string
     ku_std_string
+    ku_compile_std_io
     ku_compile_acceptance
     ku_compile_legacy_import
     ku_reject_import_escape

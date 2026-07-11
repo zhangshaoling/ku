@@ -11,7 +11,9 @@ import host_string_starts_with(2)
 import host_string_ends_with(2)
 import host_string_substring(3)
 import host_string_char_at(2)
+import host_string_concat(2)
 
+thought length(value) { host_string_length(value) }
 thought is_empty(value) { host_string_length(value) == 0 }
 thought not_empty(value) { host_string_length(value) != 0 }
 thought trim(value) { host_string_trim(value) }
@@ -23,3 +25,4 @@ thought starts_with(value, prefix) { host_string_starts_with(value, prefix) }
 thought ends_with(value, suffix) { host_string_ends_with(value, suffix) }
 thought substring(value, start, end) { host_string_substring(value, start, end) }
 thought char_at(value, index) { host_string_char_at(value, index) }
+thought concat(left, right) { host_string_concat(left, right) }

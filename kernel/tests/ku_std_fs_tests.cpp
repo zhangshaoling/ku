@@ -1,6 +1,7 @@
 #include "dao/ku_migration.hpp"
 
 #include <cstdlib>
+#include <deque>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -30,6 +31,13 @@ uint32_t symbol_id(std::string_view name) {
 struct HostFs {
     std::unordered_map<std::string, std::string> files;
     std::unordered_set<std::string> directories;
+    std::deque<std::string> strings;
+};
+
+struct Sources {
+    std::string fs;
+    std::string string;
+    std::string io;
 };
 
 bool string_arg(const dao_value& value, std::string* out) {
@@ -85,13 +93,35 @@ dao_status delete_file(void* user_data, const dao_value* args, size_t count, dao
     return DAO_OK;
 }
 
-bool resolve_fs(void* user_data, std::string_view path, std::string* source,
-                std::string* error) {
-    if (path != "std/fs") {
+dao_status string_length(void*, const dao_value* args, size_t count, dao_value* out) {
+    dao_bytes bytes{};
+    if (count != 1 || dao_value_get_view(&args[0], &bytes) != DAO_OK) return DAO_TYPE_ERROR;
+    *out = {DAO_VALUE_I64, 0, static_cast<int64_t>(bytes.size)};
+    return DAO_OK;
+}
+
+dao_status string_concat(void* user_data, const dao_value* args, size_t count, dao_value* out) {
+    std::string left;
+    std::string right;
+    if (count != 2 || !string_arg(args[0], &left) || !string_arg(args[1], &right))
+        return DAO_TYPE_ERROR;
+    auto* fs = static_cast<HostFs*>(user_data);
+    fs->strings.push_back(left + right);
+    const auto& result = fs->strings.back();
+    return dao_value_make_string_view(
+        {reinterpret_cast<const uint8_t*>(result.data()), result.size()}, out);
+}
+
+bool resolve_standard(void* user_data, std::string_view path, std::string* source,
+                      std::string* error) {
+    const auto* sources = static_cast<Sources*>(user_data);
+    if (path == "std/fs" || path == "fs") *source = sources->fs;
+    else if (path == "std/string" || path == "string") *source = sources->string;
+    else if (path == "std/io") *source = sources->io;
+    else {
         *error = "unknown module";
         return false;
     }
-    *source = *static_cast<std::string*>(user_data);
     return true;
 }
 
@@ -110,10 +140,14 @@ bool equals_string(const dao_value& value, std::string_view expected) {
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 2) return EXIT_FAILURE;
-    std::ifstream input(argv[1], std::ios::binary);
-    std::string fs_source(std::istreambuf_iterator<char>(input), {});
-    if (!input && fs_source.empty()) return EXIT_FAILURE;
+    if (argc != 4) return EXIT_FAILURE;
+    Sources sources{};
+    std::string* destinations[] = {&sources.fs, &sources.string, &sources.io};
+    for (int index = 0; index < 3; ++index) {
+        std::ifstream input(argv[index + 1], std::ios::binary);
+        destinations[index]->assign(std::istreambuf_iterator<char>(input), {});
+        if (!input && destinations[index]->empty()) return EXIT_FAILURE;
+    }
 
     const char* program = R"(
 import "std/fs" as fs
@@ -127,8 +161,8 @@ thought copy_case() { fs_copy_file("input.txt", "copy.txt") }
 thought delete_case() { fs_safe_delete("input.txt") }
 )";
     dao::km::Options options{};
-    options.import_resolver = resolve_fs;
-    options.import_user_data = &fs_source;
+    options.import_resolver = resolve_standard;
+    options.import_user_data = &sources;
     dao::ModuleBuilder builder;
     dao_error error{};
     check(dao::km::compile(program, builder, &error, options), "compile migrated fs");
@@ -138,13 +172,15 @@ thought delete_case() { fs_safe_delete("input.txt") }
     check(dao_vm_load_module(vm, {bytes.data(), bytes.size()}, &module, &error) == DAO_OK,
           "load migrated fs");
 
-    HostFs fs{{{"input.txt", "payload"}}, {}};
+    HostFs fs{{{"input.txt", "payload"}}, {}, {}};
     const dao_host_function hosts[] = {
         {sizeof(dao_host_function), symbol_id("path_exists"), 1, 0, path_exists, &fs},
         {sizeof(dao_host_function), symbol_id("read_file"), 1, 0, read_file, &fs},
         {sizeof(dao_host_function), symbol_id("write_file"), 2, 0, write_file, &fs},
         {sizeof(dao_host_function), symbol_id("mkdir"), 1, 0, make_directory, &fs},
         {sizeof(dao_host_function), symbol_id("delete_file"), 1, 0, delete_file, &fs},
+        {sizeof(dao_host_function), symbol_id("host_string_length"), 1, 0, string_length, &fs},
+        {sizeof(dao_host_function), symbol_id("host_string_concat"), 2, 0, string_concat, &fs},
     };
     for (const auto& host : hosts)
         check(dao_vm_register_host_function(vm, &host) == DAO_OK, "register fs host");
@@ -174,6 +210,49 @@ thought delete_case() { fs_safe_delete("input.txt") }
                   !fs.files.contains("input.txt"),
               "fs delete");
         dao_module_release(module);
+    }
+
+    const char* io_program = R"(
+import "std/io" as io
+thought io_exists_case() { io_file_exists("journal.txt") }
+thought io_size_case() { io_file_size("journal.txt") }
+thought io_append_case() { io_append_file("journal.txt", "-tail") }
+thought io_append_line_case() { io_append_line("journal.txt", "next") }
+thought io_read_or_case() { io_read_or("absent.txt", "fallback") }
+thought io_copy_case() { io_copy_file("journal.txt", "journal-copy.txt") }
+thought io_delete_case() { io_safe_delete("journal-copy.txt") }
+)";
+    fs.files["journal.txt"] = "base";
+    dao::ModuleBuilder io_builder;
+    check(dao::km::compile(io_program, io_builder, &error, options), "compile migrated io");
+    const auto io_bytes = io_builder.encode();
+    dao_module* io_module = nullptr;
+    check(dao_vm_load_module(vm, {io_bytes.data(), io_bytes.size()}, &io_module, &error) == DAO_OK,
+          "load migrated io");
+    if (io_module != nullptr) {
+        dao_value result{};
+        check(call(vm, io_module, "io_exists_case", &result, &error) &&
+                  result.type == DAO_VALUE_TRIT && result.payload == 1,
+              "io file exists");
+        check(call(vm, io_module, "io_size_case", &result, &error) &&
+                  result.type == DAO_VALUE_I64 && result.payload == 4,
+              "io file size");
+        check(call(vm, io_module, "io_append_case", &result, &error) &&
+                  fs.files["journal.txt"] == "base-tail",
+              "io append file");
+        check(call(vm, io_module, "io_append_line_case", &result, &error) &&
+                  fs.files["journal.txt"] == "base-tail\nnext",
+              "io append line");
+        check(call(vm, io_module, "io_read_or_case", &result, &error) &&
+                  equals_string(result, "fallback"),
+              "io read default");
+        check(call(vm, io_module, "io_copy_case", &result, &error) &&
+                  fs.files["journal-copy.txt"] == "base-tail\nnext",
+              "io copy file");
+        check(call(vm, io_module, "io_delete_case", &result, &error) &&
+                  !fs.files.contains("journal-copy.txt"),
+              "io safe delete");
+        dao_module_release(io_module);
     }
     dao_vm_destroy(vm);
     if (failures != 0) return EXIT_FAILURE;
