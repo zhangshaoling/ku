@@ -75,5 +75,20 @@ int main(int argc,char**argv){
     const bool imported_ok=dao_vm_call(vm,imported_module,imported_function,nullptr,0,&imported_result,&error)==DAO_OK&&imported_result.type==DAO_VALUE_I64&&imported_result.payload==42;
     dao_module_release(imported_module);
     if(!imported_ok)return EXIT_FAILURE;
+    const std::string mutation_source="thought mutate() { items = [2, 3]; items[1] = 42; mapping = {\"bonus\": 2}; mapping[\"bonus\"] = items[1]; mapping[\"bonus\"] }";
+    dao_value mutation_arg{};
+    if(dao_value_make_string_view({reinterpret_cast<const uint8_t*>(mutation_source.data()),mutation_source.size()},&mutation_arg)!=DAO_OK)return EXIT_FAILURE;
+    dao_value mutation_generated{};
+    if(dao_vm_call(vm,module,function,&mutation_arg,1,&mutation_generated,&error)!=DAO_OK)return EXIT_FAILURE;
+    dao_bytes mutation_output{};
+    if(dao_value_get_view(&mutation_generated,&mutation_output)!=DAO_OK)return EXIT_FAILURE;
+    dao_module*mutation_module=nullptr;
+    if(dao_vm_load_module(vm,mutation_output,&mutation_module,&error)!=DAO_OK)return EXIT_FAILURE;
+    dao_function mutation_function=0;
+    if(dao_module_find_export(mutation_module,symbol("mutate"),&mutation_function)!=DAO_OK)return EXIT_FAILURE;
+    dao_value mutation_result{};
+    const bool mutation_ok=dao_vm_call(vm,mutation_module,mutation_function,nullptr,0,&mutation_result,&error)==DAO_OK&&mutation_result.type==DAO_VALUE_I64&&mutation_result.payload==42;
+    dao_module_release(mutation_module);
+    if(!mutation_ok)return EXIT_FAILURE;
     dao_module_release(module);dao_vm_destroy(vm);std::cout<<"dao .ku self-host seed passed\n";return EXIT_SUCCESS;
 }

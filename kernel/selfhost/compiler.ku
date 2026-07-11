@@ -553,6 +553,26 @@ thought parse_body(source, index, size, handle, next_reg, names, regs, loop_dept
       probe = probe + 1
     }
     after_name = skip_space(source, probe, size)
+    if probe > name_start and source_at(source, after_name, size) == 91 {
+      assignment_probe = after_name + 1
+      while source_at(source, assignment_probe, size) != 93 { assignment_probe = assignment_probe + 1 }
+      assignment_probe = skip_space(source, assignment_probe + 1, size)
+      if source_at(source, assignment_probe, size) == 61 and source_at(source, assignment_probe + 1, size) != 61 {
+        object_reg = lookup_reg(names, regs, source_hash(source, name_start, probe - name_start))
+        parsed = parse_expression(source, after_name + 1, size, handle, next_reg, names, regs)
+        next_reg = packed_next(parsed)
+        key_reg = packed_result(parsed)
+        index = assignment_probe
+        parsed = parse_expression(source, index + 1, size, handle, next_reg, names, regs)
+        index = packed_index(parsed)
+        next_reg = packed_next(parsed)
+        value_reg = packed_result(parsed)
+        builder_emit(handle, 36, object_reg, key_reg, value_reg, 0)
+        result_reg = value_reg
+        if source_at(source, index, size) == 59 { index = index + 1 continue }
+        break
+      }
+    }
     next_byte = 0
     if after_name + 1 < size { next_byte = source_byte(source, after_name + 1) }
     if probe > name_start and source_byte(source, after_name) == 61 and next_byte != 61 {
