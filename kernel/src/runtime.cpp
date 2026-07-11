@@ -6,6 +6,8 @@
 #include <limits>
 #include <new>
 #include <memory>
+#include <atomic>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -18,6 +20,7 @@ struct FunctionRecord {
     uint32_t code_count;
     uint16_t register_count;
     uint16_t parameter_count;
+    const dao::Instruction* instructions = nullptr;
 };
 
 struct SectionRecord {
@@ -230,15 +233,21 @@ struct dao_vm {
     std::unordered_map<uint32_t, HostFunction> host_functions;
     std::vector<std::unique_ptr<List>> lists;
     std::vector<std::unique_ptr<Map>> maps;
+    mutable std::mutex cache_mutex;
+    std::unordered_map<uint64_t, std::vector<dao_module*>> module_cache;
+    uint64_t cache_hits = 0;
+    uint64_t cache_misses = 0;
 };
 
 struct dao_module {
+    std::atomic<uint32_t> references{1};
     std::vector<FunctionRecord> functions;
     std::vector<dao::Instruction> code;
     std::vector<ImportRecord> imports;
     std::unordered_map<uint32_t, uint32_t> exports;
     std::vector<std::string> strings;
     uint64_t fingerprint = 0;
+    std::vector<uint8_t> source_bytes;
 };
 
 namespace {
@@ -408,7 +417,7 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
         }
         --budget;
 
-        const auto& instruction = module->code[function.code_offset + pc];
+        const auto& instruction = function.instructions[pc];
         const auto require_i64 = [&](uint16_t index) {
             return registers[index].type == DAO_VALUE_I64;
         };
@@ -685,6 +694,7 @@ dao_vm_config dao_vm_config_default(void) {
     config.struct_size = sizeof(dao_vm_config);
     config.max_registers = 4096;
     config.max_call_depth = 1024;
+    config.max_cached_modules = 64;
     config.max_module_bytes = 64ULL * 1024ULL * 1024ULL;
     config.max_instructions_per_call = 10ULL * 1000ULL * 1000ULL;
     return config;
@@ -701,10 +711,34 @@ dao_vm* dao_vm_create(const dao_vm_config* requested) {
         config.max_instructions_per_call == 0) {
         return nullptr;
     }
-    return new (std::nothrow) dao_vm{config, {}, {}, {}};
+    dao_vm* vm = new (std::nothrow) dao_vm();
+    if (vm != nullptr) vm->config = config;
+    return vm;
 }
 
-void dao_vm_destroy(dao_vm* vm) { delete vm; }
+void release_module(dao_module* module) {
+    if (module != nullptr && module->references.fetch_sub(1, std::memory_order_acq_rel) == 1) delete module;
+}
+
+void dao_vm_destroy(dao_vm* vm) {
+    if (vm == nullptr) return;
+    for (auto& bucket : vm->module_cache) for (dao_module* module : bucket.second) release_module(module);
+    delete vm;
+}
+
+dao_status dao_vm_get_cache_stats(const dao_vm* vm, dao_cache_stats* out_stats) {
+    if (vm == nullptr || out_stats == nullptr || out_stats->struct_size != sizeof(*out_stats)) return DAO_INVALID_ARGUMENT;
+    std::lock_guard<std::mutex> lock(vm->cache_mutex);
+    uint64_t count = 0; for (const auto& bucket : vm->module_cache) count += bucket.second.size();
+    out_stats->module_count = static_cast<uint32_t>(count); out_stats->hits = vm->cache_hits; out_stats->misses = vm->cache_misses; return DAO_OK;
+}
+
+dao_status dao_vm_clear_module_cache(dao_vm* vm) {
+    if (vm == nullptr) return DAO_INVALID_ARGUMENT;
+    std::lock_guard<std::mutex> lock(vm->cache_mutex);
+    for (auto& bucket : vm->module_cache) for (dao_module* module : bucket.second) release_module(module);
+    vm->module_cache.clear(); return DAO_OK;
+}
 
 dao_status dao_vm_register_host_function(dao_vm* vm, const dao_host_function* function) {
     if (vm == nullptr || function == nullptr || function->struct_size != sizeof(*function) ||
@@ -739,6 +773,19 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
     *out_module = nullptr;
     if (bytes.size < dao::kHeaderSize || bytes.size > vm->config.max_module_bytes) {
         return fail(error, DAO_BAD_MODULE, "module size is invalid");
+    }
+    const uint64_t requested_fingerprint = fingerprint64(bytes.data, bytes.size);
+    if (vm->config.max_cached_modules != 0) {
+        std::lock_guard<std::mutex> lock(vm->cache_mutex);
+        const auto bucket = vm->module_cache.find(requested_fingerprint);
+        if (bucket != vm->module_cache.end()) {
+            for (dao_module* cached : bucket->second) {
+                if (cached->source_bytes.size() == bytes.size && std::memcmp(cached->source_bytes.data(), bytes.data, bytes.size) == 0) {
+                    cached->references.fetch_add(1, std::memory_order_relaxed); ++vm->cache_hits; *out_module = cached; return DAO_OK;
+                }
+            }
+        }
+        ++vm->cache_misses;
     }
     if (std::memcmp(bytes.data, "DAO\0", 4) != 0) {
         return fail(error, DAO_BAD_MODULE, "invalid module magic");
@@ -817,7 +864,7 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
     dao_module* module = new (std::nothrow) dao_module();
     if (module == nullptr)
         return fail(error, DAO_OUT_OF_MEMORY, "module allocation failed");
-    module->fingerprint = fingerprint64(bytes.data, bytes.size);
+    module->fingerprint = requested_fingerprint;
 
     try {
         module->functions.reserve(functions_section->count);
@@ -846,6 +893,8 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
                                                     read_u16(record + 2), read_u16(record + 4),
                                                     read_u16(record + 6), read_i64(record + 8)});
         }
+        for (auto& function : module->functions) function.instructions = module->code.data() + function.code_offset;
+        module->source_bytes.assign(bytes.data, bytes.data + bytes.size);
 
         module->imports.reserve(imports_section->count);
         std::unordered_map<uint32_t, bool> import_symbols;
@@ -909,11 +958,16 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
         return fail(error, DAO_OUT_OF_MEMORY, "module decode allocation failed");
     }
 
+    if (vm->config.max_cached_modules != 0) {
+        std::lock_guard<std::mutex> lock(vm->cache_mutex);
+        uint64_t count = 0; for (const auto& bucket : vm->module_cache) count += bucket.second.size();
+        if (count < vm->config.max_cached_modules) { module->references.fetch_add(1, std::memory_order_relaxed); vm->module_cache[module->fingerprint].push_back(module); }
+    }
     *out_module = module;
     return DAO_OK;
 }
 
-void dao_module_release(dao_module* module) { delete module; }
+void dao_module_release(dao_module* module) { release_module(module); }
 
 uint64_t dao_module_fingerprint(const dao_module* module) {
     return module == nullptr ? 0 : module->fingerprint;

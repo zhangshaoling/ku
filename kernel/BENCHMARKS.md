@@ -71,3 +71,18 @@ typed_ops_per_second=209518730.57
 `host_call_ns` includes `dao_vm_call`, one `CALL_HOST`, numeric registry lookup, the C callback, result validation, and `RETURN`. No JSON, string lookup, or allocation occurs per host call.
 
 Future changes must report iteration count, hardware, variance, allocation count, binary size, and before/after values.
+
+## K5 Cache And AOT
+
+The K5 benchmark separates cached and cold loads by disabling cache on a second VM. A
+local Release sample with 2,000 load iterations and 200,000 call iterations reported:
+
+```text
+cached_load_ns=7599.85
+cold_load_ns=12582.85
+call_ns=88.18
+typed_ops_per_second=203689484.93
+```
+
+The AOT CTest compares generated code with an equivalent checked native function across
+the same dynamic-library boundary and enforces `aot_native_ratio >= 0.8`.

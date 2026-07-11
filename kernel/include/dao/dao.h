@@ -65,10 +65,17 @@ typedef struct dao_vm_config {
     uint32_t struct_size;
     uint32_t max_registers;
     uint32_t max_call_depth;
-    uint32_t reserved;
+    uint32_t max_cached_modules;
     uint64_t max_module_bytes;
     uint64_t max_instructions_per_call;
 } dao_vm_config;
+
+typedef struct dao_cache_stats {
+    uint32_t struct_size;
+    uint32_t module_count;
+    uint64_t hits;
+    uint64_t misses;
+} dao_cache_stats;
 
 typedef struct dao_error {
     dao_status code;
@@ -96,6 +103,8 @@ DAO_API dao_status dao_value_get_view(const dao_value* value, dao_bytes* out_byt
 DAO_API dao_vm_config dao_vm_config_default(void);
 DAO_API dao_vm* dao_vm_create(const dao_vm_config* config);
 DAO_API void dao_vm_destroy(dao_vm* vm);
+DAO_API dao_status dao_vm_get_cache_stats(const dao_vm* vm, dao_cache_stats* out_stats);
+DAO_API dao_status dao_vm_clear_module_cache(dao_vm* vm);
 
 DAO_API dao_status dao_vm_register_host_function(dao_vm* vm, const dao_host_function* function);
 DAO_API dao_status dao_vm_unregister_host_function(dao_vm* vm, uint32_t symbol_id);

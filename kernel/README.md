@@ -29,6 +29,14 @@ Run the initial load/call benchmark with:
 .\tools\benchmark_kernel.ps1
 ```
 
+K5 adds a verified-module cache, direct predecoded function instruction pointers, an
+optional portable-C AOT backend, installable CMake SDK, and Python/Rust bindings. See
+[`K5.md`](K5.md). Build the release ZIP with:
+
+```powershell
+.\tools\package_kernel.ps1
+```
+
 Compile the supported scalar Ku subset to a verified Dao module with:
 
 ```powershell

@@ -534,6 +534,24 @@ void test_instruction_budget() {
     dao_vm_destroy(vm);
 }
 
+void test_verified_module_cache() {
+    dao_vm_config config = dao_vm_config_default(); config.max_cached_modules = 2;
+    dao_vm* vm = dao_vm_create(&config); CHECK("create cache vm", vm != nullptr); if (!vm) return;
+    const auto bytes = make_add_module(100); dao_error error{};
+    dao_module* first = load_module(vm, bytes, &error); dao_module* second = load_module(vm, bytes, &error);
+    CHECK("cache loads", first != nullptr && second != nullptr);
+    CHECK("cache reuses verified module", first == second);
+    dao_cache_stats stats{sizeof(dao_cache_stats), 0, 0, 0};
+    CHECK("read cache stats", dao_vm_get_cache_stats(vm, &stats) == DAO_OK);
+    CHECK("cache stats", stats.module_count == 1 && stats.hits == 1 && stats.misses == 1);
+    CHECK("clear cache", dao_vm_clear_module_cache(vm) == DAO_OK);
+    dao_function function = 0; dao_value result{};
+    const dao_value args[] = {{DAO_VALUE_I64, 0, 40}, {DAO_VALUE_I64, 0, 2}};
+    CHECK("cached caller reference survives clear", dao_module_find_export(first, 100, &function) == DAO_OK &&
+          dao_vm_call(vm, first, function, args, 2, &result, &error) == DAO_OK && result.payload == 42);
+    dao_module_release(first); dao_module_release(second); dao_vm_destroy(vm);
+}
+
 } // namespace
 
 int main() {
@@ -552,6 +570,7 @@ int main() {
     test_runtime_errors(vm);
     dao_vm_destroy(vm);
     test_instruction_budget();
+    test_verified_module_cache();
 
     if (failures != 0) {
         std::cerr << failures << " kernel test(s) failed\n";

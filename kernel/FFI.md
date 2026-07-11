@@ -67,3 +67,10 @@ These APIs create borrowed views only. Owned buffers require an allocator and ow
 - The VM does not mutate view bytes. Hosts must synchronize mutable backing storage if calls can run concurrently.
 
 The registry belongs to the VM, not the module. The same verified module can therefore run against different host capability sets without changing its bytes or fingerprint.
+
+## Verified Module Cache
+
+`dao_vm_config.max_cached_modules` controls the per-VM verified-module cache and defaults
+to 64. Cache identity is fingerprint plus full byte equality. Use
+`dao_vm_get_cache_stats` for hit/miss counters and `dao_vm_clear_module_cache` to release
+cache-owned references. Caller-owned module references remain valid after a clear.

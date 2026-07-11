@@ -83,6 +83,16 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     dao_error error{};
 
+    dao_vm_config cold_config = dao_vm_config_default(); cold_config.max_cached_modules = 0;
+    dao_vm* cold_vm = dao_vm_create(&cold_config); if (cold_vm == nullptr) return EXIT_FAILURE;
+    const auto cold_load_start = Clock::now();
+    for (uint64_t index = 0; index < load_iterations; ++index) {
+        dao_module* loaded = nullptr;
+        if (dao_vm_load_module(cold_vm, {bytes.data(), bytes.size()}, &loaded, &error) != DAO_OK) return EXIT_FAILURE;
+        dao_module_release(loaded);
+    }
+    const auto cold_load_end = Clock::now(); dao_vm_destroy(cold_vm);
+
     const auto load_start = Clock::now();
     for (uint64_t index = 0; index < load_iterations; ++index) {
         dao_module* loaded = nullptr;
@@ -116,6 +126,7 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
 
     const double load_ns = elapsed_ns(load_start, load_end) / static_cast<double>(load_iterations);
+    const double cold_load_ns = elapsed_ns(cold_load_start, cold_load_end) / static_cast<double>(load_iterations);
     const double call_ns = elapsed_ns(call_start, call_end) / static_cast<double>(call_iterations);
     const double calls_per_second = 1'000'000'000.0 / call_ns;
 
@@ -221,7 +232,8 @@ int main(int argc, char** argv) {
                                         arithmetic_ops_per_call * 1'000'000'000.0 / arithmetic_ns;
 
     std::cout << std::fixed << std::setprecision(2) << "module_bytes=" << bytes.size() << '\n'
-              << "load_ns=" << load_ns << '\n'
+              << "cached_load_ns=" << load_ns << '\n'
+              << "cold_load_ns=" << cold_load_ns << '\n'
               << "call_ns=" << call_ns << '\n'
               << "view_call_ns=" << view_call_ns << '\n'
               << "host_call_ns=" << host_call_ns << '\n'
