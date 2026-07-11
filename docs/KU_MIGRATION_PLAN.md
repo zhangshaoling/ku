@@ -62,8 +62,10 @@
 - parity against the complete legacy Python/Ku corpus;
 - stable, benchmark-selected owned container ABI.
 
-The `.ku` self-hosting replacement is tracked in `docs/KU_SELFHOST.md`. SH0 is complete;
-SH1 parser/compiler parity and SH2 byte-identical self-rebuild remain pending.
+The `.ku` self-hosting replacement is tracked in `docs/KU_SELFHOST.md`. SH2 now passes
+functional rebuild, consecutive byte-identical rebuild, and rebuilt-compiler parity for
+the current frontend surface. Full legacy K4 parity and the remaining SH1 surface are
+still pending.
 
 ## Non-negotiable (per guide §12 / §14)
 - Must go through typed builder; no offset-patching or handwritten binary in the hot path.

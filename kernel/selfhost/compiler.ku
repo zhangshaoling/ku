@@ -872,22 +872,36 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
       }
       name_hash = source_hash(source, token_start(token), token_length(token))
       if token_type(tokens[token_index + 1]) == 8 {
-        bracket_depth = 1
-        scan = token_index + 2
-        while bracket_depth > 0 {
-          if token_type(tokens[scan]) == 26 { throw "unterminated index" }
-          if token_type(tokens[scan]) == 8 { bracket_depth = bracket_depth + 1 }
-          if token_type(tokens[scan]) == 9 { bracket_depth = bracket_depth - 1 }
+        scan = token_index + 1
+        while token_type(tokens[scan]) == 8 {
+          bracket_depth = 1
           scan = scan + 1
+          while bracket_depth > 0 {
+            if token_type(tokens[scan]) == 26 { throw "unterminated index" }
+            if token_type(tokens[scan]) == 8 { bracket_depth = bracket_depth + 1 }
+            if token_type(tokens[scan]) == 9 { bracket_depth = bracket_depth - 1 }
+            scan = scan + 1
+          }
         }
         if token_type(tokens[scan]) == 18 {
           object_reg = lookup_reg(names, regs, name_hash)
-          parsed = parse_expression(source, tokens, token_index + 2, handle, next_reg, names, regs, size)
-          token_index = packed_index(parsed)
-          next_reg = packed_next(parsed)
-          key_reg = packed_result(parsed)
-          if token_type(tokens[token_index]) != 9 { throw "expected ] in index assignment" }
           token_index = token_index + 1
+          while token_type(tokens[token_index]) == 8 {
+            parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+            token_index = packed_index(parsed)
+            next_reg = packed_next(parsed)
+            key_reg = packed_result(parsed)
+            if token_type(tokens[token_index]) != 9 { throw "expected ] in index assignment" }
+            token_index = token_index + 1
+            if token_type(tokens[token_index]) == 8 {
+              nested_reg = next_reg
+              builder_emit(handle, 30, nested_reg, object_reg, key_reg, 0)
+              next_reg = next_reg + 1
+              object_reg = nested_reg
+              continue
+            }
+            break
+          }
           if token_type(tokens[token_index]) != 18 { throw "expected = in index assignment" }
           parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
           token_index = packed_index(parsed)

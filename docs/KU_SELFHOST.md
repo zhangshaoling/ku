@@ -56,8 +56,9 @@ lowers to `LIST_LENGTH`, and an identifier-backed list supports `items[index]` t
 cursor loop; its `continue` target advances the cursor before retesting.
 Map literals preserve string-key/value pairs before packing them into `MAKE_MAP`; existing
 identifier bindings use `INDEX_GET` for string-key lookup.
-Single-level identifier-backed list and map indexing supports `container[key] = value` through
-`INDEX_SET`.
+Identifier-backed list and map indexing supports `container[key] = value` through
+`INDEX_SET`. Nested assignment chains such as `matrix[row][column] = value` resolve
+intermediate containers with `INDEX_GET` before mutating the final container.
 `throw <expression>` and `try { ... } catch error { ... }` lower to patched VM handler targets;
 the catch variable receives the thrown value.
 Top-level `import name(arity)` declarations are registered before functions; matching named
@@ -88,8 +89,7 @@ raw builder Host adapter; register indices and contiguous counts must remain bel
 do not truncate during the self-rebuild. New local bindings receive independent registers,
 preventing assignments such as `start = index` from aliasing later writes to `index`.
 
-This remains deliberately bounded: nested indexed mutation and module-path imports are
-still pending. Diagnostics
+This remains deliberately bounded: module-path imports are still pending. Diagnostics
 now cover explicit `throw` paths (unterminated string/list/map literals, missing
 function body braces, empty number consumption, host/local arity mismatch,
 undefined identifiers, unexpected characters) but do not yet carry source
