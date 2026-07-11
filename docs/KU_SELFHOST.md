@@ -46,9 +46,11 @@ emit and patch VM branch targets in the self-hosted compiler. `else { ... }` pro
 matching branch-over-alternate jump. Basic `while <condition> { ... }` loops re-evaluate their
 condition and jump back through the self-hosted builder ABI. `break` and `continue` are patched
 within their enclosing loop range.
+Plain string literals are copied into the generated module data section and loaded with
+`LOAD_STRING` (escape sequences are not yet parsed).
 
-This remains deliberately bounded: token streams, strings, containers, imports, diagnostics,
-register-overflow checks, and canonical self-rebuild are still pending.
+This remains deliberately bounded: token streams, string escapes, containers, imports,
+diagnostics, register-overflow checks, and canonical self-rebuild are still pending.
 
 ## SH1: Real Frontend Remaining
 

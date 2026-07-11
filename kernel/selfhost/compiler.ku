@@ -1,9 +1,11 @@
 import source_len(1)
 import source_byte(2)
+import source_slice(3)
 import source_hash(3)
 import builder_new(0)
 import builder_begin(3)
 import builder_emit(6)
+import builder_add_string(2)
 import builder_position(1)
 import builder_patch(3)
 import builder_patch_marked(5)
@@ -54,6 +56,21 @@ thought parse_number(source, index, size, handle, next_reg) {
   pack(index, next_reg + 1, result_reg)
 }
 
+thought parse_string(source, index, size, handle, next_reg) {
+  index = index + 1
+  start = index
+  while index < size {
+    if source_at(source, index, size) == 34 { break }
+    index = index + 1
+  }
+  value = source_slice(source, start, index - start)
+  data_index = builder_add_string(handle, value)
+  result_reg = next_reg
+  builder_emit(handle, 25, result_reg, 0, 0, data_index)
+  if source_at(source, index, size) == 34 { index = index + 1 }
+  pack(index, next_reg + 1, result_reg)
+}
+
 thought lookup_slot(names, name_hash) {
   i = len(names) - 1
   while i >= 0 {
@@ -97,6 +114,7 @@ thought function_index(source, size, target_hash) {
 thought parse_primary(source, index, size, handle, next_reg, names, regs) {
   index = skip_space(source, index, size)
   byte = source_byte(source, index)
+  if byte == 34 { return parse_string(source, index, size, handle, next_reg) }
   if byte == 45 {
     parsed = parse_primary(source, index + 1, size, handle, next_reg, names, regs)
     index = packed_index(parsed)
