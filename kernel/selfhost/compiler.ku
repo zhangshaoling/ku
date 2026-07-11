@@ -113,28 +113,37 @@ thought parse_expression(source, index, size, handle, next_reg) {
 
 thought compile(source) {
   handle = builder_new()
-  builder_begin(handle, 0, 64)
   size = source_len(source)
   index = 0
   while index < size {
-    if source_byte(source, index) == 32 { break }
-    index = index + 1
+    index = skip_space(source, index, size)
+    if index >= size { break }
+    while index < size {
+      if source_byte(source, index) == 32 { break }
+      index = index + 1
+    }
+    index = skip_space(source, index, size)
+    name_start = index
+    while index < size {
+      if source_byte(source, index) == 40 { break }
+      index = index + 1
+    }
+    name_length = index - name_start
+    export_symbol = source_hash(source, name_start, name_length)
+    builder_begin(handle, 0, 64)
+    while index < size {
+      if source_byte(source, index) == 123 { index = index + 1 break }
+      index = index + 1
+    }
+    parsed = parse_expression(source, index, size, handle, 0)
+    result_reg = packed_result(parsed)
+    builder_emit(handle, 15, 0, result_reg, 0, 0)
+    builder_finish(handle, export_symbol)
+    index = packed_index(parsed)
+    while index < size {
+      if source_byte(source, index) == 125 { index = index + 1 break }
+      index = index + 1
+    }
   }
-  index = skip_space(source, index, size)
-  name_start = index
-  while index < size {
-    if source_byte(source, index) == 40 { break }
-    index = index + 1
-  }
-  name_length = index - name_start
-  export_symbol = source_hash(source, name_start, name_length)
-  while index < size {
-    if source_byte(source, index) == 123 { index = index + 1 break }
-    index = index + 1
-  }
-  parsed = parse_expression(source, index, size, handle, 0)
-  result_reg = packed_result(parsed)
-  builder_emit(handle, 15, 0, result_reg, 0, 0)
-  builder_finish(handle, export_symbol)
   builder_encode(handle)
 }

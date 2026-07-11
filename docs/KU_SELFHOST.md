@@ -31,6 +31,12 @@ This is intentionally still a seed path, not the final frontend. It does not yet
 identifiers, variables, multiple functions, function calls, string/list/map syntax,
 imports, proper diagnostics, register-overflow checks, or canonical self-rebuild.
 
+## SH1b: Multi-Function Expression Modules (implemented)
+
+The `.ku` compiler now scans and emits consecutive zero-parameter `thought` declarations
+into one generated module, preserving each source function name as an export. Parameters,
+identifiers, assignments, and inter-function calls remain the next parser slice.
+
 ## SH1: Real Frontend Remaining
 
 - move tokenization into `.ku` modules and replace byte-scanning with token streams;
