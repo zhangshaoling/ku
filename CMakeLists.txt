@@ -137,6 +137,11 @@ target_link_libraries(ku_std_http_tests PRIVATE dao_kernel dao_module_builder da
 dao_enable_strict_warnings(ku_std_http_tests)
 dao_enable_sanitizers(ku_std_http_tests)
 
+add_executable(ku_std_lexer_tests kernel/tests/ku_std_lexer_tests.cpp)
+target_link_libraries(ku_std_lexer_tests PRIVATE dao_kernel dao_module_builder dao_ku_migration)
+dao_enable_strict_warnings(ku_std_lexer_tests)
+dao_enable_sanitizers(ku_std_lexer_tests)
+
 add_executable(selfhost_tests kernel/tests/selfhost_tests.cpp)
 target_link_libraries(selfhost_tests PRIVATE dao_kernel dao_module_builder dao_ku_migration)
 dao_enable_strict_warnings(selfhost_tests)
@@ -247,6 +252,12 @@ add_test(NAME ku_compile_std_http COMMAND dao-ku
     "${CMAKE_BINARY_DIR}/stdlib_http.dao")
 add_test(NAME ku_std_http COMMAND ku_std_http_tests
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/http.ku")
+add_test(NAME ku_compile_std_lexer COMMAND dao-ku
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/lexer.ku"
+    "${CMAKE_BINARY_DIR}/stdlib_lexer.dao")
+add_test(NAME ku_std_lexer COMMAND ku_std_lexer_tests
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/lexer.ku"
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/string.ku")
 add_test(NAME ku_compile_acceptance COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/language_acceptance.ku"
     "${CMAKE_BINARY_DIR}/language_acceptance.dao")
@@ -299,6 +310,8 @@ set(DAO_RUNTIME_TESTS
     ku_compile_std_io
     ku_compile_std_http
     ku_std_http
+    ku_compile_std_lexer
+    ku_std_lexer
     ku_compile_acceptance
     ku_compile_legacy_import
     ku_reject_import_escape

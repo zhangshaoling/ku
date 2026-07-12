@@ -48,6 +48,9 @@ thought logic() { true and not false }
 thought nothing() { null }
 thought missing_is_null() { {}["missing"] == null }
 thought null_differs_from_number() { null != 0 }
+thought string_equal() { "dao" == "dao" }
+thought string_not_equal() { "dao" != "ku" }
+thought trit_equal() { true == true }
 thought multiline_map() {
   {
     "answer": 42,
@@ -165,6 +168,15 @@ thought catches() {
     CHECK("find null inequality", dao_module_find_export(module, symbol_id("null_differs_from_number"), &fn) == DAO_OK);
     CHECK("execute null inequality", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
     CHECK("null differs from number", result.type == DAO_VALUE_TRIT && result.payload == 1);
+    CHECK("find string equal", dao_module_find_export(module, symbol_id("string_equal"), &fn) == DAO_OK);
+    CHECK("execute string equal", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("string equal result", result.type == DAO_VALUE_TRIT && result.payload == 1);
+    CHECK("find string not equal", dao_module_find_export(module, symbol_id("string_not_equal"), &fn) == DAO_OK);
+    CHECK("execute string not equal", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("string not equal result", result.type == DAO_VALUE_TRIT && result.payload == 1);
+    CHECK("find trit equal", dao_module_find_export(module, symbol_id("trit_equal"), &fn) == DAO_OK);
+    CHECK("execute trit equal", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("trit equal result", result.type == DAO_VALUE_TRIT && result.payload == 1);
     CHECK("find multiline map", dao_module_find_export(module, symbol_id("multiline_map"), &fn) == DAO_OK);
     CHECK("execute multiline map", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
     CHECK("multiline map result", result.type == DAO_VALUE_I64 && result.payload == 42);

@@ -605,10 +605,34 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
         case Opcode::CompareGeI64: {
             const bool equality = instruction.opcode == Opcode::CompareEqI64 ||
                                   instruction.opcode == Opcode::CompareNeI64;
+            const dao_value& left_value = registers[instruction.a];
+            const dao_value& right_value = registers[instruction.b];
             const bool left_null = registers[instruction.a].type == DAO_VALUE_NULL;
             const bool right_null = registers[instruction.b].type == DAO_VALUE_NULL;
             if (equality && (left_null || right_null)) {
                 const bool equal = left_null && right_null;
+                const bool truth = instruction.opcode == Opcode::CompareEqI64 ? equal : !equal;
+                registers[instruction.dst] = dao_value{DAO_VALUE_TRIT, 0, truth ? 1 : -1};
+                ++pc;
+                break;
+            }
+            if (equality && left_value.type != right_value.type) {
+                const bool truth = instruction.opcode == Opcode::CompareNeI64;
+                registers[instruction.dst] = dao_value{DAO_VALUE_TRIT, 0, truth ? 1 : -1};
+                ++pc;
+                break;
+            }
+            if (equality && (left_value.type == DAO_VALUE_STRING ||
+                             left_value.type == DAO_VALUE_BYTES)) {
+                const bool equal = left_value.reserved == right_value.reserved &&
+                    std::memcmp(view_data(left_value), view_data(right_value), left_value.reserved) == 0;
+                const bool truth = instruction.opcode == Opcode::CompareEqI64 ? equal : !equal;
+                registers[instruction.dst] = dao_value{DAO_VALUE_TRIT, 0, truth ? 1 : -1};
+                ++pc;
+                break;
+            }
+            if (equality && left_value.type == DAO_VALUE_TRIT) {
+                const bool equal = left_value.payload == right_value.payload;
                 const bool truth = instruction.opcode == Opcode::CompareEqI64 ? equal : !equal;
                 registers[instruction.dst] = dao_value{DAO_VALUE_TRIT, 0, truth ? 1 : -1};
                 ++pc;

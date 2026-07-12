@@ -21,7 +21,8 @@
 - Implemented by VM ABI v9: module-owned UTF-8 string constants, lists, string-keyed maps,
   dynamic list/map indexing, verified list append, local function references, and same-call bindings.
   Missing map keys evaluate to `null`, matching the legacy runtime and C-VM parity contract;
-  equality/inequality accepts `null` without weakening ordered integer comparisons.
+  equality/inequality accepts `null`, Trits, borrowed strings/bytes, and cross-type inequality
+  without weakening ordered integer comparisons or enabling container deep equality.
 - Per-function header: registers/parameters/instructions derived from actual code.
 - Verification: every output passes `loader+verifier` and round-trips back through the assembler (existing tools).
 
@@ -68,6 +69,10 @@
 - `kernel/stdlib/http.ku` migrates GET/POST capability wrappers and response-status helpers.
   Request header Maps are created in `.ku` and inspected by the Host through the public
   container API; JSON and Host-created response Maps remain owned-container ABI work.
+- `kernel/stdlib/lexer.ku` migrates executable ASCII tokenization on top of the `string`
+  module, including keywords, identifiers, integers, strings, operators, punctuation,
+  newlines, and `;;` comments. Tests inspect every returned token Map and EOF marker;
+  full UTF-8 codepoint iteration remains pending.
 
 ### Phase V — MVP acceptance (full legacy parity pending)
 - Native execution covers arithmetic, comparisons, Trit logic, calls, host imports,
@@ -82,9 +87,9 @@
   and value-producing `if (...) { value } { alternate }` expressions onto existing AST
   and VM instructions.
 - Legacy `push(list, value)` lowers directly to verified `LIST_APPEND`.
-- With these compatibility layers, legacy `lexer.ku`, `parser.ku`, and `task_queue.ku`
-  pass syntax parsing and now stop only at explicit capability gaps (`ord`, dynamic `type`,
-  and `system`, respectively).
+- With these compatibility layers, legacy `parser.ku` and `task_queue.ku` pass syntax parsing
+  and now stop only at explicit capability gaps (dynamic `type` and `system`, respectively).
+  The lexer has moved to the migrated executable module described above.
 
 ## Remaining For Full K4 Closure
 
