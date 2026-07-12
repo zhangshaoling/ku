@@ -127,6 +127,11 @@ target_link_libraries(ku_legacy_parser_tests PRIVATE dao_kernel dao_module_build
 dao_enable_strict_warnings(ku_legacy_parser_tests)
 dao_enable_sanitizers(ku_legacy_parser_tests)
 
+add_executable(ku_legacy_task_queue_tests kernel/tests/ku_legacy_task_queue_tests.cpp)
+target_link_libraries(ku_legacy_task_queue_tests PRIVATE dao_kernel dao_module_builder dao_ku_migration)
+dao_enable_strict_warnings(ku_legacy_task_queue_tests)
+dao_enable_sanitizers(ku_legacy_task_queue_tests)
+
 add_executable(ku_std_fs_tests kernel/tests/ku_std_fs_tests.cpp)
 target_link_libraries(ku_std_fs_tests PRIVATE dao_kernel dao_module_builder dao_ku_migration)
 dao_enable_strict_warnings(ku_std_fs_tests)
@@ -285,6 +290,11 @@ add_test(NAME ku_compile_legacy_parser COMMAND dao-ku
     "${CMAKE_BINARY_DIR}/legacy_parser.dao")
 add_test(NAME ku_legacy_parser COMMAND ku_legacy_parser_tests
     "${CMAKE_SOURCE_DIR}/ku/std/parser.ku")
+add_test(NAME ku_compile_legacy_task_queue COMMAND dao-ku
+    "${CMAKE_SOURCE_DIR}/ku/std/task_queue.ku"
+    "${CMAKE_BINARY_DIR}/legacy_task_queue.dao")
+add_test(NAME ku_legacy_task_queue COMMAND ku_legacy_task_queue_tests
+    "${CMAKE_SOURCE_DIR}/ku/std/task_queue.ku")
 add_test(NAME ku_reject_import_escape COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/legacy_import_escape.ku"
     "${CMAKE_BINARY_DIR}/legacy_import_escape.dao")
@@ -339,6 +349,8 @@ set(DAO_RUNTIME_TESTS
     ku_compile_legacy_import
     ku_compile_legacy_parser
     ku_legacy_parser
+    ku_compile_legacy_task_queue
+    ku_legacy_task_queue
     ku_reject_import_escape
     aot_compile_module
     aot_generate_c
