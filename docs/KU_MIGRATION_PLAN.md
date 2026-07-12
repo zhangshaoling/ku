@@ -95,9 +95,10 @@
 - Legacy `push(list, value)` lowers directly to verified `LIST_APPEND`.
 - Legacy `parser.ku` now compiles as an integer-compatible module with explicit
   `host_value_type(1)` and `host_string_to_i64(1)` capabilities. Its indexed-assignment
-  condition had one unmatched parenthesis, now covered by a clean-build CTest. Decimal
-  parsing remains pending because frozen ABI v9 has no float value tag. `task_queue.ku`
-  still requires the explicit `system` capability.
+  condition had one unmatched parenthesis, now covered by clean-build compilation and
+  execution CTests. Assignment, binary-expression, literal, and indexed-assignment AST
+  paths execute through VM-owned Maps/Lists. Decimal parsing remains pending because frozen
+  ABI v9 has no float value tag. `task_queue.ku` still requires the explicit `system` capability.
   The lexer has moved to the migrated executable module described above.
 
 ## Remaining For Full K4 Closure
