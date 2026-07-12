@@ -2,7 +2,7 @@
 // 优先级调度 + 智能路由 + 自动重试
 
 // ── 常量 ──
-import host_user_home(0)
+import host_task_db_path(0)
 import host_datetime_now(0)
 import host_task_id(0)
 import host_value_type(1)
@@ -12,7 +12,7 @@ import host_sqlite_query(3)
 import host_sqlite_close(1)
 
 thought _db_path() {
-  host_user_home() + "/.hermes/runtime/db/working.db"
+  host_task_db_path()
 }
 
 thought _now() {

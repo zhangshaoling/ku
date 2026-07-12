@@ -245,6 +245,7 @@ struct dao_vm {
     uint64_t cache_misses = 0;
     uint32_t max_cached_modules = 64;
     uint32_t container_generation = 1;
+    uint32_t host_callback_depth = 0;
 };
 
 struct dao_module {
@@ -273,6 +274,27 @@ const T* resolve_container(const std::vector<std::unique_ptr<T>>& values, uint32
     const uint32_t encoded_index = static_cast<uint32_t>(handle);
     if (encoded_index == 0 || encoded_index > values.size()) return nullptr;
     return values[encoded_index - 1].get();
+}
+
+template <typename T>
+T* resolve_container(std::vector<std::unique_ptr<T>>& values, uint32_t generation,
+                     const dao_value& value) {
+    const uint64_t handle = static_cast<uint64_t>(value.payload);
+    if (static_cast<uint32_t>(handle >> 32) != generation) return nullptr;
+    const uint32_t encoded_index = static_cast<uint32_t>(handle);
+    if (encoded_index == 0 || encoded_index > values.size()) return nullptr;
+    return values[encoded_index - 1].get();
+}
+
+bool is_valid_vm_value(const dao_vm* vm, const dao_value& value) {
+    if (!is_valid_value(value)) return false;
+    if (value.type == DAO_VALUE_LIST)
+        return resolve_container(vm->lists, vm->container_generation, value) != nullptr;
+    if (value.type == DAO_VALUE_MAP)
+        return resolve_container(vm->maps, vm->container_generation, value) != nullptr;
+    if (value.type == DAO_VALUE_CLOSURE)
+        return resolve_container(vm->closures, vm->container_generation, value) != nullptr;
+    return true;
 }
 
 const SectionRecord* find_section(const std::vector<SectionRecord>& sections,
@@ -783,14 +805,17 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
 
             dao_value result = null_value();
             dao_status status = DAO_RUNTIME_ERROR;
+            ++vm->host_callback_depth;
             try {
                 status = host.callback(
                     host.user_data, instruction.b == 0 ? nullptr : registers.data() + instruction.a,
                     instruction.b, &result);
             } catch (...) {
+                --vm->host_callback_depth;
                 return fail(error, DAO_RUNTIME_ERROR, "host callback threw an exception",
                             function_index, pc);
             }
+            --vm->host_callback_depth;
             if (status != DAO_OK) {
                 if (status < DAO_INVALID_ARGUMENT || status > DAO_IMPORT_NOT_FOUND)
                     status = DAO_RUNTIME_ERROR;
@@ -800,9 +825,13 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
                 return fail(error, DAO_TYPE_ERROR, "host callback returned an invalid value",
                             function_index, pc);
             }
-            if (result.type == DAO_VALUE_LIST || result.type == DAO_VALUE_MAP ||
-                result.type == DAO_VALUE_FUNCTION || result.type == DAO_VALUE_CLOSURE) {
-                return fail(error, DAO_TYPE_ERROR, "host callbacks cannot manufacture VM-owned containers",
+            if ((result.type == DAO_VALUE_LIST || result.type == DAO_VALUE_MAP) &&
+                !is_valid_vm_value(vm, result)) {
+                return fail(error, DAO_TYPE_ERROR, "host callback returned a foreign container",
+                            function_index, pc);
+            }
+            if (result.type == DAO_VALUE_FUNCTION || result.type == DAO_VALUE_CLOSURE) {
+                return fail(error, DAO_TYPE_ERROR, "host callbacks cannot manufacture callable values",
                             function_index, pc);
             }
             registers[instruction.dst] = result;
@@ -870,6 +899,64 @@ dao_status dao_value_map_get(const dao_vm* vm, const dao_value* value, dao_bytes
     const auto found = map->values.find(std::string(key_data, utf8_key.size));
     if (found == map->values.end()) return DAO_EXPORT_NOT_FOUND;
     *out_value = found->second; return DAO_OK;
+}
+
+dao_status dao_vm_make_list(dao_vm* vm, dao_value* out_value) {
+    if (vm == nullptr || out_value == nullptr || vm->host_callback_depth == 0)
+        return DAO_INVALID_ARGUMENT;
+    try {
+        vm->lists.push_back(std::make_unique<dao_vm::List>());
+        *out_value = {DAO_VALUE_LIST, 0,
+                      container_handle(vm->container_generation, vm->lists.size() - 1)};
+        return DAO_OK;
+    } catch (const std::bad_alloc&) {
+        return DAO_OUT_OF_MEMORY;
+    }
+}
+
+dao_status dao_value_list_append(dao_vm* vm, dao_value* list, const dao_value* value) {
+    if (vm == nullptr || list == nullptr || value == nullptr || vm->host_callback_depth == 0 ||
+        list->type != DAO_VALUE_LIST || !is_valid_vm_value(vm, *value))
+        return DAO_INVALID_ARGUMENT;
+    auto* resolved = resolve_container(vm->lists, vm->container_generation, *list);
+    if (resolved == nullptr) return DAO_RUNTIME_ERROR;
+    try {
+        resolved->values.push_back(*value);
+        return DAO_OK;
+    } catch (const std::bad_alloc&) {
+        return DAO_OUT_OF_MEMORY;
+    }
+}
+
+dao_status dao_vm_make_map(dao_vm* vm, dao_value* out_value) {
+    if (vm == nullptr || out_value == nullptr || vm->host_callback_depth == 0)
+        return DAO_INVALID_ARGUMENT;
+    try {
+        vm->maps.push_back(std::make_unique<dao_vm::Map>());
+        *out_value = {DAO_VALUE_MAP, 0,
+                      container_handle(vm->container_generation, vm->maps.size() - 1)};
+        return DAO_OK;
+    } catch (const std::bad_alloc&) {
+        return DAO_OUT_OF_MEMORY;
+    }
+}
+
+dao_status dao_value_map_set(dao_vm* vm, dao_value* map, dao_bytes utf8_key,
+                             const dao_value* value) {
+    if (vm == nullptr || map == nullptr || value == nullptr || vm->host_callback_depth == 0 ||
+        map->type != DAO_VALUE_MAP || (utf8_key.size != 0 && utf8_key.data == nullptr) ||
+        !is_valid_utf8(utf8_key.data, utf8_key.size) || !is_valid_vm_value(vm, *value))
+        return DAO_INVALID_ARGUMENT;
+    auto* resolved = resolve_container(vm->maps, vm->container_generation, *map);
+    if (resolved == nullptr) return DAO_RUNTIME_ERROR;
+    const char* key_data = utf8_key.data == nullptr ? "" :
+        reinterpret_cast<const char*>(utf8_key.data);
+    try {
+        resolved->values[std::string(key_data, utf8_key.size)] = *value;
+        return DAO_OK;
+    } catch (const std::bad_alloc&) {
+        return DAO_OUT_OF_MEMORY;
+    }
 }
 
 dao_vm_config dao_vm_config_default(void) {

@@ -98,6 +98,23 @@ dao_status host_invalid_view(void*, const dao_value*, size_t, dao_value* out_val
     return DAO_OK;
 }
 
+dao_status host_make_list(void* user_data, const dao_value*, size_t count, dao_value* out_value) {
+    auto* vm = static_cast<dao_vm*>(user_data);
+    if (count != 0 || dao_vm_make_list(vm, out_value) != DAO_OK) return DAO_RUNTIME_ERROR;
+    const dao_value values[] = {{DAO_VALUE_I64, 0, 40}, {DAO_VALUE_I64, 0, 2}};
+    for (const auto& value : values)
+        if (dao_value_list_append(vm, out_value, &value) != DAO_OK) return DAO_RUNTIME_ERROR;
+    return DAO_OK;
+}
+
+dao_status host_make_map(void* user_data, const dao_value*, size_t count, dao_value* out_value) {
+    auto* vm = static_cast<dao_vm*>(user_data);
+    if (count != 0 || dao_vm_make_map(vm, out_value) != DAO_OK) return DAO_RUNTIME_ERROR;
+    const uint8_t key[] = {'a','n','s','w','e','r'};
+    const dao_value value{DAO_VALUE_I64, 0, 42};
+    return dao_value_map_set(vm, out_value, {key, sizeof(key)}, &value);
+}
+
 void test_deterministic_encoding() {
     const auto first = make_add_module(100);
     const auto second = make_add_module(100);
@@ -231,6 +248,73 @@ void test_host_imports(dao_vm* vm) {
     CHECK("missing host unregister",
           dao_vm_unregister_host_function(vm, 700) == DAO_IMPORT_NOT_FOUND);
 
+    dao_module_release(module);
+}
+
+void test_host_owned_containers(dao_vm* vm) {
+    dao_value outside{};
+    CHECK("reject list construction outside callback",
+          dao_vm_make_list(vm, &outside) == DAO_INVALID_ARGUMENT);
+    CHECK("reject map construction outside callback",
+          dao_vm_make_map(vm, &outside) == DAO_INVALID_ARGUMENT);
+
+    dao::ModuleBuilder builder;
+    const uint32_t list_import = builder.add_import(720, 0);
+    const uint32_t map_import = builder.add_import(721, 0);
+    const uint32_t answer = builder.add_string("answer");
+
+    dao::FunctionSpec raw_list;
+    raw_list.register_count = 1;
+    raw_list.code = {instruction(dao::Opcode::CallHost, 0, 0, 0, list_import),
+                     instruction(dao::Opcode::Return, 0, 0)};
+    const uint32_t raw_list_index = builder.add_function(std::move(raw_list));
+    builder.add_export(722, raw_list_index);
+
+    dao::FunctionSpec list_size;
+    list_size.register_count = 2;
+    list_size.code = {instruction(dao::Opcode::CallHost, 0, 0, 0, list_import),
+                      instruction(dao::Opcode::ListLength, 1, 0),
+                      instruction(dao::Opcode::Return, 0, 1)};
+    const uint32_t list_size_index = builder.add_function(std::move(list_size));
+    builder.add_export(723, list_size_index);
+
+    dao::FunctionSpec map_value;
+    map_value.register_count = 3;
+    map_value.code = {instruction(dao::Opcode::CallHost, 0, 0, 0, map_import),
+                      instruction(dao::Opcode::LoadString, 1, 0, 0, answer),
+                      instruction(dao::Opcode::IndexGet, 2, 0, 1),
+                      instruction(dao::Opcode::Return, 0, 2)};
+    const uint32_t map_value_index = builder.add_function(std::move(map_value));
+    builder.add_export(724, map_value_index);
+
+    const auto bytes = builder.encode();
+    dao_error error{};
+    dao_module* module = load_module(vm, bytes, &error);
+    CHECK("load host container module", module != nullptr);
+    if (module == nullptr) return;
+    dao_host_function list_host{sizeof(dao_host_function), 720, 0, 0, host_make_list, vm};
+    dao_host_function map_host{sizeof(dao_host_function), 721, 0, 0, host_make_map, vm};
+    CHECK("register list construction host", dao_vm_register_host_function(vm, &list_host) == DAO_OK);
+    CHECK("register map construction host", dao_vm_register_host_function(vm, &map_host) == DAO_OK);
+
+    dao_function function{};
+    dao_value result{};
+    size_t size = 0;
+    CHECK("find raw host list", dao_module_find_export(module, 722, &function) == DAO_OK);
+    CHECK("return host-created list",
+          dao_vm_call(vm, module, function, nullptr, 0, &result, &error) == DAO_OK &&
+          dao_value_list_size(vm, &result, &size) == DAO_OK && size == 2);
+    CHECK("find host list size", dao_module_find_export(module, 723, &function) == DAO_OK);
+    CHECK("consume host-created list in VM",
+          dao_vm_call(vm, module, function, nullptr, 0, &result, &error) == DAO_OK &&
+          result.type == DAO_VALUE_I64 && result.payload == 2);
+    CHECK("find host map value", dao_module_find_export(module, 724, &function) == DAO_OK);
+    CHECK("consume host-created map in VM",
+          dao_vm_call(vm, module, function, nullptr, 0, &result, &error) == DAO_OK &&
+          result.type == DAO_VALUE_I64 && result.payload == 42);
+
+    CHECK("unregister list construction host", dao_vm_unregister_host_function(vm, 720) == DAO_OK);
+    CHECK("unregister map construction host", dao_vm_unregister_host_function(vm, 721) == DAO_OK);
     dao_module_release(module);
 }
 
@@ -565,6 +649,7 @@ int main() {
     test_add_and_export(vm);
     test_internal_call(vm);
     test_host_imports(vm);
+    test_host_owned_containers(vm);
     test_borrowed_views(vm);
     test_trit_logic_and_branch(vm);
     test_bad_modules(vm);

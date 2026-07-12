@@ -16,7 +16,8 @@ reuse or reinterpret a reserved C ABI field.
 ## Experimental, Not Yet Frozen
 
 - `DAO_VALUE_LIST` and `DAO_VALUE_MAP` ownership and cross-call behavior.
-- Container construction and mutation from host bindings.
+- Host container construction and mutation APIs, now implemented with callback-scope and
+  generation validation but not yet representation-frozen.
 - The VM call-arena strategy and future generation-handle representation.
 - VM ABI v9 container, exception, function-reference, and same-call closure opcodes.
 - The portable-C AOT subset and its exported native function convention.
@@ -27,7 +28,7 @@ benchmarks, legacy parity tests, and host container APIs are complete.
 ## Required Before K6
 
 1. Benchmark tagged-union, compact-handle, and arena container representations.
-2. Define owned container handles and host inspection/construction APIs.
+2. Benchmark and stabilize the implemented owned-container inspection/construction APIs.
 3. Run the legacy `.ku` parity corpus, including old import syntax and mutation behavior.
 4. Expand AOT to FFI, containers, and exceptions where a native path is justified.
 5. Declare a stable C ABI version and struct-extension compatibility policy.

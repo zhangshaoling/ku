@@ -81,5 +81,11 @@ cache-owned references. Caller-owned module references remain valid after a clea
 List and map payloads are opaque generation handles, not process pointers. They remain
 valid until the next top-level call on the same VM. Hosts can inspect returned containers
 with `dao_value_list_size`, `dao_value_list_get`, and `dao_value_map_get`. Stale handles
-return `DAO_RUNTIME_ERROR`; hosts cannot manufacture container handles. Construction and
-mutation APIs remain experimental and are not part of the frozen C ABI.
+return `DAO_RUNTIME_ERROR`.
+
+During a registered Host callback, the Host may construct VM-owned results with
+`dao_vm_make_list`, `dao_value_list_append`, `dao_vm_make_map`, and `dao_value_map_set`.
+Construction outside a callback is rejected, inserted container values must belong to the
+same VM generation, and foreign handles returned by callbacks are rejected. These APIs are
+experimental and are not part of the frozen C ABI; callbacks should receive the owning
+`dao_vm*` through their `user_data` context.

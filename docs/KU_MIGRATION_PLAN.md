@@ -99,10 +99,10 @@
   execution CTests. Assignment, binary-expression, literal, and indexed-assignment AST
   paths execute through VM-owned Maps/Lists. Decimal parsing remains pending because frozen
   ABI v9 has no float value tag.
-- Legacy `task_queue.ku` now compiles without shell or Python subprocesses. User-home,
+- Legacy `task_queue.ku` now compiles without shell or Python subprocesses. Database-path,
   formatted-time, task-ID, and fixed-arity SQLite operations are explicit Host capabilities;
-  routing decisions execute natively and are covered for all configured routes. SQLite query
-  execution remains pending because Host-created result Lists/Maps require the owned-container ABI.
+  routing decisions execute natively and are covered for all configured routes. The claim path
+  executes against Host-created `List<Map>` query rows through the experimental owned-container ABI.
   The lexer has moved to the migrated executable module described above.
 
 ## Remaining For Full K4 Closure

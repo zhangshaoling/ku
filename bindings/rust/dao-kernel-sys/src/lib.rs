@@ -21,6 +21,10 @@ extern "C" {
     pub fn dao_value_list_size(vm: *const dao_vm, value: *const dao_value, out: *mut usize) -> i32;
     pub fn dao_value_list_get(vm: *const dao_vm, value: *const dao_value, index: usize, out: *mut dao_value) -> i32;
     pub fn dao_value_map_get(vm: *const dao_vm, value: *const dao_value, key: dao_bytes, out: *mut dao_value) -> i32;
+    pub fn dao_vm_make_list(vm: *mut dao_vm, out: *mut dao_value) -> i32;
+    pub fn dao_value_list_append(vm: *mut dao_vm, list: *mut dao_value, value: *const dao_value) -> i32;
+    pub fn dao_vm_make_map(vm: *mut dao_vm, out: *mut dao_value) -> i32;
+    pub fn dao_value_map_set(vm: *mut dao_vm, map: *mut dao_value, key: dao_bytes, value: *const dao_value) -> i32;
 }
 
 const _: Option<*mut c_void> = None;

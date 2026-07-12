@@ -106,6 +106,11 @@ DAO_API dao_status dao_value_list_get(const dao_vm* vm, const dao_value* value, 
                                       dao_value* out_value);
 DAO_API dao_status dao_value_map_get(const dao_vm* vm, const dao_value* value, dao_bytes utf8_key,
                                      dao_value* out_value);
+DAO_API dao_status dao_vm_make_list(dao_vm* vm, dao_value* out_value);
+DAO_API dao_status dao_value_list_append(dao_vm* vm, dao_value* list, const dao_value* value);
+DAO_API dao_status dao_vm_make_map(dao_vm* vm, dao_value* out_value);
+DAO_API dao_status dao_value_map_set(dao_vm* vm, dao_value* map, dao_bytes utf8_key,
+                                     const dao_value* value);
 
 DAO_API dao_vm_config dao_vm_config_default(void);
 DAO_API dao_vm* dao_vm_create(const dao_vm_config* config);

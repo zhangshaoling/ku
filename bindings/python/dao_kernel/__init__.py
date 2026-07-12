@@ -58,6 +58,10 @@ class Runtime:
         lib.dao_value_list_size.argtypes = [c.c_void_p, c.POINTER(DaoValue), c.POINTER(c.c_size_t)]
         lib.dao_value_list_get.argtypes = [c.c_void_p, c.POINTER(DaoValue), c.c_size_t, c.POINTER(DaoValue)]
         lib.dao_value_map_get.argtypes = [c.c_void_p, c.POINTER(DaoValue), DaoBytes, c.POINTER(DaoValue)]
+        lib.dao_vm_make_list.argtypes = [c.c_void_p, c.POINTER(DaoValue)]
+        lib.dao_value_list_append.argtypes = [c.c_void_p, c.POINTER(DaoValue), c.POINTER(DaoValue)]
+        lib.dao_vm_make_map.argtypes = [c.c_void_p, c.POINTER(DaoValue)]
+        lib.dao_value_map_set.argtypes = [c.c_void_p, c.POINTER(DaoValue), DaoBytes, c.POINTER(DaoValue)]
 
     def load(self, payload: bytes) -> "Module":
         storage = (c.c_uint8 * len(payload)).from_buffer_copy(payload)
