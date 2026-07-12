@@ -93,9 +93,10 @@
 - Parenthesized operands in statement conditions, such as `(a) or (b)`, remain part of the
   full expression instead of being mistaken for a wrapper around the complete condition.
 - Legacy `push(list, value)` lowers directly to verified `LIST_APPEND`.
-- The dynamic type capability is now available for migrating `parser.ku` type checks. A
-  clean rebuild exposed an earlier remaining parser-syntax blocker in its multiline nested
-  prefix expressions, so full-file syntax convergence is not yet claimed. `task_queue.ku`
+- Legacy `parser.ku` now compiles as an integer-compatible module with explicit
+  `host_value_type(1)` and `host_string_to_i64(1)` capabilities. Its indexed-assignment
+  condition had one unmatched parenthesis, now covered by a clean-build CTest. Decimal
+  parsing remains pending because frozen ABI v9 has no float value tag. `task_queue.ku`
   still requires the explicit `system` capability.
   The lexer has moved to the migrated executable module described above.
 
