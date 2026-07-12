@@ -73,6 +73,10 @@
   module, including keywords, identifiers, integers, strings, operators, punctuation,
   newlines, and `;;` comments. Tests inspect every returned token Map and EOF marker;
   full UTF-8 codepoint iteration remains pending.
+- `kernel/stdlib/type.ku` exposes dynamic value reflection through the explicit
+  `host_value_type(1)` capability for all nine current ABI value tags. Its predicates enable
+  recursive standard-library behavior without changing the frozen VM ABI; `list.flatten`
+  now recursively flattens nested Lists using this capability.
 
 ### Phase V — MVP acceptance (full legacy parity pending)
 - Native execution covers arithmetic, comparisons, Trit logic, calls, host imports,
@@ -86,9 +90,13 @@
   variadic `and/or`, multiline call/list/map literals, same-line bare alternate blocks,
   and value-producing `if (...) { value } { alternate }` expressions onto existing AST
   and VM instructions.
+- Parenthesized operands in statement conditions, such as `(a) or (b)`, remain part of the
+  full expression instead of being mistaken for a wrapper around the complete condition.
 - Legacy `push(list, value)` lowers directly to verified `LIST_APPEND`.
-- With these compatibility layers, legacy `parser.ku` and `task_queue.ku` pass syntax parsing
-  and now stop only at explicit capability gaps (dynamic `type` and `system`, respectively).
+- The dynamic type capability is now available for migrating `parser.ku` type checks. A
+  clean rebuild exposed an earlier remaining parser-syntax blocker in its multiline nested
+  prefix expressions, so full-file syntax convergence is not yet claimed. `task_queue.ku`
+  still requires the explicit `system` capability.
   The lexer has moved to the migrated executable module described above.
 
 ## Remaining For Full K4 Closure

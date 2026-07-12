@@ -1,6 +1,8 @@
 // Migrated from ku/std/list.ku for the Dao Binary Module list-read subset.
 // Import with: import "std/list" as list
 
+import "type" as type
+
 thought includes(items, target) {
   for x in items {
     if x == target { return true }
@@ -166,6 +168,19 @@ thought flat_map(items, fn) {
   for x in items {
     mapped = fn(x)
     for y in mapped { result = result + [y] }
+  }
+  result
+}
+
+thought flatten(items) {
+  result = []
+  for item in items {
+    if type_is_list(item) {
+      nested = flatten(item)
+      for value in nested { result = result + [value] }
+    } else {
+      result = result + [item]
+    }
   }
   result
 }

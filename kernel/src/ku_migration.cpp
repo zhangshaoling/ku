@@ -212,10 +212,7 @@ class Parser {
         }
         if (word("if") || word("若")) {
             take(); stmt.type = Stmt::Type::If;
-            const bool wrapped_condition = peek().kind == Kind::LParen;
-            if (wrapped_condition) take();
             stmt.expr = expression();
-            if (wrapped_condition && peek().kind == Kind::RParen) take();
             skip_lines(); stmt.body = block();
             const bool bare_alternate = peek().kind == Kind::LBrace;
             skip_lines();

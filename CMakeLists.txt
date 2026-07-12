@@ -117,6 +117,11 @@ target_link_libraries(ku_std_list_tests PRIVATE dao_kernel dao_module_builder da
 dao_enable_strict_warnings(ku_std_list_tests)
 dao_enable_sanitizers(ku_std_list_tests)
 
+add_executable(ku_std_type_tests kernel/tests/ku_std_type_tests.cpp)
+target_link_libraries(ku_std_type_tests PRIVATE dao_kernel dao_module_builder dao_ku_migration)
+dao_enable_strict_warnings(ku_std_type_tests)
+dao_enable_sanitizers(ku_std_type_tests)
+
 add_executable(ku_std_fs_tests kernel/tests/ku_std_fs_tests.cpp)
 target_link_libraries(ku_std_fs_tests PRIVATE dao_kernel dao_module_builder dao_ku_migration)
 dao_enable_strict_warnings(ku_std_fs_tests)
@@ -226,7 +231,13 @@ add_test(NAME ku_compile_std_list COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/list.ku"
     "${CMAKE_BINARY_DIR}/stdlib_list.dao")
 add_test(NAME ku_std_list COMMAND ku_std_list_tests
-    "${CMAKE_SOURCE_DIR}/kernel/stdlib/list.ku")
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/list.ku"
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/type.ku")
+add_test(NAME ku_compile_std_type COMMAND dao-ku
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/type.ku"
+    "${CMAKE_BINARY_DIR}/stdlib_type.dao")
+add_test(NAME ku_std_type COMMAND ku_std_type_tests
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/type.ku")
 add_test(NAME ku_compile_std_fs COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/fs.ku"
     "${CMAKE_BINARY_DIR}/stdlib_fs.dao")
@@ -301,6 +312,8 @@ set(DAO_RUNTIME_TESTS
     ku_std_math
     ku_compile_std_list
     ku_std_list
+    ku_compile_std_type
+    ku_std_type
     ku_compile_std_fs
     ku_std_fs
     ku_compile_std_debug
@@ -344,7 +357,8 @@ install(TARGETS dao_kernel dao_module_builder dao_disassembly dao_assembly dao_k
 install(DIRECTORY kernel/include/dao DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES kernel/FORMAT.md kernel/FFI.md kernel/README.md kernel/BENCHMARKS.md kernel/K5.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(FILES kernel/selfhost/compiler.ku DESTINATION share/dao/selfhost)
-install(FILES kernel/stdlib/core.ku kernel/stdlib/math.ku kernel/stdlib/list.ku DESTINATION share/dao/stdlib)
+install(FILES kernel/stdlib/core.ku kernel/stdlib/math.ku kernel/stdlib/list.ku
+    kernel/stdlib/type.ku DESTINATION share/dao/stdlib)
 install(FILES docs/KU_SELFHOST.md docs/ABI_FREEZE_AUDIT.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(DIRECTORY bindings/python/dao_kernel DESTINATION bindings/python
     PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)

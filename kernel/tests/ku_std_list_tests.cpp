@@ -26,15 +26,23 @@ uint32_t symbol_id(std::string_view name) {
     return hash;
 }
 
-struct Source { std::string value; };
+struct Sources { std::string list; std::string type; };
 
 bool resolve_list(void* user_data, std::string_view path, std::string* source, std::string* error) {
-    if (path != "std/list") {
-        *error = "unknown module";
-        return false;
-    }
-    *source = static_cast<Source*>(user_data)->value;
+    const auto* sources = static_cast<Sources*>(user_data);
+    if (path == "std/list") *source = sources->list;
+    else if (path == "type") *source = sources->type;
+    else { *error = "unknown module"; return false; }
     return true;
+}
+
+dao_status value_type(void*, const dao_value* args, size_t count, dao_value* out) {
+    if (count != 1 || args[0].type > DAO_VALUE_CLOSURE) return DAO_TYPE_ERROR;
+    static constexpr std::string_view names[] = {
+        "null", "i64", "trit", "bytes", "string", "list", "map", "function", "closure"};
+    const auto name = names[args[0].type];
+    return dao_value_make_string_view(
+        {reinterpret_cast<const uint8_t*>(name.data()), name.size()}, out);
 }
 
 bool expect_value(dao_vm* vm, dao_module* module, const char* name, dao_value_type type,
@@ -70,10 +78,13 @@ bool expect_list_i64(dao_vm* vm, dao_module* module, const char* name,
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 2) return EXIT_FAILURE;
-    std::ifstream input(argv[1], std::ios::binary);
-    Source list{std::string(std::istreambuf_iterator<char>(input), {})};
-    if (!input && list.value.empty()) return EXIT_FAILURE;
+    if (argc != 3) return EXIT_FAILURE;
+    std::ifstream list_input(argv[1], std::ios::binary);
+    std::ifstream type_input(argv[2], std::ios::binary);
+    Sources sources{std::string(std::istreambuf_iterator<char>(list_input), {}),
+                    std::string(std::istreambuf_iterator<char>(type_input), {})};
+    if ((!list_input && sources.list.empty()) || (!type_input && sources.type.empty()))
+        return EXIT_FAILURE;
 
     const char* program = R"(
 import "std/list" as list
@@ -105,6 +116,7 @@ thought add_base(base, value) { base + value }
 thought bound_map_case() { list_map([1, 2], bind(add_base, 40)) }
 thought pair(value) { [value, value + 10] }
 thought flat_map_case() { list_flat_map([1, 2], pair) }
+thought flatten_case() { list_flatten([1, [2, [3, 4]], [], 5]) }
 thought parity_name(value) { if value % 2 == 0 { "even" } else { "odd" } }
 thought group_by_case() { list_group_by([1, 2, 3, 4, 5], parity_name) }
 thought interleave_case() { list_interleave([1, 3, 5], [2, 4]) }
@@ -115,12 +127,16 @@ thought rotate_negative_case() { list_rotate([1, 2, 3, 4], -1) }
 )";
     dao::km::Options options{};
     options.import_resolver = resolve_list;
-    options.import_user_data = &list;
+    options.import_user_data = &sources;
     dao::ModuleBuilder builder;
     dao_error error{};
     check(dao::km::compile(program, builder, &error, options), "compile migrated list");
     const auto bytes = builder.encode();
     dao_vm* vm = dao_vm_create(nullptr);
+    const dao_host_function type_function{sizeof(dao_host_function), symbol_id("host_value_type"),
+                                           1, 0, value_type, nullptr};
+    check(dao_vm_register_host_function(vm, &type_function) == DAO_OK,
+          "register value type host");
     dao_module* module = nullptr;
     check(dao_vm_load_module(vm, {bytes.data(), bytes.size()}, &module, &error) == DAO_OK,
           "load migrated list");
@@ -155,6 +171,8 @@ thought rotate_negative_case() { list_rotate([1, 2, 3, 4], -1) }
               "list bound closure");
         check(expect_list_i64(vm, module, "flat_map_case", {1, 11, 2, 12}, &error),
               "list flat map");
+        check(expect_list_i64(vm, module, "flatten_case", {1, 2, 3, 4, 5}, &error),
+              "list recursive flatten");
         dao_function group_by{};
         dao_value grouped{};
         dao_value odd{};
