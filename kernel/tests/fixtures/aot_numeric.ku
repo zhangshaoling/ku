@@ -27,3 +27,5 @@ thought catches_nested() {
     try { throw 42 } catch inner { throw inner }
   } catch outer { return outer }
 }
+import host_scale(2)
+thought ffi_scale(value, factor) { host_scale(value, factor) }

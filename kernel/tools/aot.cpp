@@ -17,7 +17,7 @@ bool supported(dao::Opcode op) {
            op == Opcode::TritNot || op == Opcode::TritAnd || op == Opcode::TritOr ||
            op == Opcode::BranchTritNegative || op == Opcode::BranchTritZero ||
            op == Opcode::BranchTritPositive || op == Opcode::Jump || op == Opcode::Call ||
-           op == Opcode::Return || op == Opcode::TryBegin || op == Opcode::TryEnd ||
+           op == Opcode::CallHost || op == Opcode::Return || op == Opcode::TryBegin || op == Opcode::TryEnd ||
            op == Opcode::Throw || op == Opcode::Catch;
 }
 }
@@ -35,12 +35,35 @@ int main(int argc, char** argv) {
     std::ofstream out(argv[2], std::ios::trunc); if (!out) return EXIT_FAILURE;
     out << "#include <stddef.h>\n#include <stdint.h>\n#include <limits.h>\n"
            "#ifdef _WIN32\n#define DAO_AOT_EXPORT __declspec(dllexport)\n#else\n#define DAO_AOT_EXPORT __attribute__((visibility(\"default\")))\n#endif\n"
-           "enum { DAO_AOT_OK=0, DAO_AOT_BAD_ARGS=1, DAO_AOT_DIV_ZERO=7, DAO_AOT_OVERFLOW=8, DAO_AOT_THROW=9 };\n"
+           "enum { DAO_AOT_OK=0, DAO_AOT_BAD_ARGS=1, DAO_AOT_DIV_ZERO=7, DAO_AOT_OVERFLOW=8, DAO_AOT_THROW=9, DAO_AOT_IMPORT_NOT_FOUND=12 };\n"
            "static int add64(int64_t a,int64_t b,int64_t*o){if((b>0&&a>INT64_MAX-b)||(b<0&&a<INT64_MIN-b))return 0;*o=a+b;return 1;}\n"
            "static int sub64(int64_t a,int64_t b,int64_t*o){if((b<0&&a>INT64_MAX+b)||(b>0&&a<INT64_MIN+b))return 0;*o=a-b;return 1;}\n"
            "static int mul64(int64_t a,int64_t b,int64_t*o){if(a==0||b==0){*o=0;return 1;}if((a==-1&&b==INT64_MIN)||(b==-1&&a==INT64_MIN))return 0;if(a>0?b>0?a>INT64_MAX/b:b<INT64_MIN/a:b>0?a<INT64_MIN/b:b<INT64_MAX/a)return 0;*o=a*b;return 1;}\n";
     out << "DAO_AOT_EXPORT int dao_aot_native_add_baseline(const int64_t*args,size_t argc,int64_t*out){if(!out||argc!=2||!args)return DAO_AOT_BAD_ARGS;return add64(args[0],args[1],out)?DAO_AOT_OK:DAO_AOT_OVERFLOW;}\n";
     out << "DAO_AOT_EXPORT int dao_aot_native_sum_baseline(const int64_t*args,size_t argc,int64_t*out){if(!out||argc!=1||!args)return DAO_AOT_BAD_ARGS;int64_t n=args[0],total=0,next;while(n>0){if(!add64(total,n,&next))return DAO_AOT_OVERFLOW;total=next;if(!sub64(n,1,&next))return DAO_AOT_OVERFLOW;n=next;}*out=total;return DAO_AOT_OK;}\n";
+    const size_t import_capacity = module.imports.empty() ? 1 : module.imports.size();
+    out << "typedef int (*dao_aot_host_callback)(void*,const int64_t*,size_t,int64_t*);\n"
+        << "static dao_aot_host_callback dao_aot_hosts[" << import_capacity << "]={0};\n"
+        << "static void* dao_aot_host_data[" << import_capacity << "]={0};\n"
+        << "static const uint32_t dao_aot_host_symbols[" << import_capacity << "]={";
+    for (size_t index = 0; index < module.imports.size(); ++index) {
+        if (index != 0) out << ',';
+        out << module.imports[index].symbol_id << 'u';
+    }
+    if (module.imports.empty()) out << '0';
+    out << "};\nstatic const uint32_t dao_aot_host_arities[" << import_capacity << "]={";
+    for (size_t index = 0; index < module.imports.size(); ++index) {
+        if (index != 0) out << ',';
+        out << module.imports[index].parameter_count << 'u';
+    }
+    if (module.imports.empty()) out << '0';
+    out << "};\nDAO_AOT_EXPORT int dao_aot_register_host(uint32_t symbol,uint32_t arity,dao_aot_host_callback callback,void*data){";
+    if (module.imports.empty()) {
+        out << "(void)symbol;(void)arity;(void)callback;(void)data;return DAO_AOT_IMPORT_NOT_FOUND;}\n";
+    } else {
+        out << "if(!callback)return DAO_AOT_BAD_ARGS;for(size_t i=0;i<" << module.imports.size()
+            << ";++i)if(dao_aot_host_symbols[i]==symbol){if(dao_aot_host_arities[i]!=arity)return DAO_AOT_BAD_ARGS;dao_aot_hosts[i]=callback;dao_aot_host_data[i]=data;return DAO_AOT_OK;}return DAO_AOT_IMPORT_NOT_FOUND;}\n";
+    }
     for (const auto& fn : module.functions) {
         out << "static int dao_aot_impl_" << fn.index
             << "(const int64_t*,size_t,int64_t*,int64_t*);\n";
@@ -86,6 +109,12 @@ int main(int argc, char** argv) {
                 for (uint16_t argument = 0; argument < i.b; ++argument) out << "ca["<<argument<<"]=r["<<(i.a + argument)<<"];";
                 out << "int st=dao_aot_impl_"<<i.immediate<<"(ca,"<<i.b<<",&r["<<i.dst<<"],thrown);"
                        "if(st==DAO_AOT_THROW&&hs){handler_target=handlers[--hs];goto DAO_AOT_DISPATCH;}if(st)return st;}\n"; break;
+            case Opcode::CallHost:
+                out << "{size_t hi=" << i.immediate << ";if(!dao_aot_hosts[hi])return DAO_AOT_IMPORT_NOT_FOUND;"
+                    << "int st=dao_aot_hosts[hi](dao_aot_host_data[hi],"
+                    << (i.b == 0 ? "NULL" : "&r[" + std::to_string(i.a) + "]") << ',' << i.b
+                    << ",&r[" << i.dst << "]);if(st)return st;}\n";
+                break;
             case Opcode::Return: out << "*out=r["<<i.a<<"];return DAO_AOT_OK;\n"; break;
             case Opcode::TryBegin:
                 out << "if(hs>=" << handler_capacity << ")return DAO_AOT_BAD_ARGS;handlers[hs++]="
