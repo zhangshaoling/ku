@@ -689,3 +689,39 @@
     "high_quality": 高质量
   }
 }
+
+// ── 统一生命周期维护：保留原始记录，退休工具，压缩可重建索引 ──
+思 memory_lifecycle_maintain(retention_days, min_confidence) {
+  若 is_none(retention_days) { retention_days = 90 }
+  若 is_none(min_confidence) { min_confidence = 0.15 }
+  experience_init()
+  conn = sqlite_open(_exp_db())
+  ts = _exp_now()
+
+  sqlite_exec(conn, "BEGIN IMMEDIATE", [])
+  sqlite_exec(conn, "UPDATE experience SET quality_status = 'archived', updated_at = ? WHERE quality_status IN ('active', 'decaying') AND confidence < ? AND julianday('now') - julianday(updated_at) >= ?", [ts, min_confidence, retention_days])
+  archived_rows = sqlite_query(conn, "SELECT changes() AS cnt", [])
+
+  sqlite_exec(conn, "UPDATE memory_promotion SET status = 'retired', updated_at = ? WHERE status = 'active' AND (NOT EXISTS (SELECT 1 FROM experience e WHERE e.id = memory_promotion.experience_id) OR EXISTS (SELECT 1 FROM experience e WHERE e.id = memory_promotion.experience_id AND e.quality_status = 'archived'))", [ts])
+  retired_rows = sqlite_query(conn, "SELECT changes() AS cnt", [])
+
+  sqlite_exec(conn, "DELETE FROM experience_fts WHERE NOT EXISTS (SELECT 1 FROM experience e WHERE e.id = experience_fts.id AND e.quality_status != 'archived')", [])
+  compacted_rows = sqlite_query(conn, "SELECT changes() AS cnt", [])
+  sqlite_exec(conn, "COMMIT", [])
+  sqlite_close(conn)
+
+  archived = 0
+  retired = 0
+  compacted = 0
+  若 > (len(archived_rows), 0) { archived = archived_rows[0]["cnt"] }
+  若 > (len(retired_rows), 0) { retired = retired_rows[0]["cnt"] }
+  若 > (len(compacted_rows), 0) { compacted = compacted_rows[0]["cnt"] }
+  {
+    "policy": "memory_lifecycle_v1",
+    "retention_days": retention_days,
+    "min_confidence": min_confidence,
+    "archived": archived,
+    "retired_promotions": retired,
+    "compacted_index_rows": compacted
+  }
+}

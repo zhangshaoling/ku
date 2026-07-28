@@ -10,6 +10,12 @@ from pathlib import Path
 from .c_vm_runtime import CVMRuntime, PROFILES
 
 
+def _persistent_enabled():
+    return os.environ.get("DAO_CVM_PERSISTENT", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 def _print_value(value):
     if isinstance(value, (dict, list)):
         print(json.dumps(value, ensure_ascii=False))
@@ -42,13 +48,13 @@ def _add_common_runtime_args(parser):
 def run_file(args):
     path = Path(args.file)
     source = path.read_text(encoding="utf-8")
-    runtime = CVMRuntime(timeout=args.timeout)
-    result = runtime.run_source(
-        source,
-        profile=args.profile,
-        extra_modules=[Path(item) for item in args.module],
-        data_dir=args.data_dir,
-    )
+    with CVMRuntime(timeout=args.timeout, persistent=_persistent_enabled()) as runtime:
+        result = runtime.run_source(
+            source,
+            profile=args.profile,
+            extra_modules=[Path(item) for item in args.module],
+            data_dir=args.data_dir,
+        )
     if not result.ok:
         message = result.error or result.stderr or result.stdout or "C VM execution failed"
         print(message, file=sys.stderr)
@@ -58,29 +64,29 @@ def run_file(args):
 
 
 def repl(args):
-    runtime = CVMRuntime(timeout=args.timeout)
     print("Dao REPL. Type :quit or :q to exit. Each line runs in a fresh C VM frame.")
-    while True:
-        try:
-            line = input("dao> ")
-        except EOFError:
-            print()
-            return 0
-        code = line.strip()
-        if not code:
-            continue
-        if code in {":q", ":quit", "quit", "exit"}:
-            return 0
-        result = runtime.run_source(
-            code,
-            profile=args.profile,
-            extra_modules=[Path(item) for item in args.module],
-            data_dir=args.data_dir,
-        )
-        if not result.ok:
-            print(result.error or result.stderr or result.stdout or "C VM execution failed", file=sys.stderr)
-            continue
-        _print_value(result.value)
+    with CVMRuntime(timeout=args.timeout, persistent=_persistent_enabled()) as runtime:
+        while True:
+            try:
+                line = input("dao> ")
+            except EOFError:
+                print()
+                return 0
+            code = line.strip()
+            if not code:
+                continue
+            if code in {":q", ":quit", "quit", "exit"}:
+                return 0
+            result = runtime.run_source(
+                code,
+                profile=args.profile,
+                extra_modules=[Path(item) for item in args.module],
+                data_dir=args.data_dir,
+            )
+            if not result.ok:
+                print(result.error or result.stderr or result.stdout or "C VM execution failed", file=sys.stderr)
+                continue
+            _print_value(result.value)
 
 
 def status(_):

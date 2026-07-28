@@ -5,7 +5,7 @@ import re
 _KEYWORDS = {"thought", "if", "else", "while", "for", "in", "return",
              "break", "continue", "try", "catch", "throw", "true", "false",
              "null", "and", "or", "not", "import", "as",
-             "思", "若", "否", "当", "遍", "返",
+             "思", "若", "若非", "否", "当", "遍", "返",
              "断", "续", "试", "捕", "抛", "终", "真", "假",
              "空", "且", "或", "非", "引", "别",
              "设", "函", "己", 
@@ -300,4 +300,3 @@ def _lex_cn_number(source, i, line, col):
     result += current
     num_str = source[start:i]
     return source[start:i], i, line, col
-

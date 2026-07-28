@@ -67,6 +67,16 @@ foreach ($GccPath in $GccCandidates) {
     exit 0
 }
 
+$ManagedClang = Join-Path $Root ".toolchain\llvm-mingw\bin\clang.exe"
+if (Test-Path $ManagedClang) {
+    & $ManagedClang -DSQLITE_ENABLE_FTS5 -o $OutPath $Source $SqliteSource -lm -lws2_32 -Wall -O2
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    Write-Host "built $OutPath with managed clang ($ManagedClang)"
+    exit 0
+}
+
 $cl = Get-Command cl -ErrorAction SilentlyContinue
 if ($cl) {
     & $cl.Source /nologo /O2 /DSQLITE_ENABLE_FTS5 /Fe:$OutPath $Source $SqliteSource

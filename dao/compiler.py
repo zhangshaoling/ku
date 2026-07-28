@@ -852,9 +852,17 @@ class DaoCompiler:
 
     def _compile_index_assign(self, node: Node):
         """编译索引赋值。"""
-        self._emit(LOAD_NAME, node.value)  # obj
-        self._compile_node(node.children[0])  # index
-        self._compile_node(node.children[1])  # value
+        if node.value:
+            # Legacy parser: value=obj, children=[index, value].
+            self._emit(LOAD_NAME, node.value)
+            self._compile_node(node.children[0])
+            self._compile_node(node.children[1])
+        else:
+            # Current parser: children=[index(obj, index), value].
+            target = node.children[0]
+            self._compile_node(target.children[0])
+            self._compile_node(target.children[1])
+            self._compile_node(node.children[1])
         self._emit(SET_INDEX)
 
 
