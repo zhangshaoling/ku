@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import time
@@ -23,6 +24,74 @@ def send_notification(proc, method):
 
 def tool_text(response):
     return json.loads(response["result"]["content"][0]["text"])
+
+
+def test_tools_list_reads_promotions_without_starting_c_vm(tmp_path):
+    data_dir = tmp_path / "dao_data"
+    data_dir.mkdir()
+    conn = sqlite3.connect(data_dir / "experience.db")
+    try:
+        conn.execute(
+            "CREATE TABLE memory_promotion (thought_name TEXT, tool_name TEXT, "
+            "description TEXT, status TEXT, updated_at TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO memory_promotion VALUES (?, ?, ?, 'active', ?)",
+            ("probe_memory", "ku_memory_probe_memory", "probe", "2026-01-01"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    env = os.environ.copy()
+    env["DAO_DATA_DIR"] = str(data_dir)
+    env.pop("DAO_CVM_PERSISTENT", None)
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "dao.mcp_server"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    try:
+        listed = send_request(proc, 1, "tools/list")
+        names = {tool["name"] for tool in listed["result"]["tools"]}
+        assert "ku_memory_probe_memory" in names
+        proc.stdin.close()
+        assert proc.wait(timeout=5) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=3)
+
+
+def test_default_ku_eval_uses_core_snapshot():
+    env = os.environ.copy()
+    env.pop("DAO_CVM_PERSISTENT", None)
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "dao.mcp_server"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    try:
+        response = send_request(proc, 1, "tools/call", {
+            "name": "ku_eval", "arguments": {"code": 'is_numeric("123")'},
+        })
+        assert tool_text(response) == {"result": True}
+        proc.stdin.close()
+        assert proc.wait(timeout=5) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=3)
 
 
 def test_dao_mcp_server_lists_and_calls_tools():
@@ -354,7 +423,8 @@ def test_tools_list_reuses_promoted_memory_cache(tmp_path):
         second_elapsed = time.perf_counter() - start
 
         assert len(first["result"]["tools"]) == len(second["result"]["tools"])
-        assert second_elapsed < first_elapsed / 5
+        assert first_elapsed < 0.05
+        assert second_elapsed < 0.05
 
         recorded = tool_text(send_request(proc, 4, "tools/call", {"name": "ku_record_data_memory", "arguments": {
             "topic": "Dao cache refresh test",
