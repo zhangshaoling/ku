@@ -46,24 +46,18 @@ def _add_common_runtime_args(parser):
 
 
 def run_file(args):
+    """Run a .ku file via the new Register VM kernel."""
     path = Path(args.file)
     source = path.read_text(encoding="utf-8")
-    with CVMRuntime(timeout=args.timeout, persistent=_persistent_enabled()) as runtime:
-        result = runtime.run_source(
-            source,
-            profile=args.profile,
-            extra_modules=[Path(item) for item in args.module],
-            data_dir=args.data_dir,
-        )
-    if not result.ok:
-        message = result.error or result.stderr or result.stdout or "C VM execution failed"
-        print(message, file=sys.stderr)
-        return result.returncode or 1
-    _print_value(result.value)
+    from bindings.python.dao_kernel import Thought
+    thought = Thought.from_source(path.stem, source, params=args.params)
+    result = thought.call_i64(args=args.args)
+    print(result)
     return 0
 
 
 def repl(args):
+    print("[DEPRECATED] dao repl uses the old C VM. No new-kernel equivalent yet.")
     print("Dao REPL. Type :quit or :q to exit. Each line runs in a fresh C VM frame.")
     with CVMRuntime(timeout=args.timeout, persistent=_persistent_enabled()) as runtime:
         while True:
@@ -90,6 +84,7 @@ def repl(args):
 
 
 def status(_):
+    print("[DEPRECATED] dao status uses the old C VM database. Use 'python bindings/python/dao_kernel/cli.py stats' for new kernel.")
     data_dir = os.environ.get("DAO_DATA_DIR", ".")
     db_path = os.path.join(data_dir, "memory.db")
     if not Path(db_path).exists():
@@ -135,10 +130,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog="dao", description="Dao C VM command line tools")
     sub = parser.add_subparsers(dest="command")
 
-    run_parser = sub.add_parser("run", help="Run a .ku source file through dao_core.exe")
-    _add_common_runtime_args(run_parser)
-    run_parser.add_argument("--timeout", type=float, default=60.0, help="Execution timeout in seconds")
+    run_parser = sub.add_parser("run", help="Run a .ku source file via the new Register VM kernel")
     run_parser.add_argument("file", help=".ku file to run")
+    run_parser.add_argument("--params", nargs="*", default=[], help="Parameter names (e.g., x y)")
+    run_parser.add_argument("--args", nargs="*", type=int, default=[], help="Integer arguments")
     run_parser.set_defaults(func=run_file)
 
     repl_parser = sub.add_parser("repl", help="Start a minimal Dao REPL backed by dao_core.exe")
