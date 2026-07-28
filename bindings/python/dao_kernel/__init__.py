@@ -164,3 +164,4 @@ class Module:
     def __exit__(self, *_: object) -> None: self.close()
 
 from .thought import Thought, fnv1a
+from .memory import MemorySystem, MemoryEntry, MemoryType
