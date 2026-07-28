@@ -166,3 +166,4 @@ class Module:
 from .thought import Thought, fnv1a
 from .memory import MemorySystem, MemoryEntry, MemoryType
 from .task import Task, TaskPlanner, TaskPriority, TaskStatus
+from .agent import Agent, AgentState, AgentPhase, Toolbox
