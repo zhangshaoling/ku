@@ -73,7 +73,7 @@ class Thought:
     - metadata: name, params, doc, executions, version
 
     Convention: the .ku source must define `thought main(...)` as the
-    entry point. The Thought`s name is its registry identity.
+    entry point. The Thought name is its registry identity.
     """
 
     registry: dict[str, "Thought"] = {}
@@ -196,6 +196,30 @@ class Thought:
     ) -> "Thought":
         """Deserialize from module bytes."""
         return cls(name, params or [], data, doc)
+
+    def save(self, path) -> None:
+        """Persist this thought to disk (memory = module bytes)."""
+        path = Path(path)
+        path.write_bytes(self.module_bytes)
+
+    @classmethod
+    def load(cls, path, name=None, doc: str = "",
+             params: Optional[list[str]] = None) -> "Thought":
+        """Load a thought from a .dao file on disk."""
+        path = Path(path)
+        module_bytes = path.read_bytes()
+        if name is None:
+            name = path.stem
+        return cls(name, params or [], module_bytes, doc)
+
+    @staticmethod
+    def scan(directory, pattern: str = "*.dao") -> list:
+        """Scan a directory for .dao files and load them as thoughts."""
+        directory = Path(directory)
+        thoughts = []
+        for p in sorted(directory.glob(pattern)):
+            thoughts.append(Thought.load(p))
+        return thoughts
 
     def __repr__(self) -> str:
         return (
