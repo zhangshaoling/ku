@@ -1,0 +1,3 @@
+import "cycle_import_a" as a
+
+thought b() { a_a() }

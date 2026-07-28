@@ -31,7 +31,6 @@ struct Sources { std::string list; std::string type; };
 bool resolve_list(void* user_data, std::string_view path, std::string* source, std::string* error) {
     const auto* sources = static_cast<Sources*>(user_data);
     if (path == "std/list") *source = sources->list;
-    else if (path == "type") *source = sources->type;
     else { *error = "unknown module"; return false; }
     return true;
 }
@@ -129,18 +128,38 @@ thought rotate_negative_case() { list_rotate([1, 2, 3, 4], -1) }
     options.import_resolver = resolve_list;
     options.import_user_data = &sources;
     dao::ModuleBuilder builder;
+    builder.set_identity("ku:test/list-suite", {1, 0, 0});
     dao_error error{};
     check(dao::km::compile(program, builder, &error, options), "compile migrated list");
     const auto bytes = builder.encode();
+    dao::ModuleBuilder type_builder;
+    type_builder.set_identity("ku:std/type", {1, 0, 0});
+    check(dao::km::compile(sources.type, type_builder, &error), "compile identified type");
+    const auto type_bytes = type_builder.encode();
     dao_vm* vm = dao_vm_create(nullptr);
     const dao_host_function type_function{sizeof(dao_host_function), symbol_id("host_value_type"),
                                            1, 0, value_type, nullptr};
     check(dao_vm_register_host_function(vm, &type_function) == DAO_OK,
           "register value type host");
     dao_module* module = nullptr;
+    dao_module* type_module = nullptr;
     check(dao_vm_load_module(vm, {bytes.data(), bytes.size()}, &module, &error) == DAO_OK,
           "load migrated list");
-    if (module != nullptr) {
+    check(dao_vm_load_module(vm, {type_bytes.data(), type_bytes.size()}, &type_module, &error) ==
+              DAO_OK,
+          "load identified type");
+    check(module != nullptr && dao_vm_link_module(vm, module, &error) == DAO_OK,
+          "link list consumer before provider");
+    if (module != nullptr && type_module != nullptr) {
+        dao_function unresolved_flatten{};
+        dao_value unresolved_result{};
+        check(dao_module_find_export(module, symbol_id("flatten_case"), &unresolved_flatten) ==
+                      DAO_OK &&
+                  dao_vm_call(vm, module, unresolved_flatten, nullptr, 0, &unresolved_result,
+                              &error) == DAO_IMPORT_NOT_FOUND,
+              "list runtime dependency is unresolved before type link");
+        check(dao_vm_link_module(vm, type_module, &error) == DAO_OK,
+              "link identified type provider");
         check(expect_value(vm, module, "includes_case", DAO_VALUE_TRIT, 1, &error),
               "list includes");
         check(expect_value(vm, module, "misses_case", DAO_VALUE_TRIT, -1, &error),
@@ -227,8 +246,11 @@ thought rotate_negative_case() { list_rotate([1, 2, 3, 4], -1) }
                   first.type == DAO_VALUE_I64 && first.payload == 1 &&
                   second.type == DAO_VALUE_I64 && second.payload == 1,
               "list enumerate");
-        dao_module_release(module);
     }
+    if (module != nullptr)
+        dao_module_release(module);
+    if (type_module != nullptr)
+        dao_module_release(type_module);
     dao_vm_destroy(vm);
     if (failures != 0) return EXIT_FAILURE;
     std::cout << "dao migrated list tests passed\n";

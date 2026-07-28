@@ -1,6 +1,6 @@
-# Dao Kernel
+# Ku Kernel (`dao_*` ABI)
 
-This directory contains the new high-performance Dao runtime. It is independent of the legacy Python runtime, text frontend, stack VM, MCP server, and Agent/Memory modules.
+This directory contains the new high-performance Ku runtime. Existing `dao_*` ABI and Dao Binary Module names are retained as versioned implementation identifiers. The kernel is independent of the legacy Python runtime, text frontend, stack VM, MCP server, and Agent/Memory modules.
 
 ## Layout
 
@@ -12,6 +12,7 @@ src/runtime.cpp         Loader, verifier, and Register VM
 tests/kernel_tests.cpp  Native conformance tests
 fuzz/                   Sanitized module loader fuzz target and seed generator
 FFI.md                  Numeric host import and callback contract
+OWNERSHIP.md            Frozen C ABI value and container lifetime contract
 out/                    Local build output
 ```
 
@@ -56,9 +57,12 @@ and string literals, lists, string-keyed maps, indexing, variables, assignment,
 arithmetic, comparisons, internal calls, explicit host imports, `if/else`, `while`,
 `for..in`, `break`, `continue`, `try/catch/throw`, and `return`.
 Host dependencies use `import name(arity)` and are resolved through the numeric C ABI.
+The authoritative source-language decisions and compatibility levels are defined in
+[`../docs/KU_V1_SEMANTICS.md`](../docs/KU_V1_SEMANTICS.md).
 Lists and maps are owned by the VM's top-level call arena. A returned container remains
 valid until the next call on that VM; VM-owned containers cannot be passed back as
-arguments to a later top-level call.
+arguments to a later top-level call. See [`OWNERSHIP.md`](OWNERSHIP.md) for the frozen
+C ABI value-lifetime and Host-container contract.
 
 The packaged migrated standard-library subset includes `stdlib/core.ku`, the
 integer/list-compatible `stdlib/math.ku`, and the list-read subset in `stdlib/list.ku`.

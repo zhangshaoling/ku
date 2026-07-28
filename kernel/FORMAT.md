@@ -1,4 +1,4 @@
-# Dao Binary Module v1 and Register Bytecode ABI v9
+# Dao Binary Module v1/v2 and Register Bytecode ABI v9/v10
 
 All multibyte values use little-endian encoding. Offsets are relative to the start of the module.
 
@@ -6,15 +6,16 @@ All multibyte values use little-endian encoding. Offsets are relative to the sta
 
 Size: 16 bytes.
 
-| Offset | Size | Field | v1 value |
+| Offset | Size | Field | accepted value |
 | ---: | ---: | --- | --- |
 | 0 | 4 | magic | `44 41 4f 00` (`DAO\0`) |
-| 4 | 2 | format version | `1` |
-| 6 | 2 | VM ABI version | `6` |
+| 4 | 2 | format version | `1` or `2` |
+| 6 | 2 | VM ABI version | `9` or `10` |
 | 8 | 4 | flags | `0` |
-| 12 | 4 | section count | `5` |
+| 12 | 4 | section count | `5` or `7` |
 
-Unknown versions or nonzero v1 flags are rejected.
+Accepted pairs are exactly v1/ABI9 and v2/ABI10. Cross-paired or unknown versions and
+nonzero flags are rejected.
 
 ## Section Table
 
@@ -36,8 +37,25 @@ Initial section types:
 | 3 | `EXPORT` | 8 |
 | 4 | `IMPORT` | 8 |
 | 5 | `DATA` | variable |
+| 6 | `METADATA` | 24 |
+| 7 | `MODULE_IMPORT` | 24 |
 
-Sections must lie after the section table, remain inside the module, and not overlap. Duplicate or unknown section types are rejected. VM ABI v9 requires all five sections; `IMPORT` and `DATA` may contain zero records.
+Sections must lie after the section table, remain inside the module, and not overlap.
+Duplicate or unknown section types are rejected. VM ABI v9 requires the first five sections;
+VM ABI v10 additionally requires one `METADATA` record and a `MODULE_IMPORT` section.
+`IMPORT`, `MODULE_IMPORT`, and `DATA` may contain zero dependency/data records as applicable.
+
+## Module Metadata Record (v2)
+
+Size: 24 bytes. It contains a `DATA` string index for the non-empty logical identity,
+`uint32` major/minor/patch version fields, and two zero reserved fields. Identity is opaque
+UTF-8, not a filename and not the content fingerprint.
+
+## Module Import Record (v2)
+
+Size: 24 bytes: dependency identity `DATA` index; exact `uint32` major/minor/patch version;
+exported symbol ID; `uint16` parameter count; zero `uint16` reserved field. Record order is
+addressed by `CALL_MODULE` immediates.
 
 ## Runtime Value ABI
 
@@ -144,8 +162,12 @@ Branch targets are function-local instruction indexes.
 | 38 | `LOAD_FUNCTION` | load same-module function `immediate` into `dst` |
 | 39 | `CALL_VALUE` | call function reference `a`, args start at `b`, count `immediate`, result to `dst` |
 | 40 | `MAKE_CLOSURE` | bind registers `a..a+b-1` to same-module function `immediate` in `dst` |
+| 41 | `CALL_MODULE` | call module import `immediate`, args start at `a`, count `b`, result to `dst` |
 
-Arithmetic requires `i64`. Trit operations and branches require payload `-1`, `0`, or `+1`. Type mismatches trap with a structured status.
+Arithmetic requires `i64`. Trit operations and branches require payload `-1`, `0`, or `+1`.
+`CALL_MODULE` requires an exact linked identity/version/export/signature and rejects
+module-local Function/Closure values at the boundary. Type mismatches trap with a structured
+status. The complete link contract is in [`MODULE_ABI.md`](MODULE_ABI.md).
 
 `CALL_HOST` requires its argument count to match both the import record and the registered host function. Host callbacks use the C ABI directly; callback results are validated before entering a VM register. Missing imports trap with `DAO_IMPORT_NOT_FOUND`.
 
@@ -173,4 +195,4 @@ Instruction budget is shared by nested calls. These limits are part of host poli
 
 ## Versioning
 
-Changing an opcode's meaning, record layout, register convention, or value ABI requires a VM ABI version change. VM ABI v2 added `IMPORT` and `CALL_HOST`. VM ABI v3 added borrowed views. VM ABI v4 added Trit constants, remainder, and comparisons. VM ABI v5 added module DATA constants, initial containers, indexing, and structured exceptions. VM ABI v6 replaces container pointers with generation handles and adds `INDEX_SET`. VM ABI v7 adds `LIST_APPEND`. VM ABI v8 adds local function references and `CALL_VALUE`. VM ABI v9 adds same-call captured bindings. Older modules are intentionally rejected rather than guessed.
+Changing an opcode's meaning, record layout, register convention, or value ABI requires a VM ABI version change. VM ABI v2 added `IMPORT` and `CALL_HOST`. VM ABI v3 added borrowed views. VM ABI v4 added Trit constants, remainder, and comparisons. VM ABI v5 added module DATA constants, initial containers, indexing, and structured exceptions. VM ABI v6 replaces container pointers with generation handles and adds `INDEX_SET`. VM ABI v7 adds `LIST_APPEND`. VM ABI v8 adds local function references and `CALL_VALUE`. VM ABI v9 adds same-call captured bindings. VM ABI v10 adds identified module metadata, exact-version module imports, and `CALL_MODULE`. The loader retains v1/ABI9 compatibility; other older or cross-paired modules are rejected rather than guessed.

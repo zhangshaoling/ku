@@ -62,6 +62,42 @@ uint32_t ModuleBuilder::add_import(uint32_t symbol_id, uint16_t parameter_count)
     return static_cast<uint32_t>(imports_.size() - 1);
 }
 
+void ModuleBuilder::set_identity(std::string_view name, SemanticVersion version) {
+    if (has_identity_)
+        throw std::invalid_argument("module identity is already set");
+    if (name.empty())
+        throw std::invalid_argument("module identity must not be empty");
+    if (name.size() > 1024)
+        throw std::length_error("module identity exceeds 1024 bytes");
+    identity_name_ = name;
+    identity_version_ = version;
+    has_identity_ = true;
+}
+
+uint32_t ModuleBuilder::add_module_import(std::string_view module_name, SemanticVersion version,
+                                          uint32_t symbol_id, uint16_t parameter_count) {
+    if (module_name.empty())
+        throw std::invalid_argument("module import identity must not be empty");
+    if (module_name.size() > 1024)
+        throw std::length_error("module import identity exceeds 1024 bytes");
+    const auto duplicate = std::find_if(
+        module_imports_.begin(), module_imports_.end(), [&](const ModuleImportSpec& item) {
+            return item.module_name == module_name && item.version.major == version.major &&
+                   item.version.minor == version.minor && item.version.patch == version.patch &&
+                   item.symbol_id == symbol_id;
+        });
+    if (duplicate != module_imports_.end()) {
+        if (duplicate->parameter_count != parameter_count)
+            throw std::invalid_argument("module import has conflicting arities");
+        return static_cast<uint32_t>(duplicate - module_imports_.begin());
+    }
+    if (module_imports_.size() >= std::numeric_limits<uint32_t>::max())
+        throw std::length_error("too many module imports");
+    module_imports_.push_back(
+        {std::string(module_name), version, symbol_id, parameter_count});
+    return static_cast<uint32_t>(module_imports_.size() - 1);
+}
+
 uint32_t ModuleBuilder::add_function(FunctionSpec function) {
     if (function.parameter_count > function.register_count) {
         throw std::invalid_argument("parameter count exceeds register count");
@@ -87,16 +123,52 @@ void ModuleBuilder::add_export(uint32_t symbol_id, uint32_t function_index) {
 }
 
 std::vector<uint8_t> ModuleBuilder::encode() const {
+    if (!has_identity_ && !module_imports_.empty())
+        throw std::invalid_argument("module imports require a module identity");
+
     SectionBytes functions{SectionType::Functions, static_cast<uint32_t>(functions_.size()), {}, 0};
     SectionBytes code{SectionType::Code, 0, {}, 0};
     SectionBytes exports{SectionType::Exports, static_cast<uint32_t>(exports_.size()), {}, 0};
     SectionBytes imports{SectionType::Imports, static_cast<uint32_t>(imports_.size()), {}, 0};
-    SectionBytes data{SectionType::Data, static_cast<uint32_t>(strings_.size()), {}, 0};
+    SectionBytes metadata{SectionType::Metadata, has_identity_ ? 1u : 0u, {}, 0};
+    SectionBytes module_imports{SectionType::ModuleImports,
+                                static_cast<uint32_t>(module_imports_.size()), {}, 0};
 
-    const size_t records_size = strings_.size() * kDataRecordSize;
+    auto encoded_strings = strings_;
+    const auto intern_string = [&encoded_strings](std::string_view value) {
+        const auto found = std::find(encoded_strings.begin(), encoded_strings.end(), value);
+        if (found != encoded_strings.end())
+            return static_cast<uint32_t>(found - encoded_strings.begin());
+        if (encoded_strings.size() >= std::numeric_limits<uint32_t>::max())
+            throw std::length_error("too many string constants");
+        encoded_strings.emplace_back(value);
+        return static_cast<uint32_t>(encoded_strings.size() - 1);
+    };
+
+    if (has_identity_) {
+        append_u32(metadata.bytes, intern_string(identity_name_));
+        append_u32(metadata.bytes, identity_version_.major);
+        append_u32(metadata.bytes, identity_version_.minor);
+        append_u32(metadata.bytes, identity_version_.patch);
+        append_u32(metadata.bytes, 0);
+        append_u32(metadata.bytes, 0);
+    }
+    for (const auto& item : module_imports_) {
+        append_u32(module_imports.bytes, intern_string(item.module_name));
+        append_u32(module_imports.bytes, item.version.major);
+        append_u32(module_imports.bytes, item.version.minor);
+        append_u32(module_imports.bytes, item.version.patch);
+        append_u32(module_imports.bytes, item.symbol_id);
+        append_u16(module_imports.bytes, item.parameter_count);
+        append_u16(module_imports.bytes, 0);
+    }
+
+    SectionBytes data{SectionType::Data, static_cast<uint32_t>(encoded_strings.size()), {}, 0};
+
+    const size_t records_size = encoded_strings.size() * kDataRecordSize;
     data.bytes.resize(records_size, 0);
-    for (size_t index = 0; index < strings_.size(); ++index) {
-        const auto& value = strings_[index];
+    for (size_t index = 0; index < encoded_strings.size(); ++index) {
+        const auto& value = encoded_strings[index];
         if (data.bytes.size() > std::numeric_limits<uint32_t>::max() || value.size() > std::numeric_limits<uint32_t>::max())
             throw std::length_error("string constant data exceeds v1 range");
         const uint32_t offset = static_cast<uint32_t>(data.bytes.size());
@@ -151,11 +223,15 @@ std::vector<uint8_t> ModuleBuilder::encode() const {
     sections.push_back(std::move(exports));
     sections.push_back(std::move(imports));
     sections.push_back(std::move(data));
+    if (has_identity_) {
+        sections.push_back(std::move(metadata));
+        sections.push_back(std::move(module_imports));
+    }
 
     std::vector<uint8_t> out;
     out.insert(out.end(), {'D', 'A', 'O', 0});
-    append_u16(out, kFormatVersion);
-    append_u16(out, kVmAbiVersion);
+    append_u16(out, has_identity_ ? kFormatVersion : kLegacyFormatVersion);
+    append_u16(out, has_identity_ ? kVmAbiVersion : kLegacyVmAbiVersion);
     append_u32(out, 0);
     append_u32(out, static_cast<uint32_t>(sections.size()));
 

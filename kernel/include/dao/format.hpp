@@ -8,8 +8,10 @@
 
 namespace dao {
 
-inline constexpr uint16_t kFormatVersion = 1;
-inline constexpr uint16_t kVmAbiVersion = 9;
+inline constexpr uint16_t kLegacyFormatVersion = 1;
+inline constexpr uint16_t kLegacyVmAbiVersion = 9;
+inline constexpr uint16_t kFormatVersion = 2;
+inline constexpr uint16_t kVmAbiVersion = 10;
 inline constexpr uint32_t kHeaderSize = 16;
 inline constexpr uint32_t kSectionEntrySize = 16;
 inline constexpr uint32_t kFunctionRecordSize = 16;
@@ -17,6 +19,8 @@ inline constexpr uint32_t kInstructionSize = 16;
 inline constexpr uint32_t kExportRecordSize = 8;
 inline constexpr uint32_t kImportRecordSize = 8;
 inline constexpr uint32_t kDataRecordSize = 8;
+inline constexpr uint32_t kModuleMetadataRecordSize = 24;
+inline constexpr uint32_t kModuleImportRecordSize = 24;
 
 enum class SectionType : uint32_t {
     Functions = 1,
@@ -24,6 +28,8 @@ enum class SectionType : uint32_t {
     Exports = 3,
     Imports = 4,
     Data = 5,
+    Metadata = 6,
+    ModuleImports = 7,
 };
 
 enum class Opcode : uint8_t {
@@ -68,6 +74,13 @@ enum class Opcode : uint8_t {
     LoadFunction = 38,
     CallValue = 39,
     MakeClosure = 40,
+    CallModule = 41,
+};
+
+struct SemanticVersion {
+    uint32_t major = 0;
+    uint32_t minor = 0;
+    uint32_t patch = 0;
 };
 
 struct Instruction {
@@ -89,6 +102,9 @@ class ModuleBuilder {
   public:
     uint32_t add_string(std::string_view value);
     uint32_t add_import(uint32_t symbol_id, uint16_t parameter_count);
+    void set_identity(std::string_view name, SemanticVersion version);
+    uint32_t add_module_import(std::string_view module_name, SemanticVersion version,
+                               uint32_t symbol_id, uint16_t parameter_count);
     uint32_t add_function(FunctionSpec function);
     void add_export(uint32_t symbol_id, uint32_t function_index);
     std::vector<uint8_t> encode() const;
@@ -104,10 +120,21 @@ class ModuleBuilder {
         uint32_t function_index;
     };
 
+    struct ModuleImportSpec {
+        std::string module_name;
+        SemanticVersion version;
+        uint32_t symbol_id;
+        uint16_t parameter_count;
+    };
+
     std::vector<ImportSpec> imports_;
     std::vector<FunctionSpec> functions_;
     std::vector<ExportSpec> exports_;
     std::vector<std::string> strings_;
+    bool has_identity_ = false;
+    std::string identity_name_;
+    SemanticVersion identity_version_{};
+    std::vector<ModuleImportSpec> module_imports_;
 };
 
 } // namespace dao

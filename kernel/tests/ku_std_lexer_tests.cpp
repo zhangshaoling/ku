@@ -38,13 +38,15 @@ int main(int argc,char**argv){
 import "std/lexer" as lexer
 thought lex_case() { lexer_lex("thought answer = 42\n") }
 )";
-    dao::km::Options options{};options.import_resolver=resolve;options.import_user_data=&sources;dao::ModuleBuilder builder;dao_error error{};
-    check(dao::km::compile(program,builder,&error,options),"compile migrated lexer");const auto bytes=builder.encode();dao_vm*vm=dao_vm_create(nullptr);dao_module*module=nullptr;check(dao_vm_load_module(vm,{bytes.data(),bytes.size()},&module,&error)==DAO_OK,"load migrated lexer");
+    dao::km::Options options{};options.import_resolver=resolve;options.import_user_data=&sources;dao::ModuleBuilder builder;builder.set_identity("ku:test/lexer-suite",{1,0,0});dao_error error{};
+    check(dao::km::compile(program,builder,&error,options),"compile migrated lexer");const auto bytes=builder.encode();dao::ModuleBuilder string_builder;string_builder.set_identity("ku:std/string",{1,0,0});check(dao::km::compile(sources.string,string_builder,&error),"compile identified string");const auto string_bytes=string_builder.encode();dao_vm*vm=dao_vm_create(nullptr);dao_module*module=nullptr;dao_module*string_module=nullptr;check(dao_vm_load_module(vm,{bytes.data(),bytes.size()},&module,&error)==DAO_OK,"load migrated lexer");check(dao_vm_load_module(vm,{string_bytes.data(),string_bytes.size()},&string_module,&error)==DAO_OK,"load identified string");
     StringHost host{};struct Host{const char*name;uint32_t arity;dao_host_callback callback;};const Host hosts[]={{"host_string_length",1,string_length},{"host_string_char_at",2,string_char_at},{"host_string_substring",3,string_substring},{"host_string_concat",2,string_concat},{"host_string_ord",1,string_ord},{"host_string_chr",1,string_chr}};
     for(const auto&item:hosts){dao_host_function function{sizeof(dao_host_function),symbol_id(item.name),item.arity,0,item.callback,&host};check(dao_vm_register_host_function(vm,&function)==DAO_OK,"register lexer host");}
-    if(module){dao_function function{};dao_value result{};size_t size=0;check(dao_module_find_export(module,symbol_id("lex_case"),&function)==DAO_OK&&dao_vm_call(vm,module,function,nullptr,0,&result,&error)==DAO_OK&&dao_value_list_size(vm,&result,&size)==DAO_OK&&size==6,"execute migrated lexer");
+    check(module&&dao_vm_link_module(vm,module,&error)==DAO_OK,"link lexer before string");
+    if(module&&string_module){dao_function function{};dao_value result{};size_t size=0;check(dao_module_find_export(module,symbol_id("lex_case"),&function)==DAO_OK&&dao_vm_call(vm,module,function,nullptr,0,&result,&error)==DAO_IMPORT_NOT_FOUND,"lexer string dependency unresolved");check(dao_vm_link_module(vm,string_module,&error)==DAO_OK,"link identified string");check(dao_vm_call(vm,module,function,nullptr,0,&result,&error)==DAO_OK&&dao_value_list_size(vm,&result,&size)==DAO_OK&&size==6,"execute migrated lexer");
         const char*types[]={"keyword","name","op","number","newline","eof"};const char*values[]={"thought","answer","=","42","\n",""};
         for(size_t i=0;i<size&&i<6;++i){dao_value token{};std::string type,value;check(dao_value_list_get(vm,&result,i,&token)==DAO_OK&&map_string(vm,token,"type",&type)&&map_string(vm,token,"value",&value)&&type==types[i]&&value==values[i],"inspect lexer token");}
-        dao_module_release(module);}
+    }
+    if(module)dao_module_release(module);if(string_module)dao_module_release(string_module);
     dao_vm_destroy(vm);if(failures)return EXIT_FAILURE;std::cout<<"dao migrated lexer tests passed\n";return EXIT_SUCCESS;
 }

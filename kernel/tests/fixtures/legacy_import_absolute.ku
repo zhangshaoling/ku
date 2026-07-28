@@ -1,0 +1,3 @@
+import "/outside/module" as escaped
+
+thought must_not_compile() { escaped_value() }

@@ -1,8 +1,8 @@
 // Migrated compositional subset of ku/std/io.ku.
 // Import with: import "std/io" as io
 
-import "fs" as fs
-import "string" as string
+import "ku:std/fs@1.0.0" as fs
+import "ku:std/string@1.0.0" as string
 
 thought file_exists(path) { fs_exists(path) }
 

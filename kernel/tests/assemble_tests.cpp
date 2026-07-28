@@ -310,6 +310,45 @@ functions: 1
           !dao::assemble_text(call_missing_args, &bytes3, &err3));
 }
 
+void test_identified_module_round_trip() {
+    dao::ModuleBuilder builder;
+    builder.set_identity("ku:app/assembly", {1, 2, 3});
+    const uint32_t import =
+        builder.add_module_import("ku:std/math", {2, 0, 1}, 700, 1);
+    dao::FunctionSpec function;
+    function.register_count = 2;
+    function.code = {instr(dao::Opcode::LoadI64, 0, 0, 0, 21),
+                     instr(dao::Opcode::CallModule, 1, 0, 1, import),
+                     instr(dao::Opcode::Return, 0, 1)};
+    const uint32_t function_index = builder.add_function(std::move(function));
+    builder.add_export(100, function_index);
+    const auto expected = builder.encode();
+
+    dao::DisassembledModule disassembled{};
+    dao_error error{};
+    CHECK("disassemble identified module",
+          dao::disassemble({expected.data(), expected.size()}, &disassembled, &error) == DAO_OK);
+    CHECK("identified module name", disassembled.identity_name == "ku:app/assembly");
+    CHECK("identified module version",
+          disassembled.identity_version.major == 1 &&
+              disassembled.identity_version.minor == 2 &&
+              disassembled.identity_version.patch == 3);
+    CHECK("identified module import", disassembled.module_imports.size() == 1);
+
+    const std::string text = dao::to_text(disassembled);
+    dao::ParsedModule parsed{};
+    CHECK("parse identified module text", dao::parse_module_text(text, &parsed, &error));
+    CHECK("parsed identified module", parsed.has_identity &&
+                                                parsed.identity_name == "ku:app/assembly");
+    CHECK("parsed module import", parsed.module_imports.size() == 1 &&
+                                              parsed.module_imports[0].module_name ==
+                                                  "ku:std/math");
+
+    std::vector<uint8_t> actual;
+    CHECK("assemble identified module text", dao::assemble_text(text, &actual, &error));
+    CHECK("identified module binary round trip", actual == expected);
+}
+
 } // namespace
 
 int main() {
@@ -319,6 +358,7 @@ int main() {
     test_call_instruction();
     test_jump_and_negated_immediates();
     test_bad_input_rejected();
+    test_identified_module_round_trip();
 
     if (failures != 0) {
         std::cerr << failures << " assembler test(s) failed\n";

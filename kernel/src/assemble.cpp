@@ -11,6 +11,7 @@ namespace {
 
 enum class Section {
     None = 0,
+    ModuleImports,
     Imports,
     Exports,
     Strings,
@@ -30,6 +31,8 @@ struct ParsedContext {
     ParsedFunction* current_function = nullptr;
     uint32_t declared_instruction_count = 0;
     uint32_t parsed_instruction_count = 0;
+    uint32_t declared_module_import_count = 0;
+    uint32_t parsed_module_import_count = 0;
 };
 
 void clear_error(dao_error* error) {
@@ -106,6 +109,17 @@ bool parse_uint16_strict(std::string_view s, uint16_t& out) {
     if (!parse_uint32_strict(s, v32) || v32 > std::numeric_limits<uint16_t>::max()) return false;
     out = static_cast<uint16_t>(v32);
     return true;
+}
+
+bool parse_version(std::string_view text, SemanticVersion& out) {
+    const size_t first = text.find('.');
+    if (first == std::string_view::npos)
+        return false;
+    const size_t second = text.find('.', first + 1);
+    return second != std::string_view::npos &&
+           parse_uint32_strict(text.substr(0, first), out.major) &&
+           parse_uint32_strict(text.substr(first + 1, second - first - 1), out.minor) &&
+           parse_uint32_strict(text.substr(second + 1), out.patch);
 }
 
 bool parse_int64_strict(std::string_view s, int64_t& out) {
@@ -207,6 +221,7 @@ Opcode parse_opcode(std::string_view token) {
         case 'c':
             if (token == "CALL" || token == "call") return Opcode::Call;
             if (token == "CALL_HOST" || token == "call_host") return Opcode::CallHost;
+            if (token == "CALL_MODULE" || token == "call_module") return Opcode::CallModule;
             if (token == "CALL_VALUE" || token == "call_value") return Opcode::CallValue;
             if (token == "CATCH" || token == "catch") return Opcode::Catch;
             break;
@@ -231,6 +246,30 @@ Opcode parse_opcode(std::string_view token) {
 
 bool is_valid_opcode(std::string_view token) {
     return parse_opcode(token) != Opcode::Nop || token == "NOP" || token == "nop";
+}
+
+bool parse_module_import_line(const std::string& line, ParsedModule& module,
+                              ParsedContext& ctx, dao_error* error) {
+    const std::string trimmed = trim(line);
+    const auto fields = split_fields(trimmed);
+    if (fields.size() != 4)
+        return fail(error, "module import: expected NAME VERSION symbol=N params=N");
+    ParsedModuleImport import;
+    import.module_name = fields[0];
+    if (import.module_name.empty() || !parse_version(fields[1], import.version))
+        return fail(error, "module import: invalid identity or version");
+    std::string_view symbol_field = fields[2];
+    std::string_view params_field = fields[3];
+    if ((!strip_prefix(symbol_field, "symbol=") &&
+         !strip_prefix(symbol_field, "SYMBOL=")) ||
+        !parse_uint32_strict(symbol_field, import.symbol_id) ||
+        (!strip_prefix(params_field, "params=") &&
+         !strip_prefix(params_field, "PARAMS=")) ||
+        !parse_uint16_strict(params_field, import.parameter_count))
+        return fail(error, "module import: invalid symbol or parameter count");
+    module.module_imports.push_back(std::move(import));
+    ++ctx.parsed_module_import_count;
+    return true;
 }
 
 bool parse_import_line(const std::string& line, ParsedModule& module, ParsedContext& ctx,
@@ -570,7 +609,8 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
         }
         break;
     }
-    case Opcode::CallHost: {
+    case Opcode::CallHost:
+    case Opcode::CallModule: {
         if (fields.size() - operand_start < 5) {
             return fail(error, "call_host: expected import INDEX, args rA..r(A+B-1), dst rDST");
         }
@@ -580,7 +620,12 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
         bool has_index = false;
         {
             std::string_view bet = import_field;
-            if (strip_prefix(bet, "import") || strip_prefix(bet, "IMPORT")) {
+            const bool prefixed = instruction.opcode == Opcode::CallModule
+                                      ? (strip_prefix(bet, "module_import") ||
+                                         strip_prefix(bet, "MODULE_IMPORT"))
+                                      : (strip_prefix(bet, "import") ||
+                                         strip_prefix(bet, "IMPORT"));
+            if (prefixed) {
                 has_index = parse_uint32_strict(bet, index_value);
             } else {
                 has_index = parse_uint32_strict(bet, index_value);
@@ -679,9 +724,35 @@ bool asm_parse_module(const std::string& text, ParsedModule* out_module, dao_err
             break;
         }
 
+        if (starts_with(trimmed_view, "module:")) {
+            if (ctx.section != Section::None || out_module->has_identity)
+                return fail(error, "module identity must appear once before sections");
+            std::string_view body = trimmed_view;
+            body.remove_prefix(strlen("module:"));
+            const std::string body_text = trim(body);
+            const auto fields = split_fields(body_text);
+            if (fields.size() != 2 || fields[0].empty() ||
+                !parse_version(fields[1], out_module->identity_version))
+                return fail(error, "module: expected NAME MAJOR.MINOR.PATCH");
+            out_module->has_identity = true;
+            out_module->identity_name = fields[0];
+            continue;
+        }
+
+        if (starts_with(trimmed_view, "module_imports:")) {
+            if (ctx.section != Section::None || !out_module->has_identity)
+                return fail(error, "module_imports requires a preceding module identity");
+            std::string_view body = trimmed_view;
+            body.remove_prefix(strlen("module_imports:"));
+            if (!parse_uint32_strict(trim(body), ctx.declared_module_import_count))
+                return fail(error, "module_imports: invalid count");
+            ctx.section = Section::ModuleImports;
+            continue;
+        }
+
         if (starts_with(trimmed_view, "imports:")) {
-            if (ctx.section != Section::None) {
-                return fail(error, "imports section must come first");
+            if (ctx.section != Section::None && ctx.section != Section::ModuleImports) {
+                return fail(error, "imports section is out of order");
             }
             std::string_view body = trimmed_view;
             body.remove_prefix(strlen("imports:"));
@@ -731,6 +802,10 @@ bool asm_parse_module(const std::string& text, ParsedModule* out_module, dao_err
         switch (ctx.section) {
         case Section::None:
             return fail(error, "line appears before any section");
+        case Section::ModuleImports:
+            if (!parse_module_import_line(std::string(trimmed_view), *out_module, ctx, error))
+                return false;
+            break;
         case Section::Imports:
             if (!parse_import_line(std::string(trimmed_view), *out_module, ctx, error)) return false;
             break;
@@ -775,6 +850,8 @@ bool asm_parse_module(const std::string& text, ParsedModule* out_module, dao_err
     if (ctx.parsed_import_count != ctx.declared_import_count) {
         return fail(error, "import count mismatch");
     }
+    if (ctx.parsed_module_import_count != ctx.declared_module_import_count)
+        return fail(error, "module import count mismatch");
     if (ctx.parsed_export_count != ctx.declared_export_count) {
         return fail(error, "export count mismatch");
     }
@@ -791,6 +868,16 @@ bool asm_assemble_to_builder(const std::string& text, ModuleBuilder* builder, da
     }
     ParsedModule module;
     if (!asm_parse_module(text, &module, error)) return false;
+    if (module.has_identity) {
+        try {
+            builder->set_identity(module.identity_name, module.identity_version);
+            for (const auto& import : module.module_imports)
+                builder->add_module_import(import.module_name, import.version, import.symbol_id,
+                                           import.parameter_count);
+        } catch (const std::exception& e) {
+            return fail(error, e.what());
+        }
+    }
     for (const auto& value : module.strings) {
         try { builder->add_string(value); } catch (const std::exception& e) { return fail(error, e.what()); }
     }

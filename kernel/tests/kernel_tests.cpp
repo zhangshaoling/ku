@@ -115,6 +115,19 @@ dao_status host_make_map(void* user_data, const dao_value*, size_t count, dao_va
     return dao_value_map_set(vm, out_value, {key, sizeof(key)}, &value);
 }
 
+struct ContainerInsertContext {
+    dao_vm* vm;
+    dao_value value;
+};
+
+dao_status host_make_list_with_value(void* user_data, const dao_value*, size_t count,
+                                     dao_value* out_value) {
+    auto* context = static_cast<ContainerInsertContext*>(user_data);
+    if (count != 0 || dao_vm_make_list(context->vm, out_value) != DAO_OK)
+        return DAO_RUNTIME_ERROR;
+    return dao_value_list_append(context->vm, out_value, &context->value);
+}
+
 void test_deterministic_encoding() {
     const auto first = make_add_module(100);
     const auto second = make_add_module(100);
@@ -261,6 +274,7 @@ void test_host_owned_containers(dao_vm* vm) {
     dao::ModuleBuilder builder;
     const uint32_t list_import = builder.add_import(720, 0);
     const uint32_t map_import = builder.add_import(721, 0);
+    const uint32_t insert_import = builder.add_import(725, 0);
     const uint32_t answer = builder.add_string("answer");
 
     dao::FunctionSpec raw_list;
@@ -287,6 +301,20 @@ void test_host_owned_containers(dao_vm* vm) {
     const uint32_t map_value_index = builder.add_function(std::move(map_value));
     builder.add_export(724, map_value_index);
 
+    dao::FunctionSpec raw_insert;
+    raw_insert.register_count = 1;
+    raw_insert.code = {instruction(dao::Opcode::CallHost, 0, 0, 0, insert_import),
+                       instruction(dao::Opcode::Return, 0, 0)};
+    const uint32_t raw_insert_index = builder.add_function(std::move(raw_insert));
+    builder.add_export(726, raw_insert_index);
+
+    dao::FunctionSpec identity;
+    identity.parameter_count = 1;
+    identity.register_count = 1;
+    identity.code = {instruction(dao::Opcode::Return, 0, 0)};
+    const uint32_t identity_index = builder.add_function(std::move(identity));
+    builder.add_export(727, identity_index);
+
     const auto bytes = builder.encode();
     dao_error error{};
     dao_module* module = load_module(vm, bytes, &error);
@@ -294,16 +322,46 @@ void test_host_owned_containers(dao_vm* vm) {
     if (module == nullptr) return;
     dao_host_function list_host{sizeof(dao_host_function), 720, 0, 0, host_make_list, vm};
     dao_host_function map_host{sizeof(dao_host_function), 721, 0, 0, host_make_map, vm};
+    ContainerInsertContext insert_context{vm, {DAO_VALUE_FUNCTION, 0, 0}};
+    dao_host_function insert_host{
+        sizeof(dao_host_function), 725, 0, 0, host_make_list_with_value, &insert_context};
     CHECK("register list construction host", dao_vm_register_host_function(vm, &list_host) == DAO_OK);
     CHECK("register map construction host", dao_vm_register_host_function(vm, &map_host) == DAO_OK);
+    CHECK("register guarded insertion host", dao_vm_register_host_function(vm, &insert_host) == DAO_OK);
 
     dao_function function{};
     dao_value result{};
     size_t size = 0;
+    CHECK("find guarded insertion host", dao_module_find_export(module, 726, &function) == DAO_OK);
+    CHECK("reject host-manufactured callable nested in list",
+          dao_vm_call(vm, module, function, nullptr, 0, &result, &error) ==
+              DAO_INVALID_ARGUMENT);
     CHECK("find raw host list", dao_module_find_export(module, 722, &function) == DAO_OK);
     CHECK("return host-created list",
           dao_vm_call(vm, module, function, nullptr, 0, &result, &error) == DAO_OK &&
           dao_value_list_size(vm, &result, &size) == DAO_OK && size == 2);
+    const dao_value first_list = result;
+    CHECK("find container identity", dao_module_find_export(module, 727, &function) == DAO_OK);
+    CHECK("reject container as a later top-level argument",
+          dao_vm_call(vm, module, function, &first_list, 1, &result, &error) ==
+              DAO_INVALID_ARGUMENT);
+    CHECK("rejected argument does not invalidate current generation",
+          dao_value_list_size(vm, &first_list, &size) == DAO_OK && size == 2);
+    dao_vm* foreign_vm = dao_vm_create(nullptr);
+    CHECK("create foreign VM for ownership check", foreign_vm != nullptr);
+    if (foreign_vm != nullptr) {
+        CHECK("reject container inspection through a foreign VM",
+              dao_value_list_size(foreign_vm, &first_list, &size) == DAO_RUNTIME_ERROR);
+        dao_vm_destroy(foreign_vm);
+    }
+    insert_context.value = first_list;
+    CHECK("find guarded insertion host for stale value",
+          dao_module_find_export(module, 726, &function) == DAO_OK);
+    CHECK("reject stale container nested by a host callback",
+          dao_vm_call(vm, module, function, nullptr, 0, &result, &error) ==
+              DAO_INVALID_ARGUMENT);
+    CHECK("next accepted call invalidates the prior generation",
+          dao_value_list_size(vm, &first_list, &size) == DAO_RUNTIME_ERROR);
     CHECK("find host list size", dao_module_find_export(module, 723, &function) == DAO_OK);
     CHECK("consume host-created list in VM",
           dao_vm_call(vm, module, function, nullptr, 0, &result, &error) == DAO_OK &&
@@ -313,8 +371,23 @@ void test_host_owned_containers(dao_vm* vm) {
           dao_vm_call(vm, module, function, nullptr, 0, &result, &error) == DAO_OK &&
           result.type == DAO_VALUE_I64 && result.payload == 42);
 
+    CHECK("find raw host list for generation recycle",
+          dao_module_find_export(module, 722, &function) == DAO_OK);
+    dao_value previous_list{};
+    for (int iteration = 0; iteration < 2048; ++iteration) {
+        CHECK("recycle container generation",
+              dao_vm_call(vm, module, function, nullptr, 0, &result, &error) == DAO_OK &&
+                  dao_value_list_size(vm, &result, &size) == DAO_OK && size == 2);
+        if (iteration != 0) {
+            CHECK("recycled generation rejects prior handle",
+                  dao_value_list_size(vm, &previous_list, &size) == DAO_RUNTIME_ERROR);
+        }
+        previous_list = result;
+    }
+
     CHECK("unregister list construction host", dao_vm_unregister_host_function(vm, 720) == DAO_OK);
     CHECK("unregister map construction host", dao_vm_unregister_host_function(vm, 721) == DAO_OK);
+    CHECK("unregister guarded insertion host", dao_vm_unregister_host_function(vm, 725) == DAO_OK);
     dao_module_release(module);
 }
 

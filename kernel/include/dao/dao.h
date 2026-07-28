@@ -35,7 +35,11 @@ typedef enum dao_status {
     DAO_CALL_DEPTH_EXCEEDED = 9,
     DAO_INSTRUCTION_LIMIT_EXCEEDED = 10,
     DAO_RUNTIME_ERROR = 11,
-    DAO_IMPORT_NOT_FOUND = 12
+    DAO_IMPORT_NOT_FOUND = 12,
+    DAO_MODULE_IDENTITY_MISSING = 13,
+    DAO_MODULE_CONFLICT = 14,
+    DAO_MODULE_CYCLE = 15,
+    DAO_MODULE_VERSION_MISMATCH = 16
 } dao_status;
 
 typedef enum dao_value_type {
@@ -52,9 +56,10 @@ typedef enum dao_value_type {
 
 typedef struct dao_value {
     uint32_t type;
-    /* Zero for scalars; byte length for borrowed bytes/string views. */
+    /* Zero except for borrowed bytes/string views, where this is the byte length. */
     uint32_t reserved;
-    /* Scalar bits or a borrowed pointer encoded through intptr_t. */
+    /* Scalar bits, a borrowed pointer, a module-local function index, or an opaque
+       VM generation handle. See kernel/OWNERSHIP.md. */
     int64_t payload;
 } dao_value;
 
@@ -98,6 +103,14 @@ typedef struct dao_host_function {
     void* user_data;
 } dao_host_function;
 
+typedef struct dao_module_identity {
+    uint32_t struct_size;
+    uint32_t version_major;
+    uint32_t version_minor;
+    uint32_t version_patch;
+    dao_bytes name;
+} dao_module_identity;
+
 DAO_API dao_status dao_value_make_bytes_view(dao_bytes bytes, dao_value* out_value);
 DAO_API dao_status dao_value_make_string_view(dao_bytes utf8, dao_value* out_value);
 DAO_API dao_status dao_value_get_view(const dao_value* value, dao_bytes* out_bytes);
@@ -106,6 +119,10 @@ DAO_API dao_status dao_value_list_get(const dao_vm* vm, const dao_value* value, 
                                       dao_value* out_value);
 DAO_API dao_status dao_value_map_get(const dao_vm* vm, const dao_value* value, dao_bytes utf8_key,
                                      dao_value* out_value);
+/* Container construction is valid only from a registered Host callback on vm.
+   Created List/Map handles remain valid until the next accepted top-level call on
+   that VM. Inserted values may be scalars, borrowed views, or current-generation
+   List/Map handles; Function and Closure values are rejected. */
 DAO_API dao_status dao_vm_make_list(dao_vm* vm, dao_value* out_value);
 DAO_API dao_status dao_value_list_append(dao_vm* vm, dao_value* list, const dao_value* value);
 DAO_API dao_status dao_vm_make_map(dao_vm* vm, dao_value* out_value);
@@ -125,12 +142,24 @@ DAO_API dao_status dao_vm_unregister_host_function(dao_vm* vm, uint32_t symbol_i
 DAO_API dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_module,
                                       dao_error* error);
 
+DAO_API void dao_module_retain(dao_module* module);
 DAO_API void dao_module_release(dao_module* module);
 DAO_API uint64_t dao_module_fingerprint(const dao_module* module);
+DAO_API dao_status dao_module_get_identity(const dao_module* module,
+                                           dao_module_identity* out_identity);
+/* Linking retains module until vm is destroyed. Identity/version conflicts and
+   resolved import cycles are rejected. Missing dependencies may be linked later. */
+DAO_API dao_status dao_vm_link_module(dao_vm* vm, dao_module* module, dao_error* error);
+DAO_API dao_status dao_vm_find_module(dao_vm* vm, dao_bytes identity_name,
+                                      uint32_t version_major, uint32_t version_minor,
+                                      uint32_t version_patch, dao_module** out_module);
 
 DAO_API dao_status dao_module_find_export(const dao_module* module, uint32_t symbol_id,
                                           dao_function* out_function);
 
+/* A VM is externally synchronized. An accepted call invalidates List, Map, and
+   Closure handles from the previous top-level call. Top-level arguments may be
+   scalars or borrowed Bytes/String views, but not VM-owned or module-local values. */
 DAO_API dao_status dao_vm_call(dao_vm* vm, const dao_module* module, dao_function function,
                                const dao_value* args, size_t arg_count, dao_value* out_value,
                                dao_error* error);

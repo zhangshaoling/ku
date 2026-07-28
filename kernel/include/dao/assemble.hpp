@@ -25,11 +25,22 @@ struct ParsedExport {
     uint32_t function_index = 0;
 };
 
+struct ParsedModuleImport {
+    std::string module_name;
+    SemanticVersion version{};
+    uint32_t symbol_id = 0;
+    uint16_t parameter_count = 0;
+};
+
 struct ParsedModule {
+    bool has_identity = false;
+    std::string identity_name;
+    SemanticVersion identity_version{};
     std::vector<std::string> strings;
     std::vector<ParsedImport> imports;
     std::vector<ParsedFunction> functions;
     std::vector<ParsedExport> exports;
+    std::vector<ParsedModuleImport> module_imports;
 };
 
 bool parse_module_text(const std::string& text, ParsedModule* out_module, dao_error* error);

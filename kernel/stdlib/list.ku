@@ -1,7 +1,7 @@
 // Migrated from ku/std/list.ku for the Dao Binary Module list-read subset.
 // Import with: import "std/list" as list
 
-import "type" as type
+import "ku:std/type@1.0.0" as type
 
 thought includes(items, target) {
   for x in items {

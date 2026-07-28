@@ -35,6 +35,37 @@ struct ImportRecord {
     uint16_t parameter_count;
 };
 
+struct ModuleImportRecord {
+    std::string module_name;
+    uint32_t version_major;
+    uint32_t version_minor;
+    uint32_t version_patch;
+    uint32_t symbol_id;
+    uint16_t parameter_count;
+};
+
+struct ModuleKey {
+    std::string name;
+    uint32_t version_major;
+    uint32_t version_minor;
+    uint32_t version_patch;
+
+    bool operator==(const ModuleKey& other) const {
+        return name == other.name && version_major == other.version_major &&
+               version_minor == other.version_minor && version_patch == other.version_patch;
+    }
+};
+
+struct ModuleKeyHash {
+    size_t operator()(const ModuleKey& key) const {
+        size_t hash = std::hash<std::string>{}(key.name);
+        hash ^= static_cast<size_t>(key.version_major) + 0x9e3779b9u + (hash << 6) + (hash >> 2);
+        hash ^= static_cast<size_t>(key.version_minor) + 0x9e3779b9u + (hash << 6) + (hash >> 2);
+        hash ^= static_cast<size_t>(key.version_patch) + 0x9e3779b9u + (hash << 6) + (hash >> 2);
+        return hash;
+    }
+};
+
 struct HostFunction {
     uint32_t parameter_count;
     dao_host_callback callback;
@@ -241,6 +272,7 @@ struct dao_vm {
     std::vector<std::unique_ptr<Closure>> closures;
     mutable std::mutex cache_mutex;
     std::unordered_map<uint64_t, std::vector<dao_module*>> module_cache;
+    std::unordered_map<ModuleKey, dao_module*, ModuleKeyHash> linked_modules;
     uint64_t cache_hits = 0;
     uint64_t cache_misses = 0;
     uint32_t max_cached_modules = 64;
@@ -253,10 +285,13 @@ struct dao_module {
     std::vector<FunctionRecord> functions;
     std::vector<dao::Instruction> code;
     std::vector<ImportRecord> imports;
+    std::vector<ModuleImportRecord> module_imports;
     std::unordered_map<uint32_t, uint32_t> exports;
     std::vector<std::string> strings;
     uint64_t fingerprint = 0;
     std::vector<uint8_t> source_bytes;
+    bool has_identity = false;
+    ModuleKey identity{};
 };
 
 namespace {
@@ -297,6 +332,32 @@ bool is_valid_vm_value(const dao_vm* vm, const dao_value& value) {
     return true;
 }
 
+bool is_host_storable_value(const dao_vm* vm, const dao_value& value) {
+    if (!is_valid_vm_value(vm, value)) return false;
+    return value.type != DAO_VALUE_FUNCTION && value.type != DAO_VALUE_CLOSURE;
+}
+
+bool is_module_boundary_value(const dao_vm* vm, const dao_value& value, uint32_t depth = 0) {
+    if (!is_valid_vm_value(vm, value) || value.type == DAO_VALUE_FUNCTION ||
+        value.type == DAO_VALUE_CLOSURE || depth > 64)
+        return false;
+    if (value.type == DAO_VALUE_LIST) {
+        const auto* list = resolve_container(vm->lists, vm->container_generation, value);
+        return list != nullptr &&
+               std::all_of(list->values.begin(), list->values.end(), [&](const dao_value& item) {
+                   return is_module_boundary_value(vm, item, depth + 1);
+               });
+    }
+    if (value.type == DAO_VALUE_MAP) {
+        const auto* map = resolve_container(vm->maps, vm->container_generation, value);
+        return map != nullptr &&
+               std::all_of(map->values.begin(), map->values.end(), [&](const auto& item) {
+                   return is_module_boundary_value(vm, item.second, depth + 1);
+               });
+    }
+    return true;
+}
+
 const SectionRecord* find_section(const std::vector<SectionRecord>& sections,
                                   dao::SectionType type) {
     const uint32_t wanted = static_cast<uint32_t>(type);
@@ -310,7 +371,7 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
                               const dao::Instruction& instruction, uint32_t function_index,
                               uint32_t pc, dao_error* error) {
     if (instruction.flags != 0) {
-        return fail(error, DAO_VERIFY_ERROR, "instruction flags must be zero in VM ABI v9",
+        return fail(error, DAO_VERIFY_ERROR, "instruction flags must be zero",
                     function_index, pc);
     }
 
@@ -442,6 +503,19 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
         const uint32_t end =
             static_cast<uint32_t>(instruction.a) + static_cast<uint32_t>(instruction.b);
         const auto& import = module.imports[static_cast<size_t>(instruction.immediate)];
+        if (end <= function.register_count && instruction.b == import.parameter_count)
+            return DAO_OK;
+        break;
+    }
+    case Opcode::CallModule: {
+        if (!valid_register(instruction.dst) || instruction.immediate < 0 ||
+            static_cast<uint64_t>(instruction.immediate) >= module.module_imports.size()) {
+            break;
+        }
+        const uint32_t end =
+            static_cast<uint32_t>(instruction.a) + static_cast<uint32_t>(instruction.b);
+        const auto& import =
+            module.module_imports[static_cast<size_t>(instruction.immediate)];
         if (end <= function.register_count && instruction.b == import.parameter_count)
             return DAO_OK;
         break;
@@ -760,6 +834,52 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
             ++pc;
             break;
         }
+        case Opcode::CallModule: {
+            const auto& import =
+                module->module_imports[static_cast<size_t>(instruction.immediate)];
+            const ModuleKey key{import.module_name, import.version_major, import.version_minor,
+                                import.version_patch};
+            const auto linked = vm->linked_modules.find(key);
+            if (linked == vm->linked_modules.end())
+                return fail(error, DAO_IMPORT_NOT_FOUND, "module import is not linked",
+                            function_index, pc);
+            const dao_module* target_module = linked->second;
+            const auto target_export = target_module->exports.find(import.symbol_id);
+            if (target_export == target_module->exports.end())
+                return fail(error, DAO_EXPORT_NOT_FOUND, "module export is not available",
+                            function_index, pc);
+            const auto& target_function = target_module->functions[target_export->second];
+            if (target_function.parameter_count != import.parameter_count)
+                return fail(error, DAO_MODULE_VERSION_MISMATCH,
+                            "module import signature does not match linked export",
+                            function_index, pc);
+            const dao_value* arguments =
+                instruction.b == 0 ? nullptr : registers.data() + instruction.a;
+            for (uint16_t index = 0; index < instruction.b; ++index) {
+                if (!is_module_boundary_value(vm, arguments[index]))
+                    return fail(error, DAO_TYPE_ERROR,
+                                "module arguments contain module-local values", function_index,
+                                pc);
+            }
+            dao_value result = null_value();
+            const dao_status status = execute_function(
+                vm, target_module, target_export->second, arguments, instruction.b, depth + 1,
+                budget, &result, thrown, error);
+            if (status == DAO_RUNTIME_ERROR && thrown->type != DAO_VALUE_NULL &&
+                !handlers.empty()) {
+                pc = handlers.back();
+                handlers.pop_back();
+                break;
+            }
+            if (status != DAO_OK)
+                return status;
+            if (!is_module_boundary_value(vm, result))
+                return fail(error, DAO_TYPE_ERROR,
+                            "module result contains a module-local value", function_index, pc);
+            registers[instruction.dst] = result;
+            ++pc;
+            break;
+        }
         case Opcode::CallValue: {
             const dao_value& target = registers[instruction.a];
             uint32_t target_index = 0;
@@ -850,6 +970,60 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
     return fail(error, DAO_RUNTIME_ERROR, "function ended without RETURN", function_index, pc);
 }
 
+ModuleKey module_key(const ModuleImportRecord& import) {
+    return ModuleKey{import.module_name, import.version_major, import.version_minor,
+                     import.version_patch};
+}
+
+dao_status validate_resolved_module_imports(const dao_vm* vm, dao_error* error) {
+    for (const auto& linked : vm->linked_modules) {
+        for (const ModuleImportRecord& import : linked.second->module_imports) {
+            const auto target = vm->linked_modules.find(module_key(import));
+            if (target == vm->linked_modules.end())
+                continue;
+            const auto exported = target->second->exports.find(import.symbol_id);
+            if (exported == target->second->exports.end())
+                return fail(error, DAO_EXPORT_NOT_FOUND,
+                            "linked module does not provide an imported symbol");
+            if (target->second->functions[exported->second].parameter_count !=
+                import.parameter_count)
+                return fail(error, DAO_MODULE_VERSION_MISMATCH,
+                            "linked module export signature does not match import");
+        }
+    }
+    return DAO_OK;
+}
+
+bool visit_module(const dao_vm* vm, const ModuleKey& key,
+                  std::unordered_map<ModuleKey, uint8_t, ModuleKeyHash>& colors) {
+    uint8_t& color = colors[key];
+    if (color == 1)
+        return false;
+    if (color == 2)
+        return true;
+    color = 1;
+    const auto linked = vm->linked_modules.find(key);
+    if (linked != vm->linked_modules.end()) {
+        for (const ModuleImportRecord& import : linked->second->module_imports) {
+            const ModuleKey dependency = module_key(import);
+            if (vm->linked_modules.contains(dependency) && !visit_module(vm, dependency, colors))
+                return false;
+        }
+    }
+    color = 2;
+    return true;
+}
+
+bool linked_module_graph_is_acyclic(const dao_vm* vm) {
+    std::unordered_map<ModuleKey, uint8_t, ModuleKeyHash> colors;
+    colors.reserve(vm->linked_modules.size());
+    for (const auto& linked : vm->linked_modules) {
+        if (!visit_module(vm, linked.first, colors))
+            return false;
+    }
+    return true;
+}
+
 } // namespace
 
 extern "C" {
@@ -916,7 +1090,7 @@ dao_status dao_vm_make_list(dao_vm* vm, dao_value* out_value) {
 
 dao_status dao_value_list_append(dao_vm* vm, dao_value* list, const dao_value* value) {
     if (vm == nullptr || list == nullptr || value == nullptr || vm->host_callback_depth == 0 ||
-        list->type != DAO_VALUE_LIST || !is_valid_vm_value(vm, *value))
+        list->type != DAO_VALUE_LIST || !is_host_storable_value(vm, *value))
         return DAO_INVALID_ARGUMENT;
     auto* resolved = resolve_container(vm->lists, vm->container_generation, *list);
     if (resolved == nullptr) return DAO_RUNTIME_ERROR;
@@ -945,7 +1119,7 @@ dao_status dao_value_map_set(dao_vm* vm, dao_value* map, dao_bytes utf8_key,
                              const dao_value* value) {
     if (vm == nullptr || map == nullptr || value == nullptr || vm->host_callback_depth == 0 ||
         map->type != DAO_VALUE_MAP || (utf8_key.size != 0 && utf8_key.data == nullptr) ||
-        !is_valid_utf8(utf8_key.data, utf8_key.size) || !is_valid_vm_value(vm, *value))
+        !is_valid_utf8(utf8_key.data, utf8_key.size) || !is_host_storable_value(vm, *value))
         return DAO_INVALID_ARGUMENT;
     auto* resolved = resolve_container(vm->maps, vm->container_generation, *map);
     if (resolved == nullptr) return DAO_RUNTIME_ERROR;
@@ -992,6 +1166,7 @@ void release_module(dao_module* module) {
 void dao_vm_destroy(dao_vm* vm) {
     if (vm == nullptr) return;
     for (auto& bucket : vm->module_cache) for (dao_module* module : bucket.second) release_module(module);
+    for (auto& linked : vm->linked_modules) release_module(linked.second);
     delete vm;
 }
 
@@ -1067,8 +1242,13 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
     if (std::memcmp(bytes.data, "DAO\0", 4) != 0) {
         return fail(error, DAO_BAD_MODULE, "invalid module magic");
     }
-    if (read_u16(bytes.data + 4) != dao::kFormatVersion ||
-        read_u16(bytes.data + 6) != dao::kVmAbiVersion) {
+    const uint16_t format_version = read_u16(bytes.data + 4);
+    const uint16_t vm_abi_version = read_u16(bytes.data + 6);
+    const bool legacy_module = format_version == dao::kLegacyFormatVersion &&
+                               vm_abi_version == dao::kLegacyVmAbiVersion;
+    const bool identified_module = format_version == dao::kFormatVersion &&
+                                   vm_abi_version == dao::kVmAbiVersion;
+    if (!legacy_module && !identified_module) {
         return fail(error, DAO_BAD_MODULE, "unsupported format or VM ABI version");
     }
     if (read_u32(bytes.data + 8) != 0) {
@@ -1091,8 +1271,10 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
             bytes.data + dao::kHeaderSize + static_cast<size_t>(index) * dao::kSectionEntrySize;
         SectionRecord section{read_u32(entry), read_u32(entry + 4), read_u32(entry + 8),
                               read_u32(entry + 12)};
+        const uint32_t maximum_section = static_cast<uint32_t>(
+            identified_module ? dao::SectionType::ModuleImports : dao::SectionType::Data);
         if (section.type < static_cast<uint32_t>(dao::SectionType::Functions) ||
-            section.type > static_cast<uint32_t>(dao::SectionType::Data)) {
+            section.type > maximum_section) {
             return fail(error, DAO_BAD_MODULE, "unknown section type");
         }
         const uint64_t end = static_cast<uint64_t>(section.offset) + section.size;
@@ -1124,8 +1306,12 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
     const SectionRecord* exports_section = find_section(sections, dao::SectionType::Exports);
     const SectionRecord* imports_section = find_section(sections, dao::SectionType::Imports);
     const SectionRecord* data_section = find_section(sections, dao::SectionType::Data);
+    const SectionRecord* metadata_section = find_section(sections, dao::SectionType::Metadata);
+    const SectionRecord* module_imports_section =
+        find_section(sections, dao::SectionType::ModuleImports);
     if (functions_section == nullptr || code_section == nullptr || exports_section == nullptr ||
-        imports_section == nullptr || data_section == nullptr) {
+        imports_section == nullptr || data_section == nullptr ||
+        (identified_module && (metadata_section == nullptr || module_imports_section == nullptr))) {
         return fail(error, DAO_BAD_MODULE, "required section is missing");
     }
     if (functions_section->size !=
@@ -1134,7 +1320,13 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
         exports_section->size !=
             static_cast<uint64_t>(exports_section->count) * dao::kExportRecordSize ||
         imports_section->size !=
-            static_cast<uint64_t>(imports_section->count) * dao::kImportRecordSize) {
+            static_cast<uint64_t>(imports_section->count) * dao::kImportRecordSize ||
+        (identified_module &&
+         (metadata_section->count != 1 ||
+          metadata_section->size != dao::kModuleMetadataRecordSize ||
+          module_imports_section->size !=
+              static_cast<uint64_t>(module_imports_section->count) *
+                  dao::kModuleImportRecordSize))) {
         return fail(error, DAO_BAD_MODULE, "section size does not match record count");
     }
 
@@ -1204,6 +1396,38 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
             module->strings.emplace_back(reinterpret_cast<const char*>(bytes.data + data_section->offset + offset), length);
         }
 
+        if (identified_module) {
+            const uint8_t* metadata = bytes.data + metadata_section->offset;
+            const uint32_t identity_index = read_u32(metadata);
+            if (identity_index >= module->strings.size() || module->strings[identity_index].empty() ||
+                module->strings[identity_index].size() > 1024 || read_u32(metadata + 16) != 0 ||
+                read_u32(metadata + 20) != 0) {
+                delete module;
+                return fail(error, DAO_VERIFY_ERROR, "invalid module identity metadata");
+            }
+            module->has_identity = true;
+            module->identity = ModuleKey{module->strings[identity_index], read_u32(metadata + 4),
+                                         read_u32(metadata + 8), read_u32(metadata + 12)};
+
+            module->module_imports.reserve(module_imports_section->count);
+            for (uint32_t index = 0; index < module_imports_section->count; ++index) {
+                const uint8_t* record =
+                    bytes.data + module_imports_section->offset +
+                    static_cast<size_t>(index) * dao::kModuleImportRecordSize;
+                const uint32_t name_index = read_u32(record);
+                const uint16_t parameter_count = read_u16(record + 20);
+                if (name_index >= module->strings.size() || module->strings[name_index].empty() ||
+                    module->strings[name_index].size() > 1024 || read_u16(record + 22) != 0 ||
+                    parameter_count > vm->config.max_registers) {
+                    delete module;
+                    return fail(error, DAO_VERIFY_ERROR, "invalid module import record");
+                }
+                module->module_imports.push_back(
+                    {module->strings[name_index], read_u32(record + 4), read_u32(record + 8),
+                     read_u32(record + 12), read_u32(record + 16), parameter_count});
+            }
+        }
+
         for (uint32_t function_index = 0; function_index < module->functions.size();
              ++function_index) {
             const auto& function = module->functions[function_index];
@@ -1244,10 +1468,87 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
     return DAO_OK;
 }
 
+void dao_module_retain(dao_module* module) {
+    if (module != nullptr)
+        module->references.fetch_add(1, std::memory_order_relaxed);
+}
+
 void dao_module_release(dao_module* module) { release_module(module); }
 
 uint64_t dao_module_fingerprint(const dao_module* module) {
     return module == nullptr ? 0 : module->fingerprint;
+}
+
+dao_status dao_module_get_identity(const dao_module* module,
+                                   dao_module_identity* out_identity) {
+    if (module == nullptr || out_identity == nullptr ||
+        out_identity->struct_size != sizeof(*out_identity))
+        return DAO_INVALID_ARGUMENT;
+    if (!module->has_identity)
+        return DAO_MODULE_IDENTITY_MISSING;
+    out_identity->version_major = module->identity.version_major;
+    out_identity->version_minor = module->identity.version_minor;
+    out_identity->version_patch = module->identity.version_patch;
+    out_identity->name = {
+        reinterpret_cast<const uint8_t*>(module->identity.name.data()),
+        module->identity.name.size()};
+    return DAO_OK;
+}
+
+dao_status dao_vm_link_module(dao_vm* vm, dao_module* module, dao_error* error) {
+    clear_error(error);
+    if (vm == nullptr || module == nullptr)
+        return fail(error, DAO_INVALID_ARGUMENT, "vm and module are required");
+    if (!module->has_identity)
+        return fail(error, DAO_MODULE_IDENTITY_MISSING, "module has no stable identity");
+    const auto existing = vm->linked_modules.find(module->identity);
+    if (existing != vm->linked_modules.end()) {
+        const dao_module* current = existing->second;
+        if (current->source_bytes.size() == module->source_bytes.size() &&
+            std::memcmp(current->source_bytes.data(), module->source_bytes.data(),
+                        module->source_bytes.size()) == 0)
+            return DAO_OK;
+        return fail(error, DAO_MODULE_CONFLICT,
+                    "module identity and version are already linked with different bytes");
+    }
+    try {
+        module->references.fetch_add(1, std::memory_order_relaxed);
+        vm->linked_modules.emplace(module->identity, module);
+    } catch (const std::bad_alloc&) {
+        release_module(module);
+        return fail(error, DAO_OUT_OF_MEMORY, "module link allocation failed");
+    }
+    dao_status status = validate_resolved_module_imports(vm, error);
+    if (status == DAO_OK && !linked_module_graph_is_acyclic(vm))
+        status = fail(error, DAO_MODULE_CYCLE, "linked module imports form a cycle");
+    if (status != DAO_OK) {
+        vm->linked_modules.erase(module->identity);
+        release_module(module);
+    }
+    return status;
+}
+
+dao_status dao_vm_find_module(dao_vm* vm, dao_bytes identity_name, uint32_t version_major,
+                              uint32_t version_minor, uint32_t version_patch,
+                              dao_module** out_module) {
+    if (vm == nullptr || out_module == nullptr || identity_name.data == nullptr ||
+        identity_name.size == 0 || identity_name.size > 1024 ||
+        !is_valid_utf8(identity_name.data, identity_name.size))
+        return DAO_INVALID_ARGUMENT;
+    *out_module = nullptr;
+    try {
+        const ModuleKey key{std::string(reinterpret_cast<const char*>(identity_name.data),
+                                        identity_name.size),
+                            version_major, version_minor, version_patch};
+        const auto linked = vm->linked_modules.find(key);
+        if (linked == vm->linked_modules.end())
+            return DAO_IMPORT_NOT_FOUND;
+        linked->second->references.fetch_add(1, std::memory_order_relaxed);
+        *out_module = linked->second;
+        return DAO_OK;
+    } catch (const std::bad_alloc&) {
+        return DAO_OUT_OF_MEMORY;
+    }
 }
 
 dao_status dao_module_find_export(const dao_module* module, uint32_t symbol_id,
@@ -1275,7 +1576,8 @@ dao_status dao_vm_call(dao_vm* vm, const dao_module* module, dao_function functi
         }
         if (args[index].type == DAO_VALUE_LIST || args[index].type == DAO_VALUE_MAP ||
             args[index].type == DAO_VALUE_FUNCTION || args[index].type == DAO_VALUE_CLOSURE) {
-            return fail(error, DAO_INVALID_ARGUMENT, "VM-owned containers cannot be reused across top-level calls");
+            return fail(error, DAO_INVALID_ARGUMENT,
+                        "VM-owned and module-local values cannot be reused across top-level calls");
         }
     }
     vm->lists.clear(); vm->maps.clear(); vm->closures.clear();
@@ -1321,6 +1623,14 @@ const char* dao_status_name(dao_status status) {
         return "runtime_error";
     case DAO_IMPORT_NOT_FOUND:
         return "import_not_found";
+    case DAO_MODULE_IDENTITY_MISSING:
+        return "module_identity_missing";
+    case DAO_MODULE_CONFLICT:
+        return "module_conflict";
+    case DAO_MODULE_CYCLE:
+        return "module_cycle";
+    case DAO_MODULE_VERSION_MISMATCH:
+        return "module_version_mismatch";
     }
     return "unknown";
 }

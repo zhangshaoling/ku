@@ -1,7 +1,7 @@
 // Migrated executable subset of ku/std/lexer.ku.
 // Import with: import "std/lexer" as lexer
 
-import "string" as string
+import "ku:std/string@1.0.0" as string
 
 thought make_token(type, value, line, column) {
   {"type": type, "value": value, "line": line, "column": column}

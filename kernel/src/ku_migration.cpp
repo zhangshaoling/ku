@@ -117,7 +117,13 @@ struct Stmt {
 };
 struct Function { std::string name; std::vector<std::string> params; std::vector<Stmt> body; };
 struct Import { std::string name; uint16_t arity; };
-struct ModuleImport { std::string path; std::string alias; };
+struct ModuleImport {
+    std::string path;
+    std::string alias;
+    bool runtime = false;
+    std::string identity;
+    SemanticVersion version{};
+};
 struct Program {
     std::vector<Import> imports;
     std::vector<ModuleImport> module_imports;
@@ -162,14 +168,42 @@ class Parser {
     ModuleImport module_import_decl() {
         take();
         if (peek().kind != Kind::String) error("expected module import path");
-        ModuleImport result{take().text, {}};
+        ModuleImport result;
+        result.path = take().text;
+        if (result.path.starts_with("ku:")) {
+            const size_t at = result.path.rfind('@');
+            const std::string_view version_text =
+                at == std::string::npos ? std::string_view{} : std::string_view(result.path).substr(at + 1);
+            const size_t first = version_text.find('.');
+            const size_t second = first == std::string_view::npos
+                                      ? std::string_view::npos
+                                      : version_text.find('.', first + 1);
+            const auto parse_part = [](std::string_view part, uint32_t* value) {
+                if (part.empty()) return false;
+                const auto parsed =
+                    std::from_chars(part.data(), part.data() + part.size(), *value);
+                return parsed.ec == std::errc{} && parsed.ptr == part.data() + part.size();
+            };
+            if (at <= 3 || first == std::string_view::npos || second == std::string_view::npos ||
+                version_text.find('.', second + 1) != std::string_view::npos ||
+                !parse_part(version_text.substr(0, first), &result.version.major) ||
+                !parse_part(version_text.substr(first + 1, second - first - 1),
+                            &result.version.minor) ||
+                !parse_part(version_text.substr(second + 1), &result.version.patch)) {
+                error("runtime module import must be ku:IDENTITY@MAJOR.MINOR.PATCH");
+            }
+            result.runtime = true;
+            result.identity = result.path.substr(0, at);
+        }
         if (word("as") || word("\xE5\x88\xAB")) {
             take();
             if (peek().kind != Kind::Name) error("expected module import alias");
             result.alias = take().text;
         } else {
-            const size_t slash = result.path.find_last_of("/\\");
-            result.alias = result.path.substr(slash == std::string::npos ? 0 : slash + 1);
+            const std::string_view alias_source = result.runtime ? std::string_view(result.identity)
+                                                                 : std::string_view(result.path);
+            const size_t slash = alias_source.find_last_of("/\\:");
+            result.alias = alias_source.substr(slash == std::string_view::npos ? 0 : slash + 1);
         }
         if (result.path.empty() || result.alias.empty()) error("module import path and alias must not be empty");
         return result;
@@ -357,10 +391,12 @@ class Parser {
 
 void rewrite_expr(Expr& expr, const std::string& prefix,
                   const std::unordered_set<std::string>& local_functions,
-                  const std::vector<ModuleImport>& module_imports) {
+                  const std::vector<ModuleImport>& module_imports,
+                  const std::unordered_set<std::string>& bound_names) {
     for (Expr& child : expr.children)
-        rewrite_expr(child, prefix, local_functions, module_imports);
-    if (expr.type != Expr::Type::Call)
+        rewrite_expr(child, prefix, local_functions, module_imports, bound_names);
+    if ((expr.type != Expr::Type::Call && expr.type != Expr::Type::Name) ||
+        bound_names.contains(expr.value))
         return;
     if (local_functions.contains(expr.value)) {
         expr.value = prefix + expr.value;
@@ -375,21 +411,45 @@ void rewrite_expr(Expr& expr, const std::string& prefix,
     }
 }
 
+void collect_bound_names(const std::vector<Stmt>& statements,
+                         std::unordered_set<std::string>& bound_names) {
+    for (const Stmt& statement : statements) {
+        if (statement.type == Stmt::Type::Assign || statement.type == Stmt::Type::For ||
+            statement.type == Stmt::Type::Try)
+            bound_names.insert(statement.target);
+        collect_bound_names(statement.body, bound_names);
+        collect_bound_names(statement.alternate, bound_names);
+    }
+}
+
 void rewrite_statements(std::vector<Stmt>& statements, const std::string& prefix,
                         const std::unordered_set<std::string>& local_functions,
-                        const std::vector<ModuleImport>& module_imports) {
+                        const std::vector<ModuleImport>& module_imports,
+                        const std::unordered_set<std::string>& bound_names) {
     for (Stmt& statement : statements) {
-        rewrite_expr(statement.expr, prefix, local_functions, module_imports);
-        rewrite_expr(statement.assignment_target, prefix, local_functions, module_imports);
-        rewrite_statements(statement.body, prefix, local_functions, module_imports);
-        rewrite_statements(statement.alternate, prefix, local_functions, module_imports);
+        rewrite_expr(statement.expr, prefix, local_functions, module_imports, bound_names);
+        rewrite_expr(statement.assignment_target, prefix, local_functions, module_imports,
+                     bound_names);
+        rewrite_statements(statement.body, prefix, local_functions, module_imports, bound_names);
+        rewrite_statements(statement.alternate, prefix, local_functions, module_imports,
+                           bound_names);
     }
 }
 
 void collect_program(std::string_view source, const std::string& prefix, const Options& options,
-                     std::unordered_set<std::string>& active_imports, Program& merged) {
+                      std::unordered_set<std::string>& active_imports, Program& merged) {
+    dao_value source_view{};
+    const dao_bytes source_bytes{reinterpret_cast<const uint8_t*>(source.data()), source.size()};
+    if (dao_value_make_string_view(source_bytes, &source_view) != DAO_OK)
+        throw std::runtime_error("source is not valid UTF-8");
     Program program = Parser(lex(source)).parse();
     for (const ModuleImport& module_import : program.module_imports) {
+        if (module_import.runtime) {
+            ModuleImport runtime_import = module_import;
+            runtime_import.alias = prefix + runtime_import.alias;
+            merged.module_imports.push_back(std::move(runtime_import));
+            continue;
+        }
         if (options.import_resolver == nullptr)
             throw std::runtime_error("module import '" + module_import.path + "' requires an import resolver");
         if (!active_imports.insert(module_import.path).second)
@@ -410,7 +470,10 @@ void collect_program(std::string_view source, const std::string& prefix, const O
     for (const Function& function : program.functions)
         local_functions.insert(function.name);
     for (Function& function : program.functions) {
-        rewrite_statements(function.body, prefix, local_functions, program.module_imports);
+        std::unordered_set<std::string> bound_names(function.params.begin(), function.params.end());
+        collect_bound_names(function.body, bound_names);
+        rewrite_statements(function.body, prefix, local_functions, program.module_imports,
+                           bound_names);
         function.name = prefix + function.name;
         merged.functions.push_back(std::move(function));
     }
@@ -426,9 +489,12 @@ class Emitter {
   public:
     struct FunctionTarget { uint32_t index; uint16_t arity; };
     struct HostImport { uint32_t index; uint16_t arity; };
+    struct RuntimeImport { std::string identity; SemanticVersion version; };
     Emitter(const std::unordered_map<std::string, FunctionTarget>& indices,
-            const std::unordered_map<std::string, HostImport>& imports, ModuleBuilder& builder, const Function& fn)
-        : indices_(indices), imports_(imports), builder_(builder) {
+            const std::unordered_map<std::string, HostImport>& imports,
+            const std::unordered_map<std::string, RuntimeImport>& runtime_imports,
+            ModuleBuilder& builder, const Function& fn)
+        : indices_(indices), imports_(imports), runtime_imports_(runtime_imports), builder_(builder) {
         for (const auto& param : fn.params) variable(param, true);
     }
     FunctionSpec emit(const Function& fn) {
@@ -588,6 +654,18 @@ class Emitter {
             return dst;
         }
         if (e.type == Expr::Type::Unary) {
+            if (e.value == "-" && e.children[0].type == Expr::Type::Number) {
+                const std::string literal = "-" + e.children[0].value;
+                int64_t number = 0;
+                const auto parsed = std::from_chars(
+                    literal.data(), literal.data() + literal.size(), number);
+                if (parsed.ec != std::errc{})
+                    throw std::runtime_error("integer literal out of range at offset " +
+                                             std::to_string(e.offset));
+                const uint16_t dst = temporary();
+                code_.push_back(instruction(Opcode::LoadI64, dst, 0, 0, number));
+                return dst;
+            }
             const uint16_t value = expr(e.children[0]); const uint16_t dst = temporary();
             if (e.value == "!" || e.value == "not") code_.push_back(instruction(Opcode::TritNot, dst, value));
             else { const uint16_t zero = temporary(); code_.push_back(instruction(Opcode::LoadI64, zero)); code_.push_back(instruction(Opcode::SubI64, dst, zero, value)); }
@@ -636,18 +714,43 @@ class Emitter {
             auto found = indices_.find(e.value);
             auto host = imports_.find(e.value);
             const auto function_value = variables_.find(e.value);
-            if (found == indices_.end() && host == imports_.end() && function_value == variables_.end()) throw std::runtime_error("unknown function '" + e.value + "' at offset " + std::to_string(e.offset));
+            const RuntimeImport* runtime_import = nullptr;
+            std::string_view runtime_export;
+            size_t runtime_prefix_size = 0;
+            if (found == indices_.end() && host == imports_.end() &&
+                function_value == variables_.end()) {
+                for (const auto& [alias, candidate] : runtime_imports_) {
+                    const std::string prefix = alias + "_";
+                    if (e.value.starts_with(prefix) && e.value.size() > prefix.size() &&
+                        prefix.size() > runtime_prefix_size) {
+                        runtime_import = &candidate;
+                        runtime_prefix_size = prefix.size();
+                        runtime_export = std::string_view(e.value).substr(prefix.size());
+                    }
+                }
+            }
+            if (found == indices_.end() && host == imports_.end() &&
+                function_value == variables_.end() && runtime_import == nullptr)
+                throw std::runtime_error("unknown function '" + e.value + "' at offset " + std::to_string(e.offset));
             if (host != imports_.end() && host->second.arity != e.children.size()) throw std::runtime_error("host function '" + e.value + "' argument count mismatch at offset " + std::to_string(e.offset));
             if (found != indices_.end() && found->second.arity != e.children.size()) throw std::runtime_error("function '" + e.value + "' argument count mismatch at offset " + std::to_string(e.offset));
             std::vector<uint16_t> actuals;
             for (const Expr& arg : e.children) actuals.push_back(expr(arg));
-            const uint16_t base = static_cast<uint16_t>(next_);
+            const uint16_t base = actuals.empty() ? 0 : static_cast<uint16_t>(next_);
             for (const uint16_t actual : actuals) { const uint16_t slot = temporary(); code_.push_back(instruction(Opcode::Move, slot, actual)); }
             const uint16_t dst = temporary();
             if (function_value != variables_.end())
                 code_.push_back(instruction(Opcode::CallValue, dst, function_value->second, base,
                                             static_cast<int64_t>(e.children.size())));
             else if (host != imports_.end()) code_.push_back(instruction(Opcode::CallHost, dst, base, static_cast<uint16_t>(e.children.size()), host->second.index));
+            else if (runtime_import != nullptr) {
+                const uint32_t import_index = builder_.add_module_import(
+                    runtime_import->identity, runtime_import->version, symbol_id(runtime_export),
+                    static_cast<uint16_t>(e.children.size()));
+                code_.push_back(instruction(Opcode::CallModule, dst, base,
+                                            static_cast<uint16_t>(e.children.size()),
+                                            import_index));
+            }
             else code_.push_back(instruction(Opcode::Call, dst, base, static_cast<uint16_t>(e.children.size()), found->second.index));
             return dst;
         }
@@ -671,6 +774,7 @@ class Emitter {
     }
     const std::unordered_map<std::string, FunctionTarget>& indices_;
     const std::unordered_map<std::string, HostImport>& imports_;
+    const std::unordered_map<std::string, RuntimeImport>& runtime_imports_;
     ModuleBuilder& builder_;
     std::unordered_map<std::string, uint16_t> variables_;
     std::vector<LoopContext> loops_;
@@ -690,6 +794,12 @@ bool compile(std::string_view source, ModuleBuilder& builder, dao_error* error, 
         std::unordered_map<std::string, Emitter::FunctionTarget> indices;
         for (uint32_t i = 0; i < program.functions.size(); ++i) {
             if (program.functions[i].params.size() > std::numeric_limits<uint16_t>::max()) throw std::runtime_error("too many parameters in function '" + program.functions[i].name + "'");
+            std::unordered_set<std::string> parameters;
+            for (const std::string& parameter : program.functions[i].params) {
+                if (!parameters.insert(parameter).second)
+                    throw std::runtime_error("duplicate parameter '" + parameter +
+                                             "' in function '" + program.functions[i].name + "'");
+            }
             if (!indices.emplace(program.functions[i].name, Emitter::FunctionTarget{i, static_cast<uint16_t>(program.functions[i].params.size())}).second) throw std::runtime_error("duplicate function '" + program.functions[i].name + "'");
         }
         std::unordered_map<std::string, Emitter::HostImport> imports;
@@ -704,8 +814,22 @@ bool compile(std::string_view source, ModuleBuilder& builder, dao_error* error, 
             const uint32_t index = builder.add_import(symbol_id(import.name), import.arity);
             imports.emplace(import.name, Emitter::HostImport{index, import.arity});
         }
+        std::unordered_map<std::string, Emitter::RuntimeImport> runtime_imports;
+        for (const ModuleImport& import : program.module_imports) {
+            const auto [existing, inserted] = runtime_imports.emplace(
+                import.alias, Emitter::RuntimeImport{import.identity, import.version});
+            if (!inserted &&
+                (existing->second.identity != import.identity ||
+                 existing->second.version.major != import.version.major ||
+                 existing->second.version.minor != import.version.minor ||
+                 existing->second.version.patch != import.version.patch)) {
+                throw std::runtime_error("runtime module import alias '" + import.alias +
+                                         "' refers to multiple identities");
+            }
+        }
         for (const Function& fn : program.functions) {
-            const uint32_t index = builder.add_function(Emitter(indices, imports, builder, fn).emit(fn));
+            const uint32_t index = builder.add_function(
+                Emitter(indices, imports, runtime_imports, builder, fn).emit(fn));
             builder.add_export(symbol_id(fn.name), index);
         }
         return true;

@@ -1,6 +1,6 @@
-# Dao Host FFI
+# Ku Host FFI (`dao_*` ABI)
 
-Dao VM ABI 2 calls host capabilities through numeric imports and the stable C ABI. The runtime does not serialize calls through JSON, look up string names, or store process addresses in a module.
+Ku calls host capabilities through numeric imports and the stable `dao_*` C ABI. The runtime does not serialize calls through JSON, look up string names, or store process addresses in a module. The complete value-lifetime contract is in [`OWNERSHIP.md`](OWNERSHIP.md).
 
 ## Module Side
 
@@ -58,8 +58,8 @@ These APIs create borrowed views only. Owned buffers require an allocator and ow
 
 - `user_data` remains host-owned and must stay valid until the function is unregistered and all active calls have returned.
 - Duplicate registration is rejected. Unregistering an absent symbol returns `DAO_IMPORT_NOT_FOUND`.
-- Registration and unregistration must not race with calls on the same VM.
-- After registration is frozen, immutable modules and a VM may be used for concurrent calls; callback code and `user_data` must provide their own thread safety.
+- A VM is externally synchronized. Registration, calls, container inspection, cache mutation, and destruction must not race on the same VM.
+- Use one VM per concurrent worker or serialize the complete call-and-inspection sequence. Immutable verified modules may be shared independently of VM execution state.
 - A callback must not throw across the C boundary. The C++ runtime catches an accidental exception and returns `DAO_RUNTIME_ERROR`, but bindings must not rely on exceptions for control flow.
 - A callback must not retain the argument pointer or output pointer after returning.
 - View storage remains owned by the caller or host. It must stay readable for the entire VM call and for as long as the returned view is consumed.
@@ -67,6 +67,22 @@ These APIs create borrowed views only. Owned buffers require an allocator and ow
 - The VM does not mutate view bytes. Hosts must synchronize mutable backing storage if calls can run concurrently.
 
 The registry belongs to the VM, not the module. The same verified module can therefore run against different host capability sets without changing its bytes or fingerprint.
+
+## Identified Module Linking
+
+Dao Binary Module v2 / VM ABI v10 modules expose an explicit UTF-8 logical identity and
+exact semantic version. Query it with `dao_module_get_identity`. Load and verification stay
+independent from linking: `dao_vm_load_module` accepts unresolved dependencies, while
+`dao_vm_link_module` retains an identified module in the VM-local registry.
+
+`dao_vm_find_module` returns a retained reference for an exact identity/version; release it
+with `dao_module_release`. Re-linking equal bytes is idempotent. Different bytes under the
+same identity/version, resolved signature mismatches, and linked cycles are rejected.
+Legacy v1/ABI9 modules remain executable but return `DAO_MODULE_IDENTITY_MISSING` when linked.
+
+`CALL_MODULE` is not Host FFI. It resolves a module-import record and shares the current VM
+instruction budget, call depth, exception path, and container generation. Function and
+Closure values may not cross module boundaries. See [`MODULE_ABI.md`](MODULE_ABI.md).
 
 ## Verified Module Cache
 
@@ -87,5 +103,6 @@ During a registered Host callback, the Host may construct VM-owned results with
 `dao_vm_make_list`, `dao_value_list_append`, `dao_vm_make_map`, and `dao_value_map_set`.
 Construction outside a callback is rejected, inserted container values must belong to the
 same VM generation, and foreign handles returned by callbacks are rejected. These APIs are
-experimental and are not part of the frozen C ABI; callbacks should receive the owning
+stable parts of the current C ABI. Function and Closure values cannot be manufactured by a
+Host, including inside a container. Callbacks that construct containers receive the owning
 `dao_vm*` through their `user_data` context.

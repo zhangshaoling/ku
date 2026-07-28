@@ -17,3 +17,8 @@ thought collection_total() {
 thought protected() {
   try { throw "handled" } catch error { return error }
 }
+
+thought canonical_edges(value) {
+  value = value
+  if value > 0 { -1 + 43 } else { 0 }
+}

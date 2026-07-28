@@ -221,16 +221,64 @@ thought io_append_line_case() { io_append_line("journal.txt", "next") }
 thought io_read_or_case() { io_read_or("absent.txt", "fallback") }
 thought io_copy_case() { io_copy_file("journal.txt", "journal-copy.txt") }
 thought io_delete_case() { io_safe_delete("journal-copy.txt") }
-)";
+thought passthrough(value) { value }
+thought io_callable_default_case() { io_read_or("absent-callable.txt", passthrough) }
+    )";
     fs.files["journal.txt"] = "base";
     dao::ModuleBuilder io_builder;
+    io_builder.set_identity("ku:test/io-suite", {1, 0, 0});
     check(dao::km::compile(io_program, io_builder, &error, options), "compile migrated io");
     const auto io_bytes = io_builder.encode();
+    dao::ModuleBuilder fs_provider_builder;
+    fs_provider_builder.set_identity("ku:std/fs", {1, 0, 0});
+    check(dao::km::compile(sources.fs, fs_provider_builder, &error),
+          "compile identified fs provider");
+    const auto fs_provider_bytes = fs_provider_builder.encode();
+    dao::ModuleBuilder string_provider_builder;
+    string_provider_builder.set_identity("ku:std/string", {1, 0, 0});
+    check(dao::km::compile(sources.string, string_provider_builder, &error),
+          "compile identified string provider");
+    const auto string_provider_bytes = string_provider_builder.encode();
     dao_module* io_module = nullptr;
+    dao_module* fs_provider = nullptr;
+    dao_module* string_provider = nullptr;
     check(dao_vm_load_module(vm, {io_bytes.data(), io_bytes.size()}, &io_module, &error) == DAO_OK,
           "load migrated io");
-    if (io_module != nullptr) {
+    check(dao_vm_load_module(vm, {fs_provider_bytes.data(), fs_provider_bytes.size()},
+                             &fs_provider, &error) == DAO_OK,
+          "load identified fs provider");
+    check(dao_vm_load_module(vm, {string_provider_bytes.data(), string_provider_bytes.size()},
+                             &string_provider, &error) == DAO_OK,
+          "load identified string provider");
+    check(io_module != nullptr && dao_vm_link_module(vm, io_module, &error) == DAO_OK,
+          "link io before providers");
+    if (io_module != nullptr && fs_provider != nullptr && string_provider != nullptr) {
         dao_value result{};
+        dao_function exists_function{};
+        dao_function size_function{};
+        check(dao_module_find_export(io_module, symbol_id("io_exists_case"), &exists_function) ==
+                      DAO_OK &&
+                  dao_vm_call(vm, io_module, exists_function, nullptr, 0, &result, &error) ==
+                      DAO_IMPORT_NOT_FOUND,
+              "io fs dependency unresolved");
+        check(dao_vm_link_module(vm, fs_provider, &error) == DAO_OK,
+              "link identified fs provider");
+        check(dao_vm_call(vm, io_module, exists_function, nullptr, 0, &result, &error) == DAO_OK &&
+                  result.type == DAO_VALUE_TRIT && result.payload == 1,
+              "io reaches linked fs provider");
+        check(dao_module_find_export(io_module, symbol_id("io_size_case"), &size_function) ==
+                      DAO_OK &&
+                  dao_vm_call(vm, io_module, size_function, nullptr, 0, &result, &error) ==
+                      DAO_IMPORT_NOT_FOUND,
+              "io string dependency unresolved");
+        check(dao_vm_link_module(vm, string_provider, &error) == DAO_OK,
+              "link identified string provider");
+        dao_function callable_default{};
+        check(dao_module_find_export(io_module, symbol_id("io_callable_default_case"),
+                                     &callable_default) == DAO_OK &&
+                  dao_vm_call(vm, io_module, callable_default, nullptr, 0, &result, &error) ==
+                      DAO_TYPE_ERROR,
+              "io rejects callable default across module boundary");
         check(call(vm, io_module, "io_exists_case", &result, &error) &&
                   result.type == DAO_VALUE_TRIT && result.payload == 1,
               "io file exists");
@@ -252,8 +300,10 @@ thought io_delete_case() { io_safe_delete("journal-copy.txt") }
         check(call(vm, io_module, "io_delete_case", &result, &error) &&
                   !fs.files.contains("journal-copy.txt"),
               "io safe delete");
-        dao_module_release(io_module);
     }
+    if (io_module != nullptr) dao_module_release(io_module);
+    if (fs_provider != nullptr) dao_module_release(fs_provider);
+    if (string_provider != nullptr) dao_module_release(string_provider);
     dao_vm_destroy(vm);
     if (failures != 0) return EXIT_FAILURE;
     std::cout << "dao migrated fs tests passed\n";

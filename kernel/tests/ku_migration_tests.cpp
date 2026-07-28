@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -40,11 +41,13 @@ thought calculate(x) {
   doubled = add(x, x)
   (doubled * 3) % 100
 }
+thought minimum_i64() { -9223372036854775808 }
 thought compare(x) { x >= 7 }
 thought prefix_compare(x) { >= (x, 7) }
 thought prefix_logic(x) { and(>= (x, 7), < (x, 10)) }
 thought variadic_prefix_logic(x) { and(>= (x, 7), < (x, 10), != (x, 8)) }
 thought logic() { true and not false }
+思 中文判断(n) { 若 n > 0 { 返 真 } 否 { 返 假 } }
 thought nothing() { null }
 thought missing_is_null() { {}["missing"] == null }
 thought null_differs_from_number() { null != 0 }
@@ -120,6 +123,10 @@ thought raises() { throw "bad" }
 thought catches() {
   try { raises() } catch err { return err }
 }
+thought eager_and() { false and raises() }
+thought eager_or() { true or raises() }
+thought strict_condition() { if 1 { return 42 } else { return 0 } }
+thought negative_index() { [1][-1] }
 )";
     dao::ModuleBuilder builder;
     dao_error error{};
@@ -144,6 +151,10 @@ thought catches() {
     CHECK("refind calculate", dao_module_find_export(module, symbol_id("calculate"), &fn) == DAO_OK);
     CHECK("execute calculate", dao_vm_call(vm, module, fn, args, 1, &result, &error) == DAO_OK);
     CHECK("calculate result", result.type == DAO_VALUE_I64 && result.payload == 42);
+    CHECK("find minimum i64", dao_module_find_export(module, symbol_id("minimum_i64"), &fn) == DAO_OK);
+    CHECK("execute minimum i64", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("minimum i64 result", result.type == DAO_VALUE_I64 &&
+          result.payload == std::numeric_limits<int64_t>::min());
     CHECK("find compare", dao_module_find_export(module, symbol_id("compare"), &fn) == DAO_OK);
     CHECK("execute compare", dao_vm_call(vm, module, fn, args, 1, &result, &error) == DAO_OK);
     CHECK("compare result", result.type == DAO_VALUE_TRIT && result.payload == 1);
@@ -159,6 +170,9 @@ thought catches() {
     CHECK("find logic", dao_module_find_export(module, symbol_id("logic"), &fn) == DAO_OK);
     CHECK("execute logic", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
     CHECK("logic result", result.type == DAO_VALUE_TRIT && result.payload == 1);
+    CHECK("find Chinese aliases", dao_module_find_export(module, symbol_id("中文判断"), &fn) == DAO_OK);
+    CHECK("execute Chinese aliases", dao_vm_call(vm, module, fn, args, 1, &result, &error) == DAO_OK);
+    CHECK("Chinese aliases result", result.type == DAO_VALUE_TRIT && result.payload == 1);
     CHECK("find null", dao_module_find_export(module, symbol_id("nothing"), &fn) == DAO_OK);
     CHECK("execute null", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
     CHECK("null result", result.type == DAO_VALUE_NULL);
@@ -229,6 +243,14 @@ thought catches() {
     CHECK("caught value", string_view.size == 3 && std::memcmp(string_view.data, "bad", 3) == 0);
     CHECK("find raises", dao_module_find_export(module, symbol_id("raises"), &fn) == DAO_OK);
     CHECK("uncaught throw", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_RUNTIME_ERROR);
+    CHECK("find eager and", dao_module_find_export(module, symbol_id("eager_and"), &fn) == DAO_OK);
+    CHECK("and evaluates right operand", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_RUNTIME_ERROR);
+    CHECK("find eager or", dao_module_find_export(module, symbol_id("eager_or"), &fn) == DAO_OK);
+    CHECK("or evaluates right operand", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_RUNTIME_ERROR);
+    CHECK("find strict condition", dao_module_find_export(module, symbol_id("strict_condition"), &fn) == DAO_OK);
+    CHECK("reject non-Trit condition", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_TYPE_ERROR);
+    CHECK("find negative index", dao_module_find_export(module, symbol_id("negative_index"), &fn) == DAO_OK);
+    CHECK("reject negative list index", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_RUNTIME_ERROR);
 
     dao::DisassembledModule disassembled{};
     CHECK("disassemble", dao::disassemble({bytes.data(), bytes.size()}, &disassembled, &error) == DAO_OK);
@@ -236,6 +258,17 @@ thought catches() {
     const bool assembled = dao::assemble_text(dao::to_text(disassembled), &round_trip, &error);
     if (!assembled) std::cerr << "assemble error: " << error.message << '\n';
     CHECK("assemble text", assembled);
+    if (round_trip != bytes) {
+        size_t offset = 0;
+        while (offset < round_trip.size() && offset < bytes.size() &&
+               round_trip[offset] == bytes[offset]) ++offset;
+        std::cerr << "round trip mismatch at " << offset << ", original=" << bytes.size()
+                  << ", assembled=" << round_trip.size();
+        if (offset < round_trip.size() && offset < bytes.size())
+            std::cerr << ", original_byte=" << static_cast<unsigned>(bytes[offset])
+                      << ", assembled_byte=" << static_cast<unsigned>(round_trip[offset]);
+        std::cerr << '\n';
+    }
     CHECK("round trip identical", round_trip == bytes);
 
     ImportSources import_sources{{
@@ -261,6 +294,52 @@ thought catches() {
               result.type == DAO_VALUE_I64 && result.payload == 42);
     dao_module_release(imported_module);
 
+    dao::ModuleBuilder runtime_import_builder;
+    runtime_import_builder.set_identity("ku:test/runtime-caller", {1, 0, 0});
+    CHECK("compile runtime module import without source resolver",
+          dao::km::compile(
+              "import \"ku:std/type@1.0.0\" as type\n"
+              "thought first(value) { type_is_num(value) }\n"
+              "thought second(value) { type_is_num(value) }",
+              runtime_import_builder, &error));
+    const auto runtime_import_bytes = runtime_import_builder.encode();
+    dao::DisassembledModule runtime_import_module{};
+    CHECK("disassemble runtime module import",
+          dao::disassemble({runtime_import_bytes.data(), runtime_import_bytes.size()},
+                           &runtime_import_module, &error) == DAO_OK);
+    CHECK("runtime module import is deduplicated",
+          runtime_import_module.module_imports.size() == 1);
+    if (runtime_import_module.module_imports.size() == 1) {
+        const auto& module_import = runtime_import_module.module_imports[0];
+        CHECK("runtime module import identity", module_import.module_name == "ku:std/type");
+        CHECK("runtime module import version",
+              module_import.version.major == 1 && module_import.version.minor == 0 &&
+                  module_import.version.patch == 0);
+        CHECK("runtime module import export",
+              module_import.symbol_id == symbol_id("is_num") &&
+                  module_import.parameter_count == 1);
+    }
+    bool found_call_module = false;
+    for (const auto& function : runtime_import_module.functions) {
+        for (const auto& instruction : function.instructions)
+            found_call_module = found_call_module || instruction.opcode == dao::Opcode::CallModule;
+    }
+    CHECK("runtime module import emits CALL_MODULE", found_call_module);
+
+    dao::ModuleBuilder malformed_runtime_import;
+    malformed_runtime_import.set_identity("ku:test/malformed", {1, 0, 0});
+    CHECK("reject malformed runtime module import version",
+          !dao::km::compile("import \"ku:std/type@1.0\" as type\n"
+                            "thought bad(value) { type_is_num(value) }",
+                            malformed_runtime_import, &error));
+    dao::ModuleBuilder conflicting_runtime_arity;
+    conflicting_runtime_arity.set_identity("ku:test/conflicting-arity", {1, 0, 0});
+    CHECK("reject conflicting runtime module import arities",
+          !dao::km::compile("import \"ku:std/type@1.0.0\" as type\n"
+                            "thought one(value) { type_is_num(value) }\n"
+                            "thought two(left, right) { type_is_num(left, right) }",
+                            conflicting_runtime_arity, &error));
+
     dao::ModuleBuilder missing_resolver;
     CHECK("legacy import requires resolver",
           !dao::km::compile("import \"math\" as m\nthought bad() { m_double(1) }",
@@ -276,6 +355,17 @@ thought catches() {
     CHECK("reject break outside loop", !dao::km::compile("thought bad() { break }", invalid, &error));
     dao::ModuleBuilder bad_arity;
     CHECK("reject internal arity mismatch", !dao::km::compile("thought f(x) { x } thought g() { f() }", bad_arity, &error));
+    dao::ModuleBuilder float_literal;
+    CHECK("reject float literal", !dao::km::compile("thought bad() { 1.5 }", float_literal, &error));
+    dao::ModuleBuilder duplicate_parameter;
+    CHECK("reject duplicate parameter",
+          !dao::km::compile("thought bad(value, value) { value }", duplicate_parameter, &error));
+    std::string invalid_utf8 = "thought bad() { \"";
+    invalid_utf8.push_back(static_cast<char>(0xff));
+    invalid_utf8 += "\" }";
+    dao::ModuleBuilder invalid_utf8_source;
+    CHECK("reject invalid UTF-8 source",
+          !dao::km::compile(invalid_utf8, invalid_utf8_source, &error));
 
     dao_module_release(module); dao_vm_destroy(vm);
     if (failures) return EXIT_FAILURE;

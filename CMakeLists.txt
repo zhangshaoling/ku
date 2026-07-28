@@ -98,9 +98,15 @@ dao_enable_sanitizers(assemble_tests)
 
 add_library(dao_ku_migration STATIC kernel/src/ku_migration.cpp)
 target_include_directories(dao_ku_migration PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/kernel/include> $<INSTALL_INTERFACE:include>)
-target_link_libraries(dao_ku_migration PUBLIC dao_module_builder dao_disassembly)
+target_link_libraries(dao_ku_migration PUBLIC dao_kernel dao_module_builder dao_disassembly)
 dao_enable_strict_warnings(dao_ku_migration)
 dao_enable_sanitizers(dao_ku_migration)
+
+add_library(dao_ku_selfhost STATIC kernel/src/selfhost.cpp)
+target_include_directories(dao_ku_selfhost PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/kernel/include> $<INSTALL_INTERFACE:include>)
+target_link_libraries(dao_ku_selfhost PUBLIC dao_kernel dao_module_builder dao_ku_migration)
+dao_enable_strict_warnings(dao_ku_selfhost)
+dao_enable_sanitizers(dao_ku_selfhost)
 
 add_executable(ku_migration_tests kernel/tests/ku_migration_tests.cpp)
 target_link_libraries(ku_migration_tests PRIVATE dao_kernel dao_module_builder dao_disassembly dao_assembly dao_ku_migration)
@@ -162,8 +168,19 @@ target_link_libraries(selfhost_tests PRIVATE dao_kernel dao_module_builder dao_k
 dao_enable_strict_warnings(selfhost_tests)
 dao_enable_sanitizers(selfhost_tests)
 
+add_executable(selfhost_builder_tests kernel/tests/selfhost_builder_tests.cpp)
+target_link_libraries(selfhost_builder_tests PRIVATE dao_kernel dao_ku_selfhost)
+dao_enable_strict_warnings(selfhost_builder_tests)
+dao_enable_sanitizers(selfhost_builder_tests)
+
+add_executable(module_abi_tests kernel/tests/module_abi_tests.cpp)
+target_link_libraries(module_abi_tests PRIVATE dao_kernel dao_module_builder)
+dao_enable_strict_warnings(module_abi_tests)
+dao_enable_sanitizers(module_abi_tests)
+
 add_executable(dao-ku kernel/tools/ku_compile.cpp)
-target_link_libraries(dao-ku PRIVATE dao_kernel dao_module_builder dao_ku_migration)
+target_link_libraries(dao-ku PRIVATE dao_kernel dao_module_builder dao_ku_selfhost)
+target_compile_definitions(dao-ku PRIVATE DAO_SELFHOST_COMPILER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/kernel/selfhost/compiler.ku")
 dao_enable_strict_warnings(dao-ku)
 dao_enable_sanitizers(dao-ku)
 
@@ -229,26 +246,48 @@ add_test(NAME disassemble COMMAND disassemble_tests)
 add_test(NAME assemble COMMAND assemble_tests)
 add_test(NAME ku_migration COMMAND ku_migration_tests)
 add_test(NAME ku_selfhost_seed COMMAND selfhost_tests "${CMAKE_SOURCE_DIR}/kernel/selfhost/compiler.ku")
+add_test(NAME ku_selfhost_builder COMMAND selfhost_builder_tests)
+add_test(NAME module_abi COMMAND module_abi_tests)
 add_test(NAME ku_compile_stdlib COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/core.ku"
     "${CMAKE_BINARY_DIR}/stdlib_core.dao")
+add_test(NAME ku_compile_identified_core COMMAND ${CMAKE_COMMAND}
+    "-DDAO_KU=$<TARGET_FILE:dao-ku>"
+    "-DSOURCE=${CMAKE_SOURCE_DIR}/kernel/stdlib/core.ku"
+    "-DDEFAULT_OUTPUT=${CMAKE_BINARY_DIR}/stdlib_core_identified.dao"
+    "-DRECOVERY_OUTPUT=${CMAKE_BINARY_DIR}/stdlib_core_identified_recovery.dao"
+    "-DIDENTITY_NAME=ku:std/core"
+    "-DIDENTITY_VERSION=1.0.0"
+    -P "${CMAKE_SOURCE_DIR}/kernel/tests/check_ku_canonical_identity.cmake")
+add_test(NAME module_identified_core COMMAND module_abi_tests
+    "${CMAKE_BINARY_DIR}/stdlib_core_identified.dao")
+set_tests_properties(module_identified_core PROPERTIES DEPENDS ku_compile_identified_core)
 add_test(NAME ku_compile_std_math COMMAND dao-ku
+    --recovery
+    --identity ku:std/math 1.0.0
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/math.ku"
     "${CMAKE_BINARY_DIR}/stdlib_math.dao")
 add_test(NAME ku_std_math COMMAND ku_std_math_tests
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/math.ku")
-add_test(NAME ku_compile_std_list COMMAND dao-ku
-    "${CMAKE_SOURCE_DIR}/kernel/stdlib/list.ku"
-    "${CMAKE_BINARY_DIR}/stdlib_list.dao")
+add_test(NAME ku_compile_std_list COMMAND ${CMAKE_COMMAND}
+    "-DDAO_KU=$<TARGET_FILE:dao-ku>"
+    "-DSOURCE=${CMAKE_SOURCE_DIR}/kernel/stdlib/list.ku"
+    "-DDEFAULT_OUTPUT=${CMAKE_BINARY_DIR}/stdlib_list_identified.dao"
+    "-DRECOVERY_OUTPUT=${CMAKE_BINARY_DIR}/stdlib_list_identified_recovery.dao"
+    "-DIDENTITY_NAME=ku:std/list"
+    "-DIDENTITY_VERSION=1.0.0"
+    -P "${CMAKE_SOURCE_DIR}/kernel/tests/check_ku_canonical_identity.cmake")
 add_test(NAME ku_std_list COMMAND ku_std_list_tests
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/list.ku"
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/type.ku")
 add_test(NAME ku_compile_std_type COMMAND dao-ku
+    --identity ku:std/type 1.0.0
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/type.ku"
     "${CMAKE_BINARY_DIR}/stdlib_type.dao")
 add_test(NAME ku_std_type COMMAND ku_std_type_tests
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/type.ku")
 add_test(NAME ku_compile_std_fs COMMAND dao-ku
+    --identity ku:std/fs 1.0.0
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/fs.ku"
     "${CMAKE_BINARY_DIR}/stdlib_fs.dao")
 add_test(NAME ku_std_fs COMMAND ku_std_fs_tests
@@ -256,41 +295,60 @@ add_test(NAME ku_std_fs COMMAND ku_std_fs_tests
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/string.ku"
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/io.ku")
 add_test(NAME ku_compile_std_debug COMMAND dao-ku
+    --recovery
+    --identity ku:std/debug 1.0.0
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/debug.ku"
     "${CMAKE_BINARY_DIR}/stdlib_debug.dao")
 add_test(NAME ku_std_debug COMMAND ku_std_debug_tests
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/debug.ku")
 add_test(NAME ku_compile_std_string COMMAND dao-ku
+    --identity ku:std/string 1.0.0
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/string.ku"
     "${CMAKE_BINARY_DIR}/stdlib_string.dao")
 add_test(NAME ku_std_string COMMAND ku_std_string_tests
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/string.ku")
-add_test(NAME ku_compile_std_io COMMAND dao-ku
-    "${CMAKE_SOURCE_DIR}/kernel/stdlib/io.ku"
-    "${CMAKE_BINARY_DIR}/stdlib_io.dao")
+add_test(NAME ku_compile_std_io COMMAND ${CMAKE_COMMAND}
+    "-DDAO_KU=$<TARGET_FILE:dao-ku>"
+    "-DSOURCE=${CMAKE_SOURCE_DIR}/kernel/stdlib/io.ku"
+    "-DDEFAULT_OUTPUT=${CMAKE_BINARY_DIR}/stdlib_io_identified.dao"
+    "-DRECOVERY_OUTPUT=${CMAKE_BINARY_DIR}/stdlib_io_identified_recovery.dao"
+    "-DIDENTITY_NAME=ku:std/io"
+    "-DIDENTITY_VERSION=1.0.0"
+    -P "${CMAKE_SOURCE_DIR}/kernel/tests/check_ku_canonical_identity.cmake")
 add_test(NAME ku_compile_std_http COMMAND dao-ku
+    --identity ku:std/http 1.0.0
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/http.ku"
     "${CMAKE_BINARY_DIR}/stdlib_http.dao")
 add_test(NAME ku_std_http COMMAND ku_std_http_tests
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/http.ku")
 add_test(NAME ku_compile_std_lexer COMMAND dao-ku
+    --recovery
+    --identity ku:std/lexer 1.0.0
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/lexer.ku"
-    "${CMAKE_BINARY_DIR}/stdlib_lexer.dao")
+    "${CMAKE_BINARY_DIR}/stdlib_lexer_identified.dao")
 add_test(NAME ku_std_lexer COMMAND ku_std_lexer_tests
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/lexer.ku"
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/string.ku")
-add_test(NAME ku_compile_acceptance COMMAND dao-ku
-    "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/language_acceptance.ku"
-    "${CMAKE_BINARY_DIR}/language_acceptance.dao")
+add_test(NAME ku_compile_acceptance COMMAND ${CMAKE_COMMAND}
+    "-DDAO_KU=$<TARGET_FILE:dao-ku>"
+    "-DSOURCE=${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/language_acceptance.ku"
+    "-DDEFAULT_OUTPUT=${CMAKE_BINARY_DIR}/language_acceptance.dao"
+    "-DRECOVERY_OUTPUT=${CMAKE_BINARY_DIR}/language_acceptance_recovery.dao"
+    -P "${CMAKE_SOURCE_DIR}/kernel/tests/check_ku_canonical_identity.cmake")
 add_test(NAME ku_compile_legacy_import COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/legacy_import_main.ku"
     "${CMAKE_BINARY_DIR}/legacy_import.dao")
+add_test(NAME ku_compile_recursive_import COMMAND dao-ku
+    "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/recursive_import_main.ku"
+    "${CMAKE_BINARY_DIR}/recursive_import.dao")
 add_test(NAME ku_compile_legacy_parser COMMAND dao-ku
+    --recovery
     "${CMAKE_SOURCE_DIR}/ku/std/parser.ku"
     "${CMAKE_BINARY_DIR}/legacy_parser.dao")
 add_test(NAME ku_legacy_parser COMMAND ku_legacy_parser_tests
     "${CMAKE_SOURCE_DIR}/ku/std/parser.ku")
 add_test(NAME ku_compile_legacy_task_queue COMMAND dao-ku
+    --recovery
     "${CMAKE_SOURCE_DIR}/ku/std/task_queue.ku"
     "${CMAKE_BINARY_DIR}/legacy_task_queue.dao")
 add_test(NAME ku_legacy_task_queue COMMAND ku_legacy_task_queue_tests
@@ -299,7 +357,26 @@ add_test(NAME ku_reject_import_escape COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/legacy_import_escape.ku"
     "${CMAKE_BINARY_DIR}/legacy_import_escape.dao")
 set_tests_properties(ku_reject_import_escape PROPERTIES WILL_FAIL TRUE)
+add_test(NAME ku_reject_import_absolute COMMAND dao-ku
+    "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/legacy_import_absolute.ku"
+    "${CMAKE_BINARY_DIR}/legacy_import_absolute.dao")
+set_tests_properties(ku_reject_import_absolute PROPERTIES WILL_FAIL TRUE)
+add_test(NAME ku_reject_import_missing COMMAND dao-ku
+    "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/legacy_import_missing.ku"
+    "${CMAKE_BINARY_DIR}/legacy_import_missing.dao")
+set_tests_properties(ku_reject_import_missing PROPERTIES WILL_FAIL TRUE)
+add_test(NAME ku_reject_import_cycle COMMAND dao-ku
+    "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/cycle_import_main.ku"
+    "${CMAKE_BINARY_DIR}/cycle_import.dao")
+set_tests_properties(ku_reject_import_cycle PROPERTIES WILL_FAIL TRUE)
+add_test(NAME ku_reject_positioned_diagnostic COMMAND ${CMAKE_COMMAND}
+    "-DDAO_KU=$<TARGET_FILE:dao-ku>"
+    "-DSOURCE=${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/positioned_diagnostic.ku"
+    "-DOUTPUT=${CMAKE_BINARY_DIR}/positioned_diagnostic.dao"
+    "-DEXPECTED=expected ] in list literal at offset 22"
+    -P "${CMAKE_SOURCE_DIR}/kernel/tests/check_compile_error.cmake")
 add_test(NAME aot_compile_module COMMAND dao-ku
+    --recovery
     "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/aot_numeric.ku"
     "${CMAKE_BINARY_DIR}/aot_numeric.dao")
 add_test(NAME aot_generate_c COMMAND dao-aot
@@ -327,7 +404,11 @@ set(DAO_RUNTIME_TESTS
     assemble
     ku_migration
     ku_selfhost_seed
+    ku_selfhost_builder
+    module_abi
     ku_compile_stdlib
+    ku_compile_identified_core
+    module_identified_core
     ku_compile_std_math
     ku_std_math
     ku_compile_std_list
@@ -347,11 +428,16 @@ set(DAO_RUNTIME_TESTS
     ku_std_lexer
     ku_compile_acceptance
     ku_compile_legacy_import
+    ku_compile_recursive_import
     ku_compile_legacy_parser
     ku_legacy_parser
     ku_compile_legacy_task_queue
     ku_legacy_task_queue
     ku_reject_import_escape
+    ku_reject_import_absolute
+    ku_reject_import_missing
+    ku_reject_import_cycle
+    ku_reject_positioned_diagnostic
     aot_compile_module
     aot_generate_c
     aot_execute_native
@@ -373,16 +459,19 @@ if(DAO_CARGO_EXECUTABLE)
         --manifest-path "${CMAKE_SOURCE_DIR}/bindings/rust/dao-kernel-sys/Cargo.toml")
 endif()
 
-install(TARGETS dao_kernel dao_module_builder dao_disassembly dao_assembly dao_ku_migration dao-ku dao-aot
+install(TARGETS dao_kernel dao_module_builder dao_disassembly dao_assembly dao_ku_migration dao_ku_selfhost dao-ku dao-aot
     EXPORT DaoKernelTargets
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY kernel/include/dao DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-install(FILES kernel/FORMAT.md kernel/FFI.md kernel/README.md kernel/BENCHMARKS.md kernel/K5.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(FILES kernel/FORMAT.md kernel/FFI.md kernel/MODULE_ABI.md kernel/STDLIB_ABI.md
+    kernel/README.md kernel/BENCHMARKS.md kernel/K5.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(FILES kernel/selfhost/compiler.ku DESTINATION share/dao/selfhost)
 install(FILES kernel/stdlib/core.ku kernel/stdlib/math.ku kernel/stdlib/list.ku
-    kernel/stdlib/type.ku DESTINATION share/dao/stdlib)
+    kernel/stdlib/type.ku kernel/stdlib/fs.ku kernel/stdlib/io.ku
+    kernel/stdlib/debug.ku kernel/stdlib/string.ku kernel/stdlib/http.ku
+    kernel/stdlib/lexer.ku DESTINATION share/dao/stdlib)
 install(FILES docs/KU_SELFHOST.md docs/ABI_FREEZE_AUDIT.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(DIRECTORY bindings/python/dao_kernel DESTINATION bindings/python
     PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)

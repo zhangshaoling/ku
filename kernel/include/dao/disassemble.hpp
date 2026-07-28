@@ -34,11 +34,22 @@ struct DisassembledExport {
     uint32_t function_index;
 };
 
+struct DisassembledModuleImport {
+    std::string module_name;
+    SemanticVersion version;
+    uint32_t symbol_id;
+    uint16_t parameter_count;
+};
+
 struct DisassembledModule {
+    bool has_identity = false;
+    std::string identity_name;
+    SemanticVersion identity_version{};
     std::vector<std::string> strings;
     std::vector<DisassembledFunction> functions;
     std::vector<DisassembledImport> imports;
     std::vector<DisassembledExport> exports;
+    std::vector<DisassembledModuleImport> module_imports;
 };
 
 dao_status disassemble(dao_bytes bytes, DisassembledModule* out_module, dao_error* error);

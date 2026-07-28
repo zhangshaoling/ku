@@ -65,16 +65,17 @@ const Section* find_section(const std::vector<Section>& sections, SectionType ty
 }
 
 dao_status parse_header(const uint8_t* data, size_t size, uint32_t& section_count,
-                        dao_error* error) {
+                        bool& identified_module, dao_error* error) {
     if (size < 16 || std::memcmp(data, "DAO\0", 4) != 0) {
         return fail(error, DAO_BAD_MODULE, "invalid module magic");
     }
-    if (read_u16(data + 4) != kFormatVersion) {
-        return fail(error, DAO_BAD_MODULE, "unsupported format version");
-    }
-    if (read_u16(data + 6) != kVmAbiVersion) {
-        return fail(error, DAO_BAD_MODULE, "unsupported VM ABI version");
-    }
+    const uint16_t format_version = read_u16(data + 4);
+    const uint16_t vm_abi_version = read_u16(data + 6);
+    const bool legacy_module = format_version == kLegacyFormatVersion &&
+                               vm_abi_version == kLegacyVmAbiVersion;
+    identified_module = format_version == kFormatVersion && vm_abi_version == kVmAbiVersion;
+    if (!legacy_module && !identified_module)
+        return fail(error, DAO_BAD_MODULE, "unsupported format or VM ABI version");
     if (read_u32(data + 8) != 0) {
         return fail(error, DAO_BAD_MODULE, "unsupported module flags");
     }
@@ -86,7 +87,8 @@ dao_status parse_header(const uint8_t* data, size_t size, uint32_t& section_coun
 }
 
 dao_status parse_sections(const uint8_t* data, size_t size, uint32_t section_count,
-                          std::vector<Section>& sections, dao_error* error) {
+                          bool identified_module, std::vector<Section>& sections,
+                          dao_error* error) {
     const uint64_t table_end = static_cast<uint64_t>(kHeaderSize) +
                                static_cast<uint64_t>(section_count) * kSectionEntrySize;
     if (table_end > size) {
@@ -96,7 +98,9 @@ dao_status parse_sections(const uint8_t* data, size_t size, uint32_t section_cou
         const uint8_t* entry = data + kHeaderSize + static_cast<size_t>(index) * kSectionEntrySize;
         Section section{static_cast<SectionType>(read_u32(entry)), read_u32(entry + 4),
                         read_u32(entry + 8), read_u32(entry + 12)};
-        if (section.type < SectionType::Functions || section.type > SectionType::Data) {
+        const SectionType maximum =
+            identified_module ? SectionType::ModuleImports : SectionType::Data;
+        if (section.type < SectionType::Functions || section.type > maximum) {
             return fail(error, DAO_BAD_MODULE, "unknown section type");
         }
         const uint64_t end = static_cast<uint64_t>(section.offset) + section.size;
@@ -121,14 +125,17 @@ dao_status disassemble(dao_bytes bytes, DisassembledModule* out_module, dao_erro
     }
 
     uint32_t section_count = 0;
-    dao_status status = parse_header(bytes.data, bytes.size, section_count, error);
+    bool identified_module = false;
+    dao_status status =
+        parse_header(bytes.data, bytes.size, section_count, identified_module, error);
     if (status != DAO_OK) {
         return status;
     }
 
     std::vector<Section> sections;
     sections.reserve(section_count);
-    status = parse_sections(bytes.data, bytes.size, section_count, sections, error);
+    status = parse_sections(bytes.data, bytes.size, section_count, identified_module, sections,
+                            error);
     if (status != DAO_OK) {
         return status;
     }
@@ -138,7 +145,11 @@ dao_status disassemble(dao_bytes bytes, DisassembledModule* out_module, dao_erro
     const Section* exports_section = find_section(sections, SectionType::Exports);
     const Section* imports_section = find_section(sections, SectionType::Imports);
     const Section* data_section = find_section(sections, SectionType::Data);
-    if (!functions_section || !code_section || !exports_section || !imports_section || !data_section) {
+    const Section* metadata_section = find_section(sections, SectionType::Metadata);
+    const Section* module_imports_section = find_section(sections, SectionType::ModuleImports);
+    if (!functions_section || !code_section || !exports_section || !imports_section ||
+        !data_section ||
+        (identified_module && (!metadata_section || !module_imports_section))) {
         return fail(error, DAO_BAD_MODULE, "required section is missing");
     }
 
@@ -150,6 +161,36 @@ dao_status disassemble(dao_bytes bytes, DisassembledModule* out_module, dao_erro
         if (offset < records_size || static_cast<uint64_t>(offset) + length > data_section->size)
             return fail(error, DAO_BAD_MODULE, "invalid data record");
         out_module->strings.emplace_back(reinterpret_cast<const char*>(bytes.data + data_section->offset + offset), length);
+    }
+
+    if (identified_module) {
+        if (metadata_section->count != 1 ||
+            metadata_section->size != kModuleMetadataRecordSize ||
+            module_imports_section->size !=
+                static_cast<uint64_t>(module_imports_section->count) *
+                    kModuleImportRecordSize)
+            return fail(error, DAO_BAD_MODULE, "invalid module metadata section");
+        const uint8_t* metadata = bytes.data + metadata_section->offset;
+        const uint32_t identity_index = read_u32(metadata);
+        if (identity_index >= out_module->strings.size())
+            return fail(error, DAO_BAD_MODULE, "module identity string is invalid");
+        out_module->has_identity = true;
+        out_module->identity_name = out_module->strings[identity_index];
+        out_module->identity_version =
+            {read_u32(metadata + 4), read_u32(metadata + 8), read_u32(metadata + 12)};
+
+        out_module->module_imports.reserve(module_imports_section->count);
+        for (uint32_t index = 0; index < module_imports_section->count; ++index) {
+            const uint8_t* record = bytes.data + module_imports_section->offset +
+                                    static_cast<size_t>(index) * kModuleImportRecordSize;
+            const uint32_t name_index = read_u32(record);
+            if (name_index >= out_module->strings.size())
+                return fail(error, DAO_BAD_MODULE, "module import string is invalid");
+            out_module->module_imports.push_back(
+                {out_module->strings[name_index],
+                 {read_u32(record + 4), read_u32(record + 8), read_u32(record + 12)},
+                 read_u32(record + 16), read_u16(record + 20)});
+        }
     }
 
     out_module->imports.reserve(imports_section->count);
@@ -259,6 +300,8 @@ const char* opcode_name(Opcode opcode) {
         return "RETURN";
     case Opcode::CallHost:
         return "CALL_HOST";
+    case Opcode::CallModule:
+        return "CALL_MODULE";
     case Opcode::CallValue:
         return "CALL_VALUE";
     }
@@ -346,6 +389,14 @@ void append_instruction_text(std::ostream& out,
         if (instruction.b == 0) out << "none"; else out << "r" << instruction.a << ".." << (instruction.a + instruction.b - 1);
         out << ", dst r" << instruction.dst;
         break;
+    case Opcode::CallModule:
+        out << " module_import" << instruction.immediate << ", args ";
+        if (instruction.b == 0)
+            out << "none";
+        else
+            out << "r" << instruction.a << ".." << (instruction.a + instruction.b - 1);
+        out << ", dst r" << instruction.dst;
+        break;
     case Opcode::CallValue:
         out << " r" << instruction.dst << ", r" << instruction.a << ", r"
             << instruction.b << ", " << instruction.immediate;
@@ -357,6 +408,17 @@ void append_instruction_text(std::ostream& out,
 
 std::string to_text(const DisassembledModule& module) {
     std::ostringstream out;
+
+    if (module.has_identity) {
+        out << "module: " << module.identity_name << " " << module.identity_version.major << "."
+            << module.identity_version.minor << "." << module.identity_version.patch << "\n";
+        out << "module_imports: " << module.module_imports.size() << "\n";
+        for (const auto& import : module.module_imports) {
+            out << "  " << import.module_name << " " << import.version.major << "."
+                << import.version.minor << "." << import.version.patch << " symbol="
+                << import.symbol_id << " params=" << import.parameter_count << "\n";
+        }
+    }
 
     out << "imports: " << module.imports.size() << "\n";
     for (const auto& import : module.imports) {
