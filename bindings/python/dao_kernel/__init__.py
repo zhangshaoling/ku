@@ -162,3 +162,5 @@ class Module:
         if self._handle: self._runtime._lib.dao_module_release(self._handle); self._handle = None
     def __enter__(self) -> "Module": return self
     def __exit__(self, *_: object) -> None: self.close()
+
+from .thought import Thought, fnv1a
