@@ -1,4 +1,4 @@
-"""Minimal Python binding for the stable Dao Kernel C ABI."""
+"""Minimal Python binding for the stable Ku Kernel C ABI."""
 from __future__ import annotations
 
 import ctypes as c
@@ -7,6 +7,10 @@ from pathlib import Path
 
 DAO_OK = 0
 DAO_VALUE_I64 = 1
+DAO_VALUE_BYTES = 3
+DAO_VALUE_STRING = 4
+DAO_VALUE_LIST = 5
+DAO_VALUE_MAP = 6
 
 
 class DaoBytes(c.Structure):
@@ -26,6 +30,12 @@ class DaoConfig(c.Structure):
     _fields_ = [("struct_size", c.c_uint32), ("max_registers", c.c_uint32),
                 ("max_call_depth", c.c_uint32), ("reserved", c.c_uint32),
                 ("max_module_bytes", c.c_uint64), ("max_instructions_per_call", c.c_uint64)]
+
+
+class DaoHostFunction(c.Structure):
+    _fields_ = [("struct_size", c.c_uint32), ("symbol_id", c.c_uint32),
+                ("parameter_count", c.c_uint32), ("reserved", c.c_uint32),
+                ("callback", c.c_void_p), ("user_data", c.c_void_p)]
 
 
 class DaoKernelError(RuntimeError):
@@ -62,6 +72,41 @@ class Runtime:
         lib.dao_value_list_append.argtypes = [c.c_void_p, c.POINTER(DaoValue), c.POINTER(DaoValue)]
         lib.dao_vm_make_map.argtypes = [c.c_void_p, c.POINTER(DaoValue)]
         lib.dao_value_map_set.argtypes = [c.c_void_p, c.POINTER(DaoValue), DaoBytes, c.POINTER(DaoValue)]
+        lib.dao_vm_register_host_function.argtypes = [c.c_void_p, c.POINTER(DaoHostFunction)]
+        lib.dao_vm_register_host_function.restype = c.c_int
+        lib.dao_vm_unregister_host_function.argtypes = [c.c_void_p, c.c_uint32]
+        lib.dao_vm_unregister_host_function.restype = c.c_int
+
+    def register_host_function(self, symbol_id, parameter_count, callback, user_data=None):
+        """Register a host function callable from Ku bytecode.
+
+        callback signature: (args: list[DaoValue], count: int) -> DaoValue
+        The callback receives a list of DaoValue arguments and must return a DaoValue.
+        """
+        @c.CFUNCTYPE(c.c_int, c.c_void_p, c.POINTER(DaoValue), c.c_size_t, c.POINTER(DaoValue))
+        def _host_callback(user_data, raw_args, arg_count, out_value):
+            try:
+                args = [raw_args[i] for i in range(arg_count)] if raw_args else []
+                result = callback(args, arg_count)
+                out_value[0] = result
+                return 0
+            except Exception:
+                return 11
+
+        self._host_callbacks = getattr(self, '_host_callbacks', [])
+        self._host_callbacks.append(_host_callback)
+        function = DaoHostFunction(
+            struct_size=c.sizeof(DaoHostFunction),
+            symbol_id=symbol_id,
+            parameter_count=parameter_count,
+            reserved=0,
+            callback=c.cast(_host_callback, c.c_void_p).value,
+            user_data=None
+        )
+        status = self._lib.dao_vm_register_host_function(self._vm, c.byref(function))
+        if status != DAO_OK:
+            raise DaoKernelError(f"register_host_function failed with status {status}")
+        return _host_callback
 
     def load(self, payload: bytes) -> "Module":
         storage = (c.c_uint8 * len(payload)).from_buffer_copy(payload)
