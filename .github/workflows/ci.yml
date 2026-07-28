@@ -9,6 +9,95 @@ permissions:
   contents: read
 
 jobs:
+  c-vm-portability:
+    name: c-vm-portability (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up MSYS2 GCC
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc
+
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pytest
+
+      - name: Verify module snapshots
+        run: |
+          python tools/generate_c_vm_module_snapshots.py
+          git diff --exit-code -- dao/std/snapshots
+
+      - name: Build C VM
+        run: python tools/build_dao_core.py
+
+      - name: Run C VM portability tests
+        run: >-
+          pytest -q
+          tests/test_c_vm_runtime_gateway.py
+          tests/test_dao_mcp_server.py
+          tests/test_experience_memory.py
+
+  kernel-portability:
+    name: kernel-portability (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      CTEST_PARALLEL_LEVEL: '2'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Bootstrap managed Windows toolchain
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\tools\bootstrap_toolchain.ps1
+
+      - name: Build and test Kernel on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          . .\tools\activate_toolchain.ps1
+          cmake -S . -B kernel/out/ci -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build kernel/out/ci --parallel 2
+          ctest --test-dir kernel/out/ci --output-on-failure --parallel 2
+
+      - name: Build and test Kernel on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cmake -S . -B kernel/out/ci -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build kernel/out/ci --parallel 2
+          ctest --test-dir kernel/out/ci --output-on-failure --parallel 2
+
   test:
     name: test
     runs-on: windows-latest
