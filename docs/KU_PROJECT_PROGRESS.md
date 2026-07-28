@@ -1,6 +1,6 @@
 # Ku 语言系统项目进度
 
-> 更新时间：2026-07-15  
+> 更新时间：2026-07-28  
 > 状态依据：当前工作区代码、现有设计文档和本轮实测。  
 > 说明：工作区存在用户未提交改动，本看板描述的是当前本地状态，不等同于 `main` 已发布状态。
 
@@ -121,7 +121,7 @@ Ku 已经拥有一套可工作的高性能新内核和一套功能较丰富的�
 | KU-P12 | 可执行记忆 | 已完成 | MemorySystem：文件持久化，每个条目是可执行的 Thought；store/recall/search/forget/stats |
 | KU-P13 | 任务与工具闭环 | 已完成 | Task + TaskPlanner：依赖解析、优先级排序、C ABI 执行、目标分解 |
 | KU-P14 | 原生 Agent Gateway | 已完成 | Agent：think-act-observe-replan 循环，工具通过 C ABI 执行 |
-| KU-P15 | 旧链迁移与退役 | 进行中 | 已有迁移边界，但生产能力仍分布在两条链 |
+| KU-P15 | 旧链迁移与退役 | 进行中 | 旧链入口已加 deprecation 警告，迁移指南已编写；待关闭旧 CLI/MCP 生产入口 |
 | KU-P16 | 质量、跨平台与发布 | 进行中 | 新 Kernel 三平台 CI matrix 已配置；远端证据、全量超时、fuzz/soak/发布门禁未闭合 |
 
 状态计数：
@@ -210,7 +210,7 @@ Binary Module -> Loader/Verifier -> Register VM -> C ABI -> AOT/SDK
 
 ### 第四批：收口发布
 
-1. KU-P15：逐项关闭旧链生产入口。
+1. KU-P15：旧链入口已加 deprecation 警告（dao/__init__.py、dao/__main__.py、dao/mcp_server.py、dao/mcp_server_v2.py），迁移指南 docs/MIGRATION_GUIDE.md 已编写。
 2. KU-P16：完成多平台、fuzz、soak、benchmark、SDK 和语法包发布门禁。
 
 ## 7. 下一张工作单

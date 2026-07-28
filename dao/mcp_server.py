@@ -1,3 +1,4 @@
+import warnings
 """
 Ku MCP Server — 将 Ku thought 自动暴露为 MCP 工具
 
@@ -154,6 +155,12 @@ class DaoToolHandler:
 # ── MCP Server main loop ──
 
 def main():
+    warnings.warn(
+        "dao.mcp_server (old MCP server) is deprecated. "
+        "Use 'dao.mcp_server_kernel' for the new kernel MCP bridge.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     raw_args = sys.argv[1:]
     expose_thought_tools = False
     if "--expose-thought-tools" in raw_args:

@@ -1,5 +1,15 @@
 """道 — 天书原生母语运行时"""
 
+import warnings
+
+warnings.warn(
+    "The 'dao' package (old C VM runtime) is deprecated. "
+    "Migrate to 'bindings.python.dao_kernel' for the new Register VM kernel. "
+    "See docs/MIGRATION_GUIDE.md for details.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 from .runtime import DaoEnv, Thought, Node, parse_道, DAO_HOME
 
 __version__ = "2.0.0"
