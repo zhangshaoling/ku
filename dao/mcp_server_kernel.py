@@ -1,17 +1,10 @@
-"""
-MCP Server (Kernel-backed) — bridge Ku thoughts to MCP tools via the new C++ kernel.
-
-Usage:
-    python -m dao.mcp_server_kernel [ku_dir ...]
-    # default: scans demos/ directory
-"""
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-# ── encoding ──
+# -- encoding --
 if sys.platform == "win32":
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
     try:
@@ -20,7 +13,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# ── paths ──
+# -- paths --
 BINDINGS_DIR = Path(__file__).resolve().parent.parent / "bindings" / "python"
 sys.path.insert(0, str(BINDINGS_DIR))
 
@@ -63,12 +56,12 @@ def parse_thought_signature(source: str):
         line = line.strip()
         if line.startswith("thought "):
             parts = line[8:].split("(")
-            name = parts[0].strip()
-            if len(parts) > 1:
-                params = [p.strip() for p in parts[1].rstrip(") {").split(",") if p.strip()]
+            if name is None:
+                name = parts[0].strip()
+                if len(parts) > 1:
+                    params = [p.strip() for p in parts[1].rstrip(") {").split(",") if p.strip()]
         elif line.startswith("import "):
             imp = line[7:].strip()
-            # e.g., sensor_distance(0) -> name, arity
             if "(" in imp:
                 fn_name = imp.split("(")[0].strip()
                 arity = int(imp.split("(")[1].split(")")[0])
@@ -110,11 +103,9 @@ class KernelTool:
 
     def execute(self, runtime: Runtime, arguments: dict) -> dict:
         """Execute the thought with given arguments."""
-        # Register host functions
         for fn_name, arity in self.imports:
             runtime.register_host_function(fnv1a(fn_name), arity, make_host_function_stub(fn_name, arity))
 
-        # Load module and call
         module = runtime.load(self.thought.module_bytes)
         try:
             args = [arguments.get(p, 0) for p in self.params]
@@ -132,7 +123,6 @@ def scan_and_compile(ku_dirs: list[Path]) -> list[KernelTool]:
             continue
         for ku_file in sorted(ku_dir.glob("*.ku")):
             dao_file = ku_file.with_suffix(".dao")
-            # Compile if .dao missing or older than .ku
             if not dao_file.exists() or dao_file.stat().st_mtime < ku_file.stat().st_mtime:
                 if not compile_ku(ku_file, dao_file):
                     continue
@@ -143,8 +133,9 @@ def scan_and_compile(ku_dirs: list[Path]) -> list[KernelTool]:
             if name is None:
                 continue
             module_bytes = dao_file.read_bytes()
+            tool_name = ku_file.stem
             thought = Thought(name, params, module_bytes, doc=f"Ku thought from {ku_file.name}")
-            tools.append(KernelTool(name, params, "", thought, imports))
+            tools.append(KernelTool(tool_name, params, "", thought, imports))
     return tools
 
 

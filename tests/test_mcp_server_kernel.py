@@ -51,10 +51,11 @@ def test_mcp_server_kernel():
         assert "result" in resp, f"tools/list failed: {resp}"
         tools = resp["result"]["tools"]
         tool_names = [t["name"] for t in tools]
-        assert "main" in tool_names, f"main tool not found: {tool_names}"
+        # Tool name is the file stem
+        assert "arithmetic" in tool_names, f"arithmetic tool not found: {tool_names}"
         
         # Call tool
-        resp = send(3, "tools/call", {"name": "main", "arguments": {"x": 10, "y": 20}})
+        resp = send(3, "tools/call", {"name": "arithmetic", "arguments": {"x": 10, "y": 20}})
         assert "result" in resp, f"tools/call failed: {resp}"
         content = resp["result"]["content"]
         assert len(content) == 1

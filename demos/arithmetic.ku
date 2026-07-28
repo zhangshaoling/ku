@@ -1,0 +1,14 @@
+thought main(x, y) {
+  return x + y
+}
+
+thought square(x) {
+  return x * x
+}
+
+thought factorial(n) {
+  if n <= 1 {
+    return 1
+  }
+  return n * factorial(n - 1)
+}
