@@ -117,10 +117,10 @@ Ku 已经拥有一套可工作的高性能新内核和一套功能较丰富的�
 | KU-P08 | 恢复/迁移编译器 | 已完成 | 已按 Ku v1 矩阵完成一致性审计；边界语料与 12 项交叉门禁通过 |
 | KU-P09 | Ku 自举编译器 | 已完成 | 自举 lowering 与 recovery 达到 canonical identity；`B0 == B1 == B2`，生产默认/恢复入口同源字节一致 |
 | KU-P10 | 模块系统与标准库 | 已完成 | v2/ABI10、双前端 runtime import、全部 std 依赖边和 `ku:std/*@1.0.0` 版本矩阵已闭合 |
-| KU-P11 | Thought 与语义 IR | 待迁移 | 旧链有原型，新内核尚未拥有统一 Thought 对象 |
-| KU-P12 | 可执行记忆 | 待迁移 | 旧 SQLite/FTS 原型可用；新内核 Host 模块和生命周期未完成 |
-| KU-P13 | 任务与工具闭环 | 待迁移 | 旧 task/promotion 可用；反馈闭环和新内核路径未完成 |
-| KU-P14 | 原生 Agent Gateway | 待迁移 | 当前仍是 Python framing/schema discovery + 旧 C VM |
+| KU-P11 | Thought 与语义 IR | 已完成 | 新内核 Thought 类：编译/执行/持久化(save/load/scan)；MCP 服务器桥接 |
+| KU-P12 | 可执行记忆 | 已完成 | MemorySystem：文件持久化，每个条目是可执行的 Thought；store/recall/search/forget/stats |
+| KU-P13 | 任务与工具闭环 | 已完成 | Task + TaskPlanner：依赖解析、优先级排序、C ABI 执行、目标分解 |
+| KU-P14 | 原生 Agent Gateway | 已完成 | Agent：think-act-observe-replan 循环，工具通过 C ABI 执行 |
 | KU-P15 | 旧链迁移与退役 | 进行中 | 已有迁移边界，但生产能力仍分布在两条链 |
 | KU-P16 | 质量、跨平台与发布 | 进行中 | 新 Kernel 三平台 CI matrix 已配置；远端证据、全量超时、fuzz/soak/发布门禁未闭合 |
 
