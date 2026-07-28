@@ -1,12 +1,14 @@
-# Dao Kernel Rewrite
+# Ku Language System
 
-Dao is being rebuilt as a high-performance machine-language runtime that any agent, model, application, or host can embed.
+Ku is an AI machine-language system being rebuilt on a high-performance runtime that any agent, model, application, or host can embed.
+
+Existing `dao_*` symbols, Dao Binary Module names, and the `dao/` directory are implementation and compatibility identifiers. They do not represent a second language. See the [Ku naming and authority decision](docs/KU_NAMING_AND_AUTHORITY.md).
 
 The new kernel does not design an Agent framework. It provides a deterministic binary module, a verified Register VM, Trit logic, and a stable C ABI.
 
 ```text
 Host / Agent
-  -> Dao C ABI
+  -> Ku C ABI (current dao_* symbols)
   -> verified Dao Binary Module
   -> Register VM
   -> optional AOT/JIT backend
@@ -41,6 +43,10 @@ Run the baseline benchmark:
 
 ## Authority
 
+- [Ku naming and document authority](docs/KU_NAMING_AND_AUTHORITY.md)
+- [Ku v1 language semantics](docs/KU_V1_SEMANTICS.md)
+- [Ku subproject worksheets](docs/KU_SUBPROJECT_WORKSHEETS.md)
+- [Ku current project progress](docs/KU_PROJECT_PROGRESS.md)
 - [Kernel implementation guide](docs/DAO_KERNEL_IMPLEMENTATION_GUIDE.md)
 - [Binary Module and Bytecode v1](kernel/FORMAT.md)
 - [Migration boundary](kernel/MIGRATION.md)
@@ -49,6 +55,6 @@ Run the baseline benchmark:
 
 ## Legacy Tree
 
-The existing Python runtime, stack VM, text frontend, `.ku` standard library, MCP, memory, Tiandao, and life modules remain in this branch only as migration inputs.
+The existing Python runtime, legacy C VM, text frontend, `.ku` standard library, MCP, memory, Tiandao, and life modules under `dao/` and `ku/` remain in this branch as migration inputs.
 
 They are not dependencies of the new `kernel/` implementation. New kernel behavior must be specified and tested inside `kernel/` before legacy behavior is migrated.

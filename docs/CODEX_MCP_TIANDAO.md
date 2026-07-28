@@ -1,3 +1,5 @@
+> **PROCESS NOTE** — This document describes the Codex MCP integration. Verify against current Codex behavior before relying on it.
+
 # Codex MCP Tiandao Setup
 
 This note records the local Codex MCP wiring for Dao Tiandao shared memory.

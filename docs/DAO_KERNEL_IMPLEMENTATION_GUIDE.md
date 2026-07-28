@@ -1,14 +1,17 @@
-# Dao 高性能机器语言内核实现指导
+> **HISTORICAL** — This document is from the project's pre-Ku (AGI/Dao) phase. It is preserved as migration evidence but does not guide current implementation. See [docs/README.md](README.md) for the authoritative document hierarchy.
+# Ku 高性能机器语言内核实现指导
 
 > 状态：唯一有效的内核实施指导
 >
-> 定位：供任何智能体、模型、程序和宿主系统嵌入的高性能机器语言运行时。
+> 定位：Ku 语言系统供任何智能体、模型、程序和宿主系统嵌入的高性能机器语言运行时。
+>
+> 命名：现有 Dao Binary Module 和 `dao_*` C ABI 是内部版本化标识，规则见 `KU_NAMING_AND_AUTHORITY.md`。
 >
 > 原则：不设计智能体，只实现足够快、足够小、足够稳定的语言与执行内核。
 
 ## 1. 产品边界
 
-Dao 只负责：
+Ku 新内核只负责：
 
 - 机器可直接处理的程序表示。
 - 快速加载、验证和执行。
@@ -16,11 +19,11 @@ Dao 只负责：
 - 确定性二进制模块和版本兼容。
 - 可选的 AOT/JIT 本地机器码后端。
 
-Dao 内核不定义 Agent、Thought、Memory、Trace、Patch、Tool、Goal 或 Experience。MCP、记忆、规划、自修复和模型 API 都是上层库或适配器。
+Ku 新内核不定义 Agent、Thought、Memory、Trace、Patch、Tool、Goal 或 Experience。MCP、记忆、规划、自修复和模型 API 都是上层库或适配器。
 
 ```text
 Existing Agent / Model / Application
-  -> Dao C ABI
+  -> Ku C ABI (current dao_* symbols)
   -> verified Dao Binary Module
   -> Register VM or native backend
   -> result
@@ -204,6 +207,8 @@ Baseline interpreter 必须做到：
 
 热路径优先评估 frame arena、module arena、bump allocation、generational handle 和 pooled container。`shared_ptr`不能作为最终通用值模型。
 
+当前 C ABI 的值、borrowed view、generation container 和 Host-created container 所有权契约以 `kernel/OWNERSHIP.md` 为准。
+
 ## 10. Universal C ABI
 
 ```c
@@ -310,7 +315,7 @@ encode
 
 ### K6：上层生态
 
-MCP、memory、agent、tiandao、life/self-repair 独立开发。它们是 Dao 的使用者，不是 Dao 内核。
+MCP、memory、agent、tiandao、life/self-repair 独立开发。它们是 Ku 新内核的使用者，不是内核组成部分。
 
 ## 15. 现有代码处置
 
@@ -333,4 +338,4 @@ MCP、memory、agent、tiandao、life/self-repair 独立开发。它们是 Dao �
 - AOT/JIT 不改变语言 ABI。
 - Agent、memory、MCP、life 的变化不要求修改内核。
 
-Dao 的成功标准不是设计一个智能体，而是让任何智能体都能以更低成本获得更快的计算内核。
+Ku 新内核的成功标准不是设计一个智能体，而是让任何智能体都能以更低成本获得更快的计算内核。

@@ -1,3 +1,4 @@
+> **HISTORICAL** — This document is from the project's pre-Ku (AGI/Dao) phase. It is preserved as migration evidence but does not guide current implementation. See [docs/README.md](README.md) for the authoritative document hierarchy.
 # Dao AGI Executable Memory Roadmap
 
 Dao is a language for future AGI, not a generic scripting layer.

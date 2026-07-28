@@ -1,3 +1,5 @@
+> **HISTORICAL** — This PRD is from an early project phase. Current direction is defined by [PROJECT_CONSTITUTION.md](PROJECT_CONSTITUTION.md).
+
 # 可执行记忆核 PRD — `dao_tiandao` v2
 
 > 目标：把"半吊子"的天道决策循环替换为可执行的记忆生命周期引擎，使 trust/confidence 成为可观测、可晋升、可衰减的真实变量。

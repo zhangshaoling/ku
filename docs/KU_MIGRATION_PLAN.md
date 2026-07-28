@@ -4,7 +4,7 @@
 - Ku = self-hosted language (`ku/`): lexer, parser, runtime, stdlib, macro (`thought`), import system.
 - Old compiler (`ku/compiler.py`) emits a Python-executable bytecode for the stack VM. Per guide §15 this is migration **input**, not something to extend.
 - New target: Dao Binary Module v1 + `ModuleBuilder` typed builder + the versioned
-  register opcode ABI (v5 after K4 language migration extensions).
+  register opcode ABI (currently VM ABI v9).
 - Goal: route `*.ku` -> typed builder -> `encode()` -> verifiable Dao Binary Module.
 
 ## Staged delivery
@@ -68,7 +68,7 @@
   recursive standard-library import rewriting against the same in-memory Host filesystem.
 - `kernel/stdlib/http.ku` migrates GET/POST capability wrappers and response-status helpers.
   Request header Maps are created in `.ku` and inspected by the Host through the public
-  container API; JSON and Host-created response Maps remain owned-container ABI work.
+  container API; JSON decoding and Host response-map construction remain module/adapter work.
 - `kernel/stdlib/lexer.ku` migrates executable ASCII tokenization on top of the `string`
   module, including keywords, identifiers, integers, strings, operators, punctuation,
   newlines, and `;;` comments. Tests inspect every returned token Map and EOF marker;
@@ -102,20 +102,23 @@
 - Legacy `task_queue.ku` now compiles without shell or Python subprocesses. Database-path,
   formatted-time, task-ID, and fixed-arity SQLite operations are explicit Host capabilities;
   routing decisions execute natively and are covered for all configured routes. The claim path
-  executes against Host-created `List<Map>` query rows through the experimental owned-container ABI.
+  executes against Host-created `List<Map>` query rows through the stable generation-scoped
+  container ABI.
   The lexer has moved to the migrated executable module described above.
 
 ## Remaining For Full K4 Closure
 
 - remaining `ku/std/*.ku` modules and dynamic semantics beyond the migrated integer/list math subset;
-- function references/closures, floats, and remaining dynamic semantics;
+- persistent cross-call closures, floats, and remaining dynamic semantics;
 - parity against the complete legacy Python/Ku corpus;
-- stable, benchmark-selected owned container ABI.
+- alignment with the authoritative `KU_V1_SEMANTICS.md` matrix.
 
 The `.ku` self-hosting replacement is tracked in `docs/KU_SELFHOST.md`. SH2 now passes
 functional rebuild, consecutive byte-identical rebuild, and rebuilt-compiler parity for
-the current frontend surface. Full legacy K4 parity and the remaining SH1 surface are
-still pending.
+the current frontend surface, including recursive compile-time module imports. `dao-ku`
+boots that frontend by default; `--recovery` is an explicit path for compatibility-only
+sources and is never selected as an automatic fallback. Full legacy K4 parity and the
+remaining SH1 diagnostics/builder surface are still pending.
 
 ## Non-negotiable (per guide §12 / §14)
 - Must go through typed builder; no offset-patching or handwritten binary in the hot path.

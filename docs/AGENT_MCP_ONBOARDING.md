@@ -1,3 +1,5 @@
+> **PROCESS NOTE** — This document records an onboarding guide. Verify against current project structure before relying on it.
+
 # Dao Agent MCP Onboarding
 
 This guide is for another AI agent, MCP client, or local assistant that wants to

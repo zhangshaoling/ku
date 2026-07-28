@@ -1,12 +1,12 @@
-# Ku / Dao Project Constitution
+# Ku Project Constitution
 
-> Project law for humans and agents working on Ku / Dao.
+> Project law for humans and agents working on Ku.
 >
 > North star: **thought = code = memory**.
 
 ## 1. Identity
 
-Ku / Dao is an AI-native language runtime for executable memory.
+Ku is an AI-native machine-language system for executable memory.
 
 It is not a generic scripting language, not a note-taking format, and not a pile of automation scripts. The project exists to explore one idea with engineering discipline:
 
@@ -23,15 +23,15 @@ A thought is simultaneously:
 - composable tool surface
 - material that can eventually rewrite itself
 
-## 1.1 Dao Identity Law
+## 1.1 Ku Identity Law
 
-Dao must not become Python with Chinese keywords.
+Ku must not become Python with Chinese keywords.
 
 The language's native object is not "a function plus variables." The native
-object is a Dao thought-memory:
+object is a Ku thought-memory:
 
 ```text
-Dao source = executable thought = durable memory = structured data
+Ku source = executable thought = durable memory = structured data
 ```
 
 That means new syntax, standard-library APIs, MCP tools, and storage schemas
@@ -48,20 +48,21 @@ write thought
 ```
 
 Do not copy Python concepts just because they are familiar. A proposed feature
-must explain how it helps Dao make memory executable, code persistent, or data
+must explain how it helps Ku make memory executable, code persistent, or data
 callable. If it only recreates Python classes, modules, decorators, exceptions,
-or package habits without serving this lifecycle, it is not a Dao feature yet.
+or package habits without serving this lifecycle, it is not a Ku feature yet.
 
 ## 2. Naming Law
 
-The project has two historical names with different roles.
+The language system and product have one current name: **Ku**.
 
-- **Ku** is the public package lineage and historical language name.
-- **Dao** is the active self-hosting/runtime line: Chinese-first syntax, C VM, executable memory, MCP tooling.
-- The repository may remain named `ku` for continuity, but new core architecture should use `Dao` when referring to the active runtime layer.
-- Compatibility code under `ku/` must not silently become the new architecture. New runtime work belongs under `dao/` unless there is a deliberate compatibility reason.
+- `dao_*`, Dao Binary Module, `dao/`, environment variables and historical tool names are existing implementation or compatibility identifiers.
+- They do not define a second language and must not create a second product roadmap.
+- New production-kernel work belongs under `kernel/`.
+- Existing `dao/` and `ku/` behavior is migration input unless a task explicitly targets compatibility.
+- Internal names are not batch-renamed without a separate ABI and migration decision.
 
-When documentation mentions both names, it must explain the relationship instead of assuming the reader already knows it.
+The authoritative naming and document order is defined in `docs/KU_NAMING_AND_AUTHORITY.md`.
 
 ## 3. Non-Negotiable North Star
 
@@ -75,13 +76,33 @@ Every major feature must serve at least one of these goals:
 
 If a feature does none of these, it does not belong in this repository.
 
-## 4. Current Bootstrap Path
+
+## 4. Physical World Direction
+
+Ku's long-term direction includes the physical world. A thought that is
+executable behavior, inspectable structure, and persistent memory should
+eventually be callable by robots and embodied agents — not only by software
+agents.
+
+This means:
+
+- The C ABI and FFI are not optional extras; they are the bridge between
+  Ku thoughts and physical sensors, actuators, and control systems.
+- Deterministic execution matters. Physical actions have real-world
+  consequences that cannot be undone with `git revert`.
+- Safety and verification matter. Code that moves a physical system must
+  be held to a higher verification standard than code that moves pixels.
+
+This direction does not change the current bootstrap path. It does mean
+that FFI coverage, C ABI stability, and verification rigor are first-class
+citizens in the roadmap — not afterthoughts.
+## 5. Current Bootstrap Path
 
 The official route is:
 
 ```text
 Python bootstrap
-  -> Ku / Dao lexer and parser
+  -> Ku lexer and parser
   -> bytecode compiler
   -> C VM execution
   -> MCP callable thought runtime
@@ -98,9 +119,9 @@ Python may remain for:
 - packaging
 - debugging support
 
-Python should shrink over time as semantic authority moves into `.ku` / Dao source and the C VM.
+Python should shrink over time as semantic authority moves into Ku source and the new kernel.
 
-## 5. Repository Boundary
+## 6. Repository Boundary
 
 This repository may contain:
 
@@ -123,9 +144,20 @@ This repository must not contain:
 
 Temporary experiments belong in `scratch/`, `backups/`, or outside the repository. Repeatable tools belong in `tools/`. Tests belong in `tests/`. Architecture records belong in `docs/`.
 
-## 6. Active Core Boundaries
+## 7. Active Core Boundaries
 
-The active core is:
+The new production core is:
+
+```text
+kernel/
+  include/dao/          versioned C/C++ ABI and module format identifiers
+  src/                  loader, verifier, Register VM, builder and migration compiler
+  selfhost/             Ku self-hosted compiler
+  stdlib/               migrated Ku standard library
+  tests/                native conformance and integration tests
+```
+
+The legacy migration inputs are:
 
 ```text
 dao/
@@ -138,7 +170,7 @@ dao/
   std/*.ku
 ```
 
-Compatibility and historical code lives under:
+Earlier compatibility and historical code lives under:
 
 ```text
 ku/
@@ -158,7 +190,7 @@ tools/
 
 A new file should enter one of these regions for a clear reason. If it does not fit, stop and define the boundary first.
 
-## 7. Engineering Discipline
+## 8. Engineering Discipline
 
 Behavior beats ambition.
 
@@ -184,7 +216,7 @@ or:
 dao_core.c executes fixture Z and returns result R.
 ```
 
-## 8. Test Law
+## 9. Test Law
 
 The minimum acceptable verification for core changes is:
 
@@ -196,14 +228,14 @@ If native C compiler support is missing, C VM integration tests may skip, but th
 
 New semantic behavior should include parity tests where possible:
 
-- Python runtime vs Dao runtime
+- legacy runtime vs Ku new kernel
 - Python compiler harness vs C VM execution
 - generated fixture vs source behavior
 - MCP tool call vs direct runtime call
 
 No AI or human should declare the project healthy without saying what actually ran.
 
-## 9. C VM Law
+## 10. C VM Law
 
 The C VM is the future execution substrate.
 
@@ -217,13 +249,13 @@ Rules:
 
 The C VM should not become an unreviewable dumping ground. If it grows too large, split by subsystem.
 
-## 10. Self-Hosting Law
+## 11. Self-Hosting Law
 
 Self-hosting is a direction, not a slogan.
 
 Each self-hosting milestone must name:
 
-- what source is written in Dao / Ku
+- what source is written in Ku
 - what parses it
 - what compiles it
 - what executes it
@@ -243,11 +275,11 @@ Invalid milestones look like:
 The language is basically self-hosting now.
 ```
 
-## 11. MCP Law
+## 12. MCP Law
 
 MCP is not an add-on; it is one of the reasons the project exists.
 
-Dao thoughts should become callable tools for agents. The MCP layer must preserve:
+Ku thoughts should become callable tools for agents. The MCP layer must preserve:
 
 - JSON-RPC framing on stdout
 - runtime logs on stderr
@@ -257,7 +289,7 @@ Dao thoughts should become callable tools for agents. The MCP layer must preserv
 
 An MCP tool should not hide errors. If a thought fails, the caller should receive structured failure information.
 
-## 12. Documentation Law
+## 13. Documentation Law
 
 Documentation must separate:
 
@@ -276,14 +308,14 @@ Every major roadmap document should answer:
 4. What remains speculative?
 5. What command verifies the claim?
 
-## 13. AI Collaboration Law
+## 14. AI Collaboration Law
 
 AI agents working on this project must not re-invent the project every session.
 
 Before changing code, an agent should understand:
 
 - the north star: `thought = code = memory`
-- the active path: `Python bootstrap -> Dao std -> bytecode -> C VM -> MCP`
+- the active path: `Ku source -> recovery/self-host compiler -> verified module -> Register VM -> Host/MCP`
 - the boundary: language runtime only, not unrelated ops scripts
 - the verification command for the touched area
 
@@ -301,7 +333,7 @@ Improve the language.
 
 AI-generated changes must be smaller than the reviewer's ability to understand them.
 
-## 14. File Hygiene Law
+## 15. File Hygiene Law
 
 Do not commit these unless explicitly justified:
 
@@ -324,7 +356,7 @@ backups/
 
 Root-level one-off scripts are presumed wrong. Put them in `tools/` only if they are repeatable and documented.
 
-## 15. Release Definition
+## 16. Release Definition
 
 A meaningful release is not a pile of commits. A meaningful release has:
 
@@ -332,25 +364,25 @@ A meaningful release is not a pile of commits. A meaningful release has:
 - a README section matching reality
 - a passing test command
 - a short demo command
-- a clear statement of Python vs Dao vs C VM responsibility
+- a clear statement of Python scaffolding vs legacy C VM vs Ku new-kernel responsibility
 
 For example:
 
 ```text
-Dao v0.9:
-- Dao package is included in Python packaging.
+Ku v0.9:
+- Ku package is included in Python packaging.
 - C VM source is included but binaries are local artifacts.
 - MCP server exposes runtime tools.
 - Tests pass without native compiler; C VM integration skips honestly when compiler is absent.
 ```
 
-## 16. Near-Term Definition of Success
+## 17. Near-Term Definition of Success
 
 The next successful project state is:
 
 ```text
-One Dao source file
-  -> parsed by the Dao/Ku frontend
+One Ku source file
+  -> parsed by the Ku frontend
   -> compiled to bytecode
   -> executed by dao_core.c
   -> exposed through MCP
@@ -358,9 +390,9 @@ One Dao source file
   -> explained in README without mythology outrunning reality
 ```
 
-When this exists, the project has crossed from idea to working AGI-language prototype.
+When this exists, the project has crossed from idea to working AI machine-language prototype.
 
-## 17. Final Rule
+## 18. Final Rule
 
 Do not optimize for sounding profound.
 

@@ -1,29 +1,23 @@
-# Dao Project Structure
+# Ku Project Structure
 
-This file is the working directory map for the self-hosting track. Keep the active
-compiler/runtime path small and predictable; move or add files only when they fit
-one of these buckets.
+This file is the working directory map for Ku. Product naming and document authority are defined in `KU_NAMING_AND_AUTHORITY.md`.
 
 ## Active Core
 
 ```text
-dao/
-  dao_core.c             C VM, builtins, bytecode executor, bootstrap source runner
-  compiler.py            Python compiler harness used for parity and fixture builds
-  dao_lexer.py           Python lexer harness
-  dao_parser.py          Python parser harness
-  runtime.py             Python runtime harness and legacy builtins
-  test_core.ku           Dao core self-check program
-  std/
-    lexer.ku             Self-hosted lexer
-    parser.ku            Self-hosted parser
-    compiler.ku          Self-hosted bytecode compiler
-    math.ku              Standard library module
-    string.ku            Standard library module
-    net.ku               Standard library module backed by C builtins
+kernel/
+  include/dao/           Existing versioned C/C++ ABI and module-format identifiers
+  src/                   Loader, verifier, Register VM, builder, migration compiler
+  selfhost/compiler.ku   Ku self-hosted compiler
+  stdlib/*.ku            Migrated Ku standard-library modules
+  tests/                 Native conformance and integration tests
 ```
 
-## Module ABI
+## Legacy Migration Core
+
+`dao/` contains the legacy C VM, frontend, standard library, executable-memory and MCP prototypes. `ku/` contains earlier compatibility code. Both are migration inputs; new kernel behavior must not depend on their runtime state.
+
+## Legacy Module ABI
 
 The current C VM bootstrap loader implements a minimal source-level module ABI:
 
@@ -41,10 +35,11 @@ The current C VM bootstrap loader implements a minimal source-level module ABI:
 - Thoughts beginning with `_` are internal and are not alias-exported.
 - Thoughts already beginning with `Alias_` are not double-wrapped.
 
-This ABI is still source-concatenation based. It is the stable bridge before
-moving to a real module object and bytecode-level import system.
+This ABI is source-concatenation based and belongs to the legacy C VM bridge. The new production module contract is defined by `kernel/FORMAT.md`; Ku module-path import migration is tracked in `KU_MIGRATION_PLAN.md` and `KU_SELFHOST.md`.
 
 ## Generated Fixtures
+
+The following fixtures belong to the legacy migration path:
 
 ```text
 demos/
@@ -58,6 +53,14 @@ Regenerate these through `tools/`; do not edit generated JSON by hand unless the
 generator is also updated.
 
 ## Build And Generation Tools
+
+The new kernel build and test entrypoint is:
+
+```powershell
+.\tools\build_kernel.ps1
+```
+
+Legacy C VM generation and verification tools remain available as migration support:
 
 ```text
 tools/
@@ -87,7 +90,13 @@ tests/
   semantic_test_utils.py
 ```
 
-Primary checks:
+Primary new-kernel check:
+
+```powershell
+.\tools\build_kernel.ps1
+```
+
+Legacy migration checks:
 
 ```bash
 pytest tests/test_c_vm_parity.py -q
@@ -105,14 +114,16 @@ ku/
   std/
 ```
 
-Treat `ku/` as compatibility and historical harness code unless a task is
-explicitly about the packaged `ku` CLI.
+Treat `dao/` and `ku/` as migration, compatibility and historical harness code unless a task explicitly targets those paths.
 
 ## Documentation
 
 ```text
 docs/
-  DAO_SYSTEM_ARCHITECTURE.md   Canonical Dao/Tiandao/memory/runtime path map
+  KU_NAMING_AND_AUTHORITY.md   Product naming and document authority
+  KU_SUBPROJECT_WORKSHEETS.md  Current subproject boundaries and acceptance
+  KU_PROJECT_PROGRESS.md       Current evidence-based project status
+  DAO_SYSTEM_ARCHITECTURE.md   Legacy Tiandao/memory/runtime migration map
   CODEX_MCP_TIANDAO.md         Local Codex MCP shared-memory setup
   C_VM_接管审计.md
   AGI母语语义内核规范.md

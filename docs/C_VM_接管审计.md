@@ -1,3 +1,5 @@
+> **MIGRATION EVIDENCE** — This document records a legacy-phase audit/decision. It does not guide current Ku implementation. See [docs/README.md](README.md) for the authoritative document hierarchy.
+
 # C VM 接管审计
 
 > 日期：2026-06-13  
