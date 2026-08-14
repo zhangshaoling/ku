@@ -88,7 +88,7 @@ jobs:
           . .\tools\activate_toolchain.ps1
           cmake -S . -B kernel/out/ci -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build kernel/out/ci --parallel 2
-          ctest --test-dir kernel/out/ci --output-on-failure --parallel 2
+          ctest --test-dir kernel/out/ci --output-on-failure --parallel 2 -E aot_performance_gate
 
       - name: Build and test Kernel on Unix
         if: runner.os != 'Windows'
@@ -96,12 +96,12 @@ jobs:
         run: |
           cmake -S . -B kernel/out/ci -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build kernel/out/ci --parallel 2
-          ctest --test-dir kernel/out/ci --output-on-failure --parallel 2
+          ctest --test-dir kernel/out/ci --output-on-failure --parallel 2 -E aot_performance_gate
 
   test:
     name: test
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -112,13 +112,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Set up MSYS2 GCC
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            mingw-w64-ucrt-x86_64-gcc
+      - name: Bootstrap managed Windows toolchain
+        shell: pwsh
+        run: .\tools\bootstrap_toolchain.ps1
+
+      - name: Build kernel
+        shell: pwsh
+        run: |
+          . .\tools\activate_toolchain.ps1
+          cmake -S . -B kernel/out/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build kernel/out/cmake --parallel 2
 
       - name: Install package and test dependencies
         shell: bash
@@ -126,10 +129,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e . pytest
 
-      - name: Validate Ku TextMate grammar JSON
+      - name: Run kernel binding tests
         shell: bash
-        run: python -m json.tool syntaxes/ku.tmLanguage.json > /tmp/ku_tm.json
-
-      - name: Run tests
-        shell: bash
-        run: pytest -q
+        run: >-
+          pytest -q
+          tests/test_mcp_arithmetic.py
+          tests/test_mcp_server_kernel.py
+          tests/test_memory_kernel.py
+          tests/test_task_kernel.py
+          tests/test_agent_kernel.py

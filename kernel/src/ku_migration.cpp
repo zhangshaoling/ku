@@ -241,8 +241,13 @@ class Parser {
         if (word("throw") || word("抛")) { take(); stmt.type = Stmt::Type::Throw; stmt.expr = expression(); return stmt; }
         if (word("try") || word("试")) {
             take(); stmt.type = Stmt::Type::Try; skip_lines(); stmt.body = block(); skip_lines();
-            if (!(word("catch") || word("捕"))) error("expected catch"); take();
-            if (peek().kind != Kind::Name) error("expected catch variable"); stmt.target = take().text; skip_lines(); stmt.alternate = block(); return stmt;
+            if (!(word("catch") || word("捕"))) error("expected catch");
+            take();
+            if (peek().kind != Kind::Name) error("expected catch variable");
+            stmt.target = take().text;
+            skip_lines();
+            stmt.alternate = block();
+            return stmt;
         }
         if (word("if") || word("若")) {
             take(); stmt.type = Stmt::Type::If;
@@ -265,8 +270,10 @@ class Parser {
         }
         if (word("for") || word("遍")) {
             take(); stmt.type = Stmt::Type::For;
-            if (peek().kind != Kind::Name) error("expected loop variable"); stmt.target = take().text;
-            if (!(word("in") || word("于"))) error("expected in"); take();
+            if (peek().kind != Kind::Name) error("expected loop variable");
+            stmt.target = take().text;
+            if (!(word("in") || word("于"))) error("expected in");
+            take();
             stmt.expr = expression(); skip_lines(); stmt.body = block(); return stmt;
         }
         if (word("return") || word("返")) { take(); stmt.type = Stmt::Type::Return; stmt.expr = expression(); return stmt; }
