@@ -212,6 +212,30 @@ thought is_zh_kw(source, token, c0, c1, c2) {
   is_kw(source, token, 3, c0, c1, c2, 0, 0, 0, 0, 0)
 }
 
+thought memory_import_prefix() {
+  handle = string_new()
+  bytes = [105, 109, 112, 111, 114, 116, 32, 109, 101, 109, 111, 114, 121, 95, 115, 116, 111, 114, 101, 40, 50, 41, 10, 105, 109, 112, 111, 114, 116, 32, 109, 101, 109, 111, 114, 121, 95, 114, 101, 99, 97, 108, 108, 40, 49, 41, 10, 105, 109, 112, 111, 114, 116, 32, 109, 101, 109, 111, 114, 121, 95, 102, 111, 114, 103, 101, 116, 40, 49, 41, 10]
+  遍 byte 于 bytes { string_append(handle, byte) }
+  string_finish(handle)
+}
+
+thought uses_memory_primitives(source, tokens) {
+  token_index = 0
+  while token_type(tokens[token_index]) != 26 {
+    token = tokens[token_index]
+    if token_type(token) == 3 and (is_zh_kw(source, token, 229, 173, 152) or is_zh_kw(source, token, 229, 143, 150) or is_zh_kw(source, token, 229, 191, 152)) { return 1 == 1 }
+    token_index = token_index + 1
+  }
+  1 != 1
+}
+
+thought prepend_imports(prefix, source, source_size) {
+  output = string_new()
+  append_source(output, prefix, 0, source_len(prefix))
+  append_source(output, source, 0, source_size)
+  string_finish(output)
+}
+
 thought append_source(output, source, start, length) {
   index = start
   end = start + length
@@ -922,6 +946,48 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
       builder_emit(handle, 35, result_reg, 0, 0, 0)
       return pack(token_index + 1, next_reg + 1, result_reg)
     }
+    if is_zh_kw(source, token, 229, 173, 152) {
+      key_parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+      token_index = packed_index(key_parsed)
+      next_reg = packed_next(key_parsed)
+      key_reg = packed_result(key_parsed)
+      value_parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
+      token_index = packed_index(value_parsed)
+      next_reg = packed_next(value_parsed)
+      value_reg = packed_result(value_parsed)
+      argument_reg = next_reg
+      builder_emit(handle, 2, next_reg, key_reg, 0, 0)
+      next_reg = next_reg + 1
+      builder_emit(handle, 2, next_reg, value_reg, 0, 0)
+      next_reg = next_reg + 1
+      result_reg = next_reg
+      builder_emit(handle, 16, result_reg, argument_reg, 2, 0)
+      return pack(token_index, next_reg + 1, result_reg)
+    }
+    if is_zh_kw(source, token, 229, 143, 150) {
+      key_parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+      token_index = packed_index(key_parsed)
+      next_reg = packed_next(key_parsed)
+      key_reg = packed_result(key_parsed)
+      argument_reg = next_reg
+      builder_emit(handle, 2, next_reg, key_reg, 0, 0)
+      next_reg = next_reg + 1
+      result_reg = next_reg
+      builder_emit(handle, 16, result_reg, argument_reg, 1, 1)
+      return pack(token_index, next_reg + 1, result_reg)
+    }
+    if is_zh_kw(source, token, 229, 191, 152) {
+      key_parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+      token_index = packed_index(key_parsed)
+      next_reg = packed_next(key_parsed)
+      key_reg = packed_result(key_parsed)
+      argument_reg = next_reg
+      builder_emit(handle, 2, next_reg, key_reg, 0, 0)
+      next_reg = next_reg + 1
+      result_reg = next_reg
+      builder_emit(handle, 16, result_reg, argument_reg, 1, 2)
+      return pack(token_index, next_reg + 1, result_reg)
+    }
     name_hash = source_hash(source, token_start(token), token_length(token))
     token_index = token_index + 1
     if token_type(tokens[token_index]) == 4 {
@@ -1260,12 +1326,14 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
     if type == 3 {
       if is_kw(source, token, 5, 98, 114, 101, 97, 107, 0, 0, 0) or is_zh_kw(source, token, 230, 150, 173) {
         if loop_depth > 0 { builder_emit(handle, 13, 0, 0, 0, -1) }
+        else { fail_token("break used outside a loop", tokens, token_index) }
         token_index = token_index + 1
         if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 }
         continue
       }
       if is_kw(source, token, 8, 99, 111, 110, 116, 105, 110, 117, 101) or is_zh_kw(source, token, 231, 187, 173) {
         if loop_depth > 0 { builder_emit(handle, 13, 0, 0, 0, -2) }
+        else { fail_token("continue used outside a loop", tokens, token_index) }
         token_index = token_index + 1
         if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 }
         continue
@@ -1320,9 +1388,7 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
           builder_patch(handle, end_branch, target)
           continue
         }
-        target = builder_position(handle)
-        builder_patch(handle, try_begin, target)
-        builder_patch(handle, end_branch, target)
+        fail_token("expected catch after try body", tokens, token_index)
         continue
       }
       if is_kw(source, token, 2, 105, 102, 0, 0, 0, 0, 0, 0) or is_zh_kw(source, token, 232, 139, 165) {
@@ -1510,6 +1576,11 @@ thought compile_module(source, identified, identity, major, minor, patch) {
   if identified { builder_identity(handle, identity, major, minor, patch) }
   size = source_len(source)
   tokens = tokenize(source, size)
+  if uses_memory_primitives(source, tokens) {
+    source = prepend_imports(memory_import_prefix(), source, size)
+    size = source_len(source)
+    tokens = tokenize(source, size)
+  }
   if has_module_import(source, tokens) {
     source = expand_module(source, "", [])
     size = source_len(source)

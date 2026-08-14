@@ -14,6 +14,7 @@ import host_string_char_at(2)
 import host_string_concat(2)
 import host_string_ord(1)
 import host_string_chr(1)
+import host_to_string(1)
 
 thought length(value) { host_string_length(value) }
 thought is_empty(value) { host_string_length(value) == 0 }
@@ -30,3 +31,4 @@ thought char_at(value, index) { host_string_char_at(value, index) }
 thought concat(left, right) { host_string_concat(left, right) }
 thought ord(value) { host_string_ord(value) }
 thought chr(code) { host_string_chr(code) }
+thought string(value) { host_to_string(value) }

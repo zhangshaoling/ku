@@ -136,6 +136,17 @@ class Parser {
     Program parse() {
         Program program;
         skip_lines();
+        for (const Token& token : tokens_) {
+            if (token.kind != Kind::Name) continue;
+            if (token.text == "\xE5\xAD\x98") memory_hosts_.insert("memory_store");
+            else if (token.text == "\xE5\x8F\x96") memory_hosts_.insert("memory_recall");
+            else if (token.text == "\xE5\xBF\x98") memory_hosts_.insert("memory_forget");
+        }
+        if (!memory_hosts_.empty()) {
+            program.imports.push_back({"memory_store", 2});
+            program.imports.push_back({"memory_recall", 1});
+            program.imports.push_back({"memory_forget", 1});
+        }
         while (peek().kind != Kind::End) {
             if ((word("import") && peek(1).kind == Kind::String) || word("\xE5\xBC\x95"))
                 program.module_imports.push_back(module_import_decl());
@@ -365,6 +376,22 @@ class Parser {
             (token.kind == Kind::Name && token.text == "not")) {
             return {Expr::Type::Unary, token.text, {expression(6)}, token.offset};
         }
+        if (token.kind == Kind::Name && token.text == "\xE5\xAD\x98") {
+            memory_hosts_.insert("memory_store");
+            Expr key = expression();
+            Expr value = expression();
+            return {Expr::Type::Call, "memory_store", {std::move(key), std::move(value)}, token.offset};
+        }
+        if (token.kind == Kind::Name && token.text == "\xE5\x8F\x96") {
+            memory_hosts_.insert("memory_recall");
+            Expr key = expression();
+            return {Expr::Type::Call, "memory_recall", {std::move(key)}, token.offset};
+        }
+        if (token.kind == Kind::Name && token.text == "\xE5\xBF\x98") {
+            memory_hosts_.insert("memory_forget");
+            Expr key = expression();
+            return {Expr::Type::Call, "memory_forget", {std::move(key)}, token.offset};
+        }
         Expr result;
         if (token.kind == Kind::Number) result = {Expr::Type::Number, token.text, {}, token.offset};
         else if (token.kind == Kind::String) result = {Expr::Type::String, token.text, {}, token.offset};
@@ -393,6 +420,7 @@ class Parser {
         while (peek().kind == Kind::LBracket) { take(); Expr index = expression(); expect(Kind::RBracket, "]"); result = {Expr::Type::Index, {}, {std::move(result), std::move(index)}, token.offset}; }
         return result;
     }
+    std::unordered_set<std::string> memory_hosts_;
     std::vector<Token> tokens_; size_t pos_ = 0;
 };
 

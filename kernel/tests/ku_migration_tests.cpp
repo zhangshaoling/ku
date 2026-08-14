@@ -18,6 +18,32 @@ dao_status host_double(void*, const dao_value* args, size_t count, dao_value* ou
     if (count != 1 || args[0].type != DAO_VALUE_I64) return DAO_TYPE_ERROR;
     *out = {DAO_VALUE_I64, 0, args[0].payload * 2}; return DAO_OK;
 }
+struct MemoryHost {
+    std::unordered_map<std::string, int64_t> values;
+};
+dao_status memory_store(void* user_data, const dao_value* args, size_t count, dao_value* out) {
+    if (user_data == nullptr || args == nullptr || count != 2 || args[0].type != DAO_VALUE_STRING ||
+        args[1].type != DAO_VALUE_I64 || out == nullptr) return DAO_TYPE_ERROR;
+    dao_bytes key{};
+    if (dao_value_get_view(&args[0], &key) != DAO_OK) return DAO_TYPE_ERROR;
+    static_cast<MemoryHost*>(user_data)->values[std::string(reinterpret_cast<const char*>(key.data), key.size)] = args[1].payload;
+    *out = args[1]; return DAO_OK;
+}
+dao_status memory_recall(void* user_data, const dao_value* args, size_t count, dao_value* out) {
+    if (user_data == nullptr || args == nullptr || count != 1 || args[0].type != DAO_VALUE_STRING || out == nullptr) return DAO_TYPE_ERROR;
+    dao_bytes key{};
+    if (dao_value_get_view(&args[0], &key) != DAO_OK) return DAO_TYPE_ERROR;
+    const auto& values = static_cast<MemoryHost*>(user_data)->values;
+    const auto found = values.find(std::string(reinterpret_cast<const char*>(key.data), key.size));
+    *out = {DAO_VALUE_I64, 0, found == values.end() ? 0 : found->second}; return DAO_OK;
+}
+dao_status memory_forget(void* user_data, const dao_value* args, size_t count, dao_value* out) {
+    if (user_data == nullptr || args == nullptr || count != 1 || args[0].type != DAO_VALUE_STRING || out == nullptr) return DAO_TYPE_ERROR;
+    dao_bytes key{};
+    if (dao_value_get_view(&args[0], &key) != DAO_OK) return DAO_TYPE_ERROR;
+    const auto removed = static_cast<MemoryHost*>(user_data)->values.erase(std::string(reinterpret_cast<const char*>(key.data), key.size));
+    *out = {DAO_VALUE_I64, 0, removed == 1 ? 1 : 0}; return DAO_OK;
+}
 struct ImportSources { std::unordered_map<std::string, std::string> values; };
 bool resolve_import(void* user_data, std::string_view path, std::string* source,
                     std::string* error) {
@@ -127,6 +153,7 @@ thought eager_and() { false and raises() }
 thought eager_or() { true or raises() }
 thought strict_condition() { if 1 { return 42 } else { return 0 } }
 thought negative_index() { [1][-1] }
+思 记忆闭环() { 存 "答案" 42 取 "答案" }
 )";
     dao::ModuleBuilder builder;
     dao_error error{};
@@ -140,6 +167,19 @@ thought negative_index() { [1][-1] }
     const dao_value args[] = {{DAO_VALUE_I64, 0, 7}}; dao_value result{};
     dao_host_function host{sizeof(dao_host_function), symbol_id("host_double"), 1, 0, host_double, nullptr};
     CHECK("register compiled host import", dao_vm_register_host_function(vm, &host) == DAO_OK);
+    MemoryHost memory;
+    const dao_host_function memory_hosts[] = {
+        {sizeof(dao_host_function), symbol_id("memory_store"), 2, 0, memory_store, &memory},
+        {sizeof(dao_host_function), symbol_id("memory_recall"), 1, 0, memory_recall, &memory},
+        {sizeof(dao_host_function), symbol_id("memory_forget"), 1, 0, memory_forget, &memory},
+    };
+    for (const auto& memory_host : memory_hosts)
+        CHECK("register memory host", dao_vm_register_host_function(vm, &memory_host) == DAO_OK);
+    CHECK("find memory thought", dao_module_find_export(module, symbol_id("记忆闭环"), &fn) == DAO_OK);
+    CHECK("execute memory thought", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("memory thought result", result.type == DAO_VALUE_I64 && result.payload == 42);
+    CHECK("memory host stored value", memory.values["答案"] == 42);
+    CHECK("forget missing memory", memory_forget(&memory, nullptr, 0, &result) == DAO_TYPE_ERROR);
     CHECK("find host wrapper", dao_module_find_export(module, symbol_id("use_host"), &fn) == DAO_OK);
     CHECK("execute host wrapper", dao_vm_call(vm, module, fn, args, 1, &result, &error) == DAO_OK);
     CHECK("host wrapper result", result.type == DAO_VALUE_I64 && result.payload == 14);

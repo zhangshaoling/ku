@@ -37,7 +37,7 @@ The stable signature is `name/arity`:
 - `fs`: `exists/1`, `read_text/1`, `write_text/2`, `ensure_dir/1`, `read_or/2`, `copy_file/2`, `safe_delete/1`.
 - `io`: `file_exists/1`, `file_size/1`, `append_file/2`, `append_line/2`, `read_or/2`, `copy_file/2`, `safe_delete/1`.
 - `debug`: `trace/1`, `timer_start/0`, `timer_elapsed/1`, `measure/1`, `assert/2`, `assert_eq/2`, `memory_usage/0`.
-- `string`: `length/1`, `is_empty/1`, `not_empty/1`, `trim/1`, `upper/1`, `lower/1`, `replace/3`, `contains/2`, `starts_with/2`, `ends_with/2`, `substring/3`, `char_at/2`, `concat/2`, `ord/1`, `chr/1`.
+- `string`: `length/1`, `is_empty/1`, `not_empty/1`, `trim/1`, `upper/1`, `lower/1`, `replace/3`, `contains/2`, `starts_with/2`, `ends_with/2`, `substring/3`, `char_at/2`, `concat/2`, `ord/1`, `chr/1`, `string/1`.
 - `http`: `get/1`, `post/3`, `is_ok/1`, `is_error/1`.
 - `lexer`: `make_token/4`, `is_digit/1`, `is_letter/1`, `is_id_start/1`, `is_id_char/1`, `is_keyword/1`, `lex_number/4`, `lex_identifier/4`, `lex_string/4`, `lex_operator/4`, `next_token/4`, `lex/1`.
 

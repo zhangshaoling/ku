@@ -51,6 +51,7 @@ Ku v1 采用新内核恢复编译器已经验证的语义作为规范目标，�
 | 比较 | `< <= > >=` 只接受 `i64`；结果为 Trit | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 | 相等 | `null`、Trit、字符串、字节和 `i64` 可判等；跨类型只支持 `==/!=`；容器不做深比较 | 核心 | 是 | 部分 | `ku_migration`、`kernel_conformance` |
 | 字符串 | 字符串值必须是严格 UTF-8；规范转义为 `\n \t \r \" \\`；其他转义不属于 v1 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed`、`kernel_conformance` |
+| 显式转换 | `string(value)` 由 Host capability 提供显式值到字符串转换；不发生隐式数值提升 | 核心 | 是 | 是 | `ku_std_string`、`ku_selfhost_seed` |
 | 字节 | `bytes` 只能由 Host/C ABI 提供，没有源语言字面量 | 核心 | 是 | 是 | `kernel_conformance`、`pure_c_abi` |
 
 ## 3. 容器、函数与生命周期
@@ -78,7 +79,7 @@ Ku v1 采用新内核恢复编译器已经验证的语义作为规范目标，�
 | 求值顺序 | 表达式、调用参数、List 项和 Map 值从左到右求值 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 | 返回 | `return/返 expr` 显式返回；函数最后一个表达式可隐式返回。v1 程序不得依赖空函数或控制流落空的默认值 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 | 分支 | `if/若 ... { ... } else/否 { ... }`；允许 `else if` 与 `否 若` | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
-| 循环 | `while/当`、List 上的 `for/遍 ... in/于`、`break/断`、`continue/续` | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
+| 循环 | `while/当`、List 上的 `for/遍 ... in/于`、`break/断`、`continue/续`；循环外使用 `break/continue` 是编译错误 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 | 异常 | `throw/抛 value` 可跨本模块函数传播；`try/试 ... catch/捕 name` 只捕获显式抛出的值，不捕获类型/校验错误 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 | 注释与分隔 | `//`、`;;` 为行注释；换行和 `;` 都可分隔语句 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 
@@ -92,6 +93,7 @@ Ku v1 采用新内核恢复编译器已经验证的语义作为规范目标，�
 |---|---|---|---|---|---|
 | 本地调用 | 函数可前向引用和递归；参数个数在编译期校验 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 | Host 导入 | `import name(arity)` 声明固定参数个数的显式 Host capability；调用走数值 C ABI | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
+| 记忆原语 | `存 key value` 写入持久 i64，返回 value；`取 key` 读取 i64，不存在返回 0；`忘 key` 删除并返回 1/0；运行时由 `memory_store/recall/forget` Host capability 提供 | 实验 | 是 | 是 | `ku_migration`、`ku_selfhost_seed`、方向二 memory Host |
 | 源模块导入 | `import "path" as alias` 与 `引 "path" 别 alias` 在编译期递归组合源码；路径受模块根限制并检查循环 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed`、`ku_compile_recursive_import`、`ku_reject_import_*` |
 | 运行时模块 ABI | 独立编译模块之间的动态链接、版本解析和运行时状态共享 | 推迟 | 无 | 无 | KU-P10 |
 
@@ -123,7 +125,7 @@ ctest --test-dir kernel/out/cmake -R "^(ku_migration|ku_compile_acceptance|ku_co
 ctest --test-dir kernel/out/cmake -R "^ku_selfhost_seed$" --output-on-failure
 ```
 
-`ku_selfhost_seed` 通过只证明当前 SH2 表面稳定，不表示它已经完整实现本矩阵。
+`ku_selfhost_seed` 通过证明当前 SH2 表面稳定，不表示它已经完整实现本矩阵；该测试包含 bootstrap、rebuilt 和 rejection parity，运行时间较长。
 生产路径的递归、越界、缺失和循环导入另由 `dao-ku` 的定向 CTest 覆盖。
 
 任何语义变更必须同时修改本文、至少一个正例或反例测试，并说明它是兼容变更还是 Ku v2 变更。历史 Python/旧 C VM 行为只能作为候选输入，不能直接推翻矩阵。
