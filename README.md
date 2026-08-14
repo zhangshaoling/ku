@@ -1,4 +1,9 @@
-# Ku / Dao
+> ## ⚠️ 本文档描述旧 C VM 线（历史迁移输入）
+>
+> 当前实现权威在 **codex/dao-kernel-rewrite** 分支（新内核 kernel/：Register VM + 可执行记忆）。
+> Ku 的唯一规范表层语法是**中文**（思 加一(x) { x + 1 }），英文关键字仅为兼容期保留。
+> 权威裁决见 docs/KU_NAMING_AND_AUTHORITY.md，语言语义见 docs/KU_V1_SEMANTICS.md（均在该分支）。
+># Ku / Dao
 
 **Ku / Dao** is an AI-native language runtime for executable memory:
 
