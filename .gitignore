@@ -98,3 +98,21 @@ test_write.txt
 # Historical compatibility drafts not yet part of active Dao runtime
 ku/std/memory.ku
 ku/std/tiandao.ku
+
+# Workspace-local agent/memory state (not part of the repo)
+.ku_memory/
+.learnings/
+.workbuddy/
+
+# One-off root scratch / research files
+scratch_*.py
+scratch_*.dao
+scratch_*.txt
+test_cn.ku
+test_map.cpp
+2026-07-12-*/
+2026-08-11-*.md
+
+# SQLite WAL/shm sidecar files
+*.db-shm
+*.db-wal
