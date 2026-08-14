@@ -108,7 +108,9 @@ class Agent:
             return {"type": "start", "goal": self.state.goal}
         last = self.state.history[-1]
         if last["observation"].get("success"):
-            return {"type": "continue", "goal": self.state.goal}
+            self.state.completed = True
+            self.state.result = last["observation"].get("result")
+            return {"type": "finish", "result": self.state.result}
         return {"type": "retry", "goal": self.state.goal}
 
     def _act(self, thought: dict) -> dict:
@@ -152,9 +154,13 @@ class Agent:
             self.state.error = obs.get("error")
 
     def _select_tool(self, thought: dict) -> Optional[str]:
-        """Select a tool based on the thought."""
+        """Select a tool by matching its name against the goal."""
         if not self.tools:
             return None
+        goal = thought.get("goal", "")
+        for name in self.tools:
+            if name in goal:
+                return name
         return next(iter(self.tools))
 
     def _fire(self, phase: AgentPhase, data: Any) -> None:

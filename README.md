@@ -71,6 +71,22 @@ Ku 是一门为 AGI 而生的语言：一个「念头」同时是可执行的代
 
 详见 [`kernel/README.md`](kernel/README.md)。
 
+## 可执行记忆闭环
+
+一个念头：写下来是代码，存起来是记忆，召回就能跑，注册了就是工具。
+
+```powershell
+.\tools\build_kernel.ps1
+.\.venv\Scripts\python.exe demos\memory_loop.py
+```
+
+```text
+写 .ku → 编译 .dao → 存记忆(持久化) → 换进程召回 → 执行 → MCP 暴露 → Agent think-act-observe
+```
+
+MCP 服务暴露 `ku_memory_store` / `ku_memory_recall` / `ku_memory_search` / `ku_memory_stats`，
+让记忆成为可被智能体直接调用的工具。
+
 ## 权威文档
 
 - [命名与权威](docs/KU_NAMING_AND_AUTHORITY.md)

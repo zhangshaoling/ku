@@ -17,7 +17,7 @@ if sys.platform == "win32":
 BINDINGS_DIR = Path(__file__).resolve().parent.parent / "bindings" / "python"
 sys.path.insert(0, str(BINDINGS_DIR))
 
-from dao_kernel import Thought, Runtime, DaoValue, DAO_VALUE_I64, fnv1a
+from dao_kernel import Thought, Runtime, DaoValue, DAO_VALUE_I64, fnv1a, MemorySystem, MemoryType
 
 DAO_KU = Path(__file__).resolve().parent.parent / "kernel" / "out" / "cmake" / "bin" / "dao-ku.exe"
 KERNEL_DLL = Path(__file__).resolve().parent.parent / "kernel" / "out" / "cmake" / "bin" / "libdao_kernel.dll"
@@ -139,11 +139,92 @@ def scan_and_compile(ku_dirs: list[Path]) -> list[KernelTool]:
     return tools
 
 
+MEMORY_DIR = Path(os.environ.get("DAO_MEMORY_DIR")) if os.environ.get("DAO_MEMORY_DIR") else Path(__file__).resolve().parent.parent / ".ku_memory"
+
+
+class MemoryTool:
+    """A memory-system operation exposed as an MCP tool."""
+
+    def __init__(self, name, description, schema, handler):
+        self.name = name
+        self.description = description
+        self.schema = schema
+        self.handler = handler
+
+    def mcp_schema(self):
+        required = [k for k, v in self.schema.items() if v.get("required")]
+        properties = {k: {"type": v["type"], "description": v.get("description", "")}
+                      for k, v in self.schema.items()}
+        return {
+            "name": self.name,
+            "description": self.description,
+            "inputSchema": {"type": "object", "properties": properties, "required": required},
+        }
+
+    def execute(self, runtime, arguments):
+        return self.handler(arguments)
+
+
+def _memory_store(arguments):
+    key = arguments.get("key", "")
+    source = arguments.get("source", "")
+    if not key or not source:
+        return {"error": "key and source are required"}
+    thought = Thought.from_source(key, source)
+    MemorySystem(MEMORY_DIR).store(key, thought, MemoryType.LONG_TERM, meta={"via": "mcp"})
+    return {"key": key, "name": thought.name, "params": thought.params}
+
+
+def _memory_recall(arguments):
+    key = arguments.get("key", "")
+    thought = MemorySystem(MEMORY_DIR).recall(key)
+    if thought is None:
+        return {"error": f"memory not found: {key}"}
+    args = [int(x) for x in arguments.get("args", [])]
+    result = thought.call_i64(args=args)
+    return {"key": key, "name": thought.name, "result": result}
+
+
+def _memory_search(arguments):
+    mem = MemorySystem(MEMORY_DIR)
+    results = mem.search(arguments.get("query", ""), limit=int(arguments.get("limit", 10)))
+    return {"results": [{"key": e.key, "name": e.thought.name, "strength": round(e.strength, 2)}
+                        for e in results]}
+
+
+def _memory_stats(arguments):
+    return MemorySystem(MEMORY_DIR).stats()
+
+
+def build_memory_tools():
+    return [
+        MemoryTool("ku_memory_store",
+                   "Compile .ku source and store it as an executable memory",
+                   {"key": {"type": "string", "required": True, "description": "memory key"},
+                    "source": {"type": "string", "required": True, "description": "Ku .ku source"}},
+                   _memory_store),
+        MemoryTool("ku_memory_recall",
+                   "Recall an executable memory and run it, returning its result",
+                   {"key": {"type": "string", "required": True, "description": "memory key"},
+                    "args": {"type": "array", "required": False, "description": "integer arguments"}},
+                   _memory_recall),
+        MemoryTool("ku_memory_search",
+                   "Search stored memories by key/name/doc",
+                   {"query": {"type": "string", "required": True, "description": "search query"},
+                    "limit": {"type": "integer", "required": False, "description": "max results"}},
+                   _memory_search),
+        MemoryTool("ku_memory_stats",
+                   "Show executable-memory statistics",
+                   {},
+                   _memory_stats),
+    ]
+
+
 def main():
     raw_args = sys.argv[1:]
     ku_dirs = [Path(d) for d in raw_args] if raw_args else [Path(__file__).resolve().parent.parent / "demos"]
 
-    tools = scan_and_compile(ku_dirs)
+    tools = scan_and_compile(ku_dirs) + build_memory_tools()
     tool_map = {t.name: t for t in tools}
 
     runtime = Runtime(KERNEL_DLL)

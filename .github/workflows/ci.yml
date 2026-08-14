@@ -83,4 +83,4 @@ jobs:
           $env:DAO_KERNEL_DLL_DIRS = Join-Path $PWD '.toolchain\llvm-mingw\bin'
           cmake -S . -B kernel/out/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build kernel/out/cmake --parallel 2
-          python -m pytest -q tests/test_mcp_arithmetic.py tests/test_mcp_server_kernel.py tests/test_memory_kernel.py tests/test_task_kernel.py tests/test_agent_kernel.py
+          python -m pytest -q tests/test_mcp_arithmetic.py tests/test_mcp_server_kernel.py tests/test_memory_kernel.py tests/test_task_kernel.py tests/test_agent_kernel.py tests/test_memory_loop.py
