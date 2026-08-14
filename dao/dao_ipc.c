@@ -1,6 +1,10 @@
 /**
- * dao_ipc.c — C 引擎 IPC 守护程序
+ * DEPRECATED — dao_ipc.c — C 引擎 IPC 守护程序
  * 精简稳定版：无复杂内存共享，纯求值后输出。
+ *
+ * [R5 死代码] 全仓库仅本文档与 docs/ 引用，CMake 构建零引用。
+ * 据 docs/C_VM_接管审计.md §范围，本文件属旧 S-expression IPC 实验，
+ * 不应作为自举主线扩展。待 git 状态澄清后可 `git rm dao/dao_ipc.c`。
  */
 
 #include <stdio.h>

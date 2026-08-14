@@ -1,5 +1,5 @@
 """
-dao_core_c.py — C 求值引擎的 Python 绑定
+DEPRECATED — dao_core_c.py — C 求值引擎的 Python 绑定
 
 C 引擎在 WSL 中作为独立进程运行，
 Python 通过 stdin/stdout IPC 与之通信。
@@ -8,6 +8,10 @@ Python 通过 stdin/stdout IPC 与之通信。
   Python runtime  ←→  子进程 (dao_core 独立模式)
                           ↕
                         C 求值引擎 (lval_eval)
+
+[R5 死代码] 全仓库仅本文档与 docs/ 引用，构建系统零引用。
+属 legacy C VM 时期的 Python 绑定，新 kernel/ 不依赖。
+待 git 状态澄清后可 `git rm dao/dao_core_c.py`。
 """
 
 import subprocess
