@@ -44,8 +44,11 @@
 
 思 memory_init() {
   conn = sqlite_open(memory_db())
-  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience (id TEXT PRIMARY KEY, kind TEXT NOT NULL, topic TEXT DEFAULT '', context TEXT DEFAULT '', input TEXT DEFAULT '', output TEXT DEFAULT '', missing TEXT DEFAULT '', next_action TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'open', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, success_count INTEGER DEFAULT 0, failure_count INTEGER DEFAULT 0, recall_count INTEGER DEFAULT 0, last_recalled_at TEXT, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, tool_generated INTEGER DEFAULT 0, quality_status TEXT DEFAULT 'active')", [])
+  sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS experience (id TEXT PRIMARY KEY, kind TEXT NOT NULL, topic TEXT DEFAULT '', context TEXT DEFAULT '', input TEXT DEFAULT '', output TEXT DEFAULT '', missing TEXT DEFAULT '', next_action TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'open', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, success_count INTEGER DEFAULT 1, failure_count INTEGER DEFAULT 1, recall_count INTEGER DEFAULT 0, last_recalled_at TEXT, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, tool_generated INTEGER DEFAULT 0, quality_status TEXT DEFAULT 'active')", [])
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS knowledge (id TEXT PRIMARY KEY, domain TEXT NOT NULL, content TEXT NOT NULL, source TEXT DEFAULT '', tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, recall_count INTEGER DEFAULT 0, last_recalled_at TEXT, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, quality_status TEXT DEFAULT 'active')", [])
+  // 旧库迁移（幂等）：新增跨模型版本字段
+  memory_migrate_experience(conn)
+  memory_migrate_knowledge(conn)
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS tool_registry (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT DEFAULT '', params_json TEXT DEFAULT '{}', source_experience_id TEXT DEFAULT '', call_count INTEGER DEFAULT 0, success_count INTEGER DEFAULT 0, fail_count INTEGER DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, status TEXT NOT NULL DEFAULT 'active', quality_status TEXT DEFAULT 'active')", [])
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS concept (id TEXT PRIMARY KEY, name TEXT NOT NULL, definition TEXT NOT NULL, examples_json TEXT DEFAULT '[]', domain TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, recall_count INTEGER DEFAULT 0, confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5, quality_status TEXT DEFAULT 'active')", [])
   sqlite_exec(conn, "CREATE TABLE IF NOT EXISTS goal (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '', priority INTEGER DEFAULT 5, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, progress REAL DEFAULT 0.0, trust REAL DEFAULT 0.5, quality_status TEXT DEFAULT 'active')", [])
@@ -53,6 +56,42 @@
   sqlite_exec(conn, "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(id UNINDEXED, type, name, content, tags, tokenize='trigram')", [])
   sqlite_close(conn)
   {"ok": 真, "db": memory_db(), "tables": ["experience", "knowledge", "tool_registry", "concept", "goal", "relation"]}
+}
+
+// ── 旧库迁移：experience 表新增字段（幂等，先 PRAGMA 检查再 ALTER） ──
+思 memory_migrate_experience(conn) {
+  info = sqlite_query(conn, "PRAGMA table_info(experience)", [])
+  has_mv = 假; has_ct = 假; has_ds = 假; has_sw = 假
+  i = 0
+  当 (i < len(info)) {
+    col = info[i]["name"]
+    若 == (col, "model_version") { has_mv = 真 }
+    若 == (col, "content_trust") { has_ct = 真 }
+    若 == (col, "data_stream_id") { has_ds = 真 }
+    若 == (col, "source_weight") { has_sw = 真 }
+    i = i + 1
+  }
+  若 非 has_mv { sqlite_exec(conn, "ALTER TABLE experience ADD COLUMN model_version TEXT DEFAULT 'unknown'", []) }
+  若 非 has_ct { sqlite_exec(conn, "ALTER TABLE experience ADD COLUMN content_trust REAL DEFAULT 0.5", []) }
+  若 非 has_ds { sqlite_exec(conn, "ALTER TABLE experience ADD COLUMN data_stream_id TEXT DEFAULT 'default'", []) }
+  若 非 has_sw { sqlite_exec(conn, "ALTER TABLE experience ADD COLUMN source_weight REAL DEFAULT 0.5", []) }
+  返 {"ok": 真}
+}
+
+// ── 旧库迁移：knowledge 表新增字段（幂等） ──
+思 memory_migrate_knowledge(conn) {
+  info = sqlite_query(conn, "PRAGMA table_info(knowledge)", [])
+  has_mv = 假; has_sw = 假
+  i = 0
+  当 (i < len(info)) {
+    col = info[i]["name"]
+    若 == (col, "model_version") { has_mv = 真 }
+    若 == (col, "source_weight") { has_sw = 真 }
+    i = i + 1
+  }
+  若 非 has_mv { sqlite_exec(conn, "ALTER TABLE knowledge ADD COLUMN model_version TEXT DEFAULT 'unknown'", []) }
+  若 非 has_sw { sqlite_exec(conn, "ALTER TABLE knowledge ADD COLUMN source_weight REAL DEFAULT 0.5", []) }
+  返 {"ok": 真}
 }
 
 思 experience_add(kind, topic, context, input, output, missing, next_action, tags) {
@@ -68,7 +107,7 @@
   ts = memory_now()
   eid = memory_id("exp")
   tags_json = memory_tags_json(tags)
-  sqlite_exec(conn, "INSERT INTO experience (id, kind, topic, context, input, output, missing, next_action, tags_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [eid, kind, topic, context, input, output, missing, next_action, tags_json, ts, ts])
+  sqlite_exec(conn, "INSERT INTO experience (id, kind, topic, context, input, output, missing, next_action, tags_json, created_at, updated_at, success_count, failure_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)", [eid, kind, topic, context, input, output, missing, next_action, tags_json, ts, ts])
   sqlite_exec(conn, "INSERT INTO memory_fts (id, type, name, content, tags) VALUES (?, 'experience', ?, ?, ?)", [eid, topic, context + " " + input + " " + output + " " + missing + " " + next_action, tags_json])
   sqlite_close(conn)
   {"id": eid, "kind": kind, "topic": topic}

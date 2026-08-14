@@ -1,0 +1,25 @@
+import host_double(1)
+
+thought sum_to(n) {
+  total = 0
+  while n > 0 {
+    n = n - 1
+    if n == 3 { continue }
+    if n == 1 { break }
+    total = total + n
+  }
+  return host_double(total)
+}
+
+thought collections() {
+  values = [1, 2, 3]
+  mapping = {"bonus": 4}
+  total = mapping["bonus"]
+  for value in values { total = total + value }
+  return total
+}
+
+thought fail() { throw "expected" }
+thought recover() {
+  try { fail() } catch error { return error }
+}

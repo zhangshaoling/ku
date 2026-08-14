@@ -1,0 +1,2 @@
+thought add(left, right) { left + right }
+thought double(value) { add(value, value) }

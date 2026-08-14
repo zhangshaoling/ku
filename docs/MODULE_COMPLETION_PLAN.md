@@ -1,14 +1,16 @@
-# Dao Module Completion Plan
+# Legacy Ku Runtime Module Completion Plan
 
-This file is the module-by-module completion map for Dao/Ku. It keeps the
+> **迁移证据：** 本文记录 `dao/` 旧 C VM、可执行记忆和 MCP 原型的模块完成情况，不再作为新内核实施路线。当前整体工作表见 `KU_SUBPROJECT_WORKSHEETS.md`，当前进度见 `KU_PROJECT_PROGRESS.md`。
+
+This file is the historical module-by-module completion map for the legacy `dao/` implementation of Ku. It keeps the
 original goal visible while the project grows:
 
 ```text
 thought = code = memory
 ```
 
-Dao is not being built as a generic scripting language. The project is complete
-only when a thought can be written as Dao source, inspected as structured code,
+Ku is not being built as a generic scripting language. The project is complete
+only when a thought can be written as Ku source, inspected as structured code,
 persisted as memory, executed by the C VM, exposed to agents through MCP, and
 verified without Python being the semantic authority.
 
@@ -139,6 +141,9 @@ Current state:
 - UTF-8 topic storage is covered.
 - Fast memory recall is backed by a SQLite FTS index and exposed through
   `ku_recall_memory`.
+- Memory records expose stable `dao://experience/<id>` addresses and storage
+  routes through `ku_locate_memory`, so agents can ask where a memory lives
+  instead of falling back to broad search.
 - Persisted memory records can be promoted into stable callable thought/tool
   candidates through C VM-backed memory promotion.
 - Recall explainability and local promotion suggestions are available through

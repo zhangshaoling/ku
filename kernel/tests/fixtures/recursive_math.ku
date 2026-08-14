@@ -1,0 +1,3 @@
+import "recursive_base" as base
+
+thought double(value) { base_add(value, value) }

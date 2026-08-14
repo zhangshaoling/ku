@@ -22,25 +22,68 @@
 #ifdef _WIN32
 #include <direct.h>
 #include <io.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
 #define DAO_GETCWD _getcwd
 #define DAO_MKDIR(path) _mkdir(path)
 #define DAO_POPEN _popen
 #define DAO_PCLOSE _pclose
 #define strdup _strdup
+#define SOCKET_TYPE SOCKET
+#define SOCKET_ERROR_VAL SOCKET_ERROR
 #else
 #include <dirent.h>
 #include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 #define DAO_GETCWD getcwd
 #define DAO_MKDIR(path) mkdir(path, 0755)
 #define DAO_POPEN popen
 #define DAO_PCLOSE pclose
+#define SOCKET_TYPE int
+#define SOCKET_ERROR_VAL -1
 #endif
 
 #include "../vendor/sqlite3.h"
 
 #define MAX_DB_CONNS 64
+#define MAX_TRACKED_SOCKETS 256
 static sqlite3 *db_conns[MAX_DB_CONNS];
+typedef struct { SOCKET_TYPE value; int active; } TrackedSocket;
+static TrackedSocket tracked_sockets[MAX_TRACKED_SOCKETS];
 static char g_exe_dir[4096] = {0};
+static int g_serve_mode = 0;
+
+static int track_socket(SOCKET_TYPE sock) {
+    for (int i = 0; i < MAX_TRACKED_SOCKETS; i++) {
+        if (!tracked_sockets[i].active) {
+            tracked_sockets[i].value = sock;
+            tracked_sockets[i].active = 1;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void untrack_socket(SOCKET_TYPE sock) {
+    for (int i = 0; i < MAX_TRACKED_SOCKETS; i++) {
+        if (tracked_sockets[i].active && tracked_sockets[i].value == sock) {
+            tracked_sockets[i].active = 0;
+            return;
+        }
+    }
+}
+
+static void close_socket_handle(SOCKET_TYPE sock) {
+#ifdef _WIN32
+    closesocket(sock);
+#else
+    close(sock);
+#endif
+}
 
 /* ═══════════════════════════════════════════
  *  M4: 内存竞技场 + 分配计数
@@ -55,6 +98,15 @@ typedef struct {
     long count;
     long cap;
 } PtrArena;
+
+typedef struct {
+    long vals;
+    long envs;
+    long frames;
+    long aux;
+} ArenaMark;
+
+static void arena_release_to(ArenaMark mark);
 
 static PtrArena g_val_arena = {0};
 static PtrArena g_env_arena = {0};
@@ -77,11 +129,25 @@ static void arena_register(PtrArena *a, void *p) {
     if (a->count >= a->cap) {
         long ncap = a->cap ? a->cap * 2 : 256;
         void **ni = realloc(a->items, ncap * sizeof(void *));
-        if (!ni) return;  /* 登记失败不致命：退化为不回收，绝不崩 */
+        if (!ni) {
+            fprintf(stderr, "RuntimeError: arena registry allocation failed\n");
+            fflush(stderr);
+            exit(70);
+        }
         a->items = ni;
         a->cap = ncap;
     }
     a->items[a->count++] = p;
+}
+
+static ArenaMark arena_mark(void) {
+    ArenaMark mark = {
+        g_val_arena.count,
+        g_env_arena.count,
+        g_frame_arena.count,
+        g_instr_arena.count,
+    };
+    return mark;
 }
 
 static void init_exe_dir(const char *argv0) {
@@ -123,6 +189,8 @@ struct Instr {
     int has_str;
     int has_num;
 };
+
+void dict_set(Val *d, const char *key, Val *val);
 
 struct Val {
     ValType type;
@@ -191,6 +259,43 @@ void list_push(Val *v, Val *item) {
 }
 
 Val *val_dict(void) { return val_new(V_DICT); }
+
+Val *val_copy(Val *src) {
+    if (!src) return NULL;
+    Val *v = val_new(src->type);
+    switch (src->type) {
+        case V_NIL: break;
+        case V_NUM: v->num = src->num; break;
+        case V_STR: v->str = strdup(src->str); break;
+        case V_BOOL: v->bool_val = src->bool_val; break;
+        case V_LIST: {
+            v->cap = src->cap;
+            v->len = src->len;
+            v->items = calloc(v->cap, sizeof(Val *));
+            for (int i = 0; i < src->len; i++) {
+                v->items[i] = val_copy(src->items[i]);
+            }
+            break;
+        }
+        case V_DICT: {
+            for (DictEntry *e = src->entries; e; e = e->next) {
+                dict_set(v, e->key, val_copy(e->val));
+            }
+            break;
+        }
+        case V_FN: {
+            v->params = src->params;
+            v->param_count = src->param_count;
+            v->body = src->body;
+            v->body_len = src->body_len;
+            v->constants = src->constants;
+            v->const_count = src->const_count;
+            v->closure = src->closure;
+            break;
+        }
+    }
+    return v;
+}
 
 Val *val_fn(char **params, int param_count, struct Instr *body, int body_len, Val **constants, int const_count, struct Env *closure) {
     Val *v = val_new(V_FN);
@@ -687,6 +792,11 @@ int frame_raise(Frame *f, const char *message) {
     return 1;
 }
 
+ExecResult builtin_parse(Val **args, int argc, Frame *caller);
+ExecResult builtin_load_ku(Val **args, int argc, Frame *caller);
+Val *builtin_run_bytecode(Val **args, int argc, Env *global);
+static ExecResult execute_bytecode_val(Val *bc, Env *global);
+
 static ExecResult call_value(Val *func, Val **args, int argc, Frame *caller) {
     ExecResult r = {0, 0, NULL, NULL};
     if (!func || func->type != V_FN) {
@@ -807,7 +917,10 @@ Val *js_parse_val(JSParse *j) {
     /* string */
     if (c == '"') {
         char *s = js_parse_string_raw(j);
-        return s ? val_str(s) : val_nil();
+        if (!s) return val_nil();
+        Val *value = val_str(s);
+        free(s);
+        return value;
     }
 
     /* number */
@@ -1114,6 +1227,26 @@ Val *builtin_floor(Val **args, int argc) {
     return val_num(floor(args[0]->num));
 }
 
+Val *builtin_ceil(Val **args, int argc) {
+    if (argc < 1 || args[0]->type != V_NUM) return val_num(0);
+    return val_num(ceil(args[0]->num));
+}
+
+Val *builtin_max(Val **args, int argc) {
+    if (argc < 2 || args[0]->type != V_NUM || args[1]->type != V_NUM) return val_nil();
+    return val_num(args[0]->num > args[1]->num ? args[0]->num : args[1]->num);
+}
+
+Val *builtin_min(Val **args, int argc) {
+    if (argc < 2 || args[0]->type != V_NUM || args[1]->type != V_NUM) return val_nil();
+    return val_num(args[0]->num < args[1]->num ? args[0]->num : args[1]->num);
+}
+
+Val *builtin_round(Val **args, int argc) {
+    if (argc < 1 || args[0]->type != V_NUM) return val_num(0);
+    return val_num(round(args[0]->num));
+}
+
 Val *builtin_slice(Val **args, int argc) {
     if (argc < 3) return val_nil();
     Val *target = args[0];
@@ -1168,6 +1301,25 @@ Val *builtin_is_none(Val **args, int argc) {
     return val_bool(argc < 1 || !args[0] || args[0]->type == V_NIL);
 }
 
+Val *builtin_is_int(Val **args, int argc) {
+    if (argc < 1 || !args[0]) return val_bool(0);
+    if (args[0]->type != V_NUM) return val_bool(0);
+    double n = args[0]->num;
+    return val_bool(n == floor(n) && !isnan(n) && !isinf(n));
+}
+
+Val *builtin_bool(Val **args, int argc) {
+    if (argc < 1 || !args[0]) return val_bool(0);
+    return val_bool(val_truthy(args[0]));
+}
+
+Val *builtin_to_float(Val **args, int argc) {
+    if (argc < 1 || !args[0]) return val_num(0);
+    if (args[0]->type == V_NUM) return val_num(args[0]->num);
+    if (args[0]->type == V_STR) return val_num(atof(args[0]->str));
+    return val_num(0);
+}
+
 Val *builtin_has(Val **args, int argc) {
     if (argc < 2 || args[0]->type != V_DICT || args[1]->type != V_STR)
         return val_bool(0);
@@ -1195,6 +1347,28 @@ Val *builtin_items(Val **args, int argc) {
     return result;
 }
 
+Val *builtin_values(Val **args, int argc) {
+    Val *result = val_list(8);
+    if (argc < 1 || args[0]->type != V_DICT) return result;
+    for (DictEntry *e = args[0]->entries; e; e = e->next) {
+        list_push(result, e->val);
+    }
+    return result;
+}
+
+Val *builtin_merge(Val **args, int argc) {
+    if (argc < 2 || args[0]->type != V_DICT || args[1]->type != V_DICT)
+        return val_nil();
+    Val *result = val_dict();
+    for (DictEntry *e = args[0]->entries; e; e = e->next) {
+        dict_set(result, e->key, e->val);
+    }
+    for (DictEntry *e = args[1]->entries; e; e = e->next) {
+        dict_set(result, e->key, e->val);
+    }
+    return result;
+}
+
 Val *builtin_type(Val **args, int argc) {
     if (argc < 1) return val_str("nil");
     switch (args[0]->type) {
@@ -1210,6 +1384,17 @@ Val *builtin_type(Val **args, int argc) {
 }
 
 Val *builtin_print(Val **args, int argc) {
+    if (g_serve_mode) {
+        for (int i = 0; i < argc; i++) {
+            char *text = val_to_string(args[i]);
+            if (i) fprintf(stderr, " ");
+            fprintf(stderr, "%s", text);
+            free(text);
+        }
+        fprintf(stderr, "\n");
+        fflush(stderr);
+        return val_nil();
+    }
     for (int i = 0; i < argc; i++) {
         if (i) printf(" ");
         val_print(args[i]);
@@ -1372,6 +1557,7 @@ Val *builtin_sqlite_open(Val **args, int argc) {
         if (db) sqlite3_close(db);
         return val_nil();
     }
+    sqlite3_busy_timeout(db, 5000);
     int idx = db_conn_alloc(db);
     if (idx == 0) {
         sqlite3_close(db);
@@ -1434,7 +1620,8 @@ ExecResult builtin_sqlite_query(Val **args, int argc) {
     if (rc != SQLITE_OK) return sqlite_exec_result(sqlite3_errmsg(db));
     if (argc >= 3) sqlite_bind_params(stmt, args[2]);
     int col_count = sqlite3_column_count(stmt);
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
+    int step_rc;
+    while ((step_rc = sqlite3_step(stmt)) == SQLITE_ROW) {
         Val *row = val_dict();
         for (int c = 0; c < col_count; c++) {
             const char *col_name = sqlite3_column_name(stmt, c);
@@ -1453,6 +1640,11 @@ ExecResult builtin_sqlite_query(Val **args, int argc) {
             dict_set(row, col_name ? col_name : "", cell);
         }
         list_push(result, row);
+    }
+    if (step_rc != SQLITE_DONE) {
+        ExecResult err = sqlite_exec_result(sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return err;
     }
     sqlite3_finalize(stmt);
     r.val = result;
@@ -1561,6 +1753,42 @@ Val *builtin_dao_data_path(Val **args, int argc) {
     return val_str(path);
 }
 
+Val *builtin_getenv(Val **args, int argc) {
+    if (argc < 1 || !args[0] || args[0]->type != V_STR) return val_str("");
+    const char *value = getenv(args[0]->str);
+    return val_str(value ? value : "");
+}
+
+Val *builtin_range(Val **args, int argc) {
+    if (argc < 1 || args[0]->type != V_NUM) return val_list(0);
+    int n = (int)args[0]->num;
+    if (n < 0) n = 0;
+    Val *result = val_list(n);
+    for (int i = 0; i < n; i++) {
+        list_push(result, val_num((double)i));
+    }
+    return result;
+}
+
+Val *builtin_sleep(Val **args, int argc) {
+    if (argc < 1 || args[0]->type != V_NUM) return val_nil();
+    double seconds = args[0]->num;
+    if (seconds < 0) seconds = 0;
+#ifdef _WIN32
+    Sleep((DWORD)(seconds * 1000));
+#else
+    usleep((useconds_t)(seconds * 1000000));
+#endif
+    return val_bool(1);
+}
+
+Val *builtin_exit(Val **args, int argc) {
+    int code = 0;
+    if (argc >= 1 && args[0]->type == V_NUM) code = (int)args[0]->num;
+    exit(code);
+    return val_nil();
+}
+
 Val *builtin_system(Val **args, int argc) {
     Val *result = val_dict();
     dict_set(result, "stdout", val_str(""));
@@ -1637,6 +1865,59 @@ ExecResult builtin_parse(Val **args, int argc, Frame *caller) {
         }
     }
     return parsed;
+}
+
+ExecResult builtin_load_ku(Val **args, int argc, Frame *caller) {
+    ExecResult r = {0, 0, NULL, NULL};
+    if (argc < 1 || !args[0] || args[0]->type != V_STR) {
+        r.is_error = 1;
+        r.error = strdup("load_ku 需要一个文件路径参数");
+        return r;
+    }
+
+    const char *path = args[0]->str;
+    size_t source_len = 0;
+    char *source = read_text_file(path, &source_len);
+    if (!source) {
+        r.is_error = 1;
+        char err[512];
+        snprintf(err, sizeof(err), "load_ku: 无法读取文件 '%s'", path);
+        r.error = strdup(err);
+        return r;
+    }
+
+    Val *lex = env_get(caller->env, "lex");
+    Val *parse_tokens = env_get(caller->env, "parse_tokens");
+    Val *compile_ast = env_get(caller->env, "compile_ast");
+    if (!lex || !parse_tokens || !compile_ast) {
+        free(source);
+        r.is_error = 1;
+        r.error = strdup("load_ku 需要 bootstrap 前端（lex/parse_tokens/compile_ast）");
+        return r;
+    }
+
+    /* lex(source) → tokens */
+    Val *lex_args[1] = {val_str(source)};
+    ExecResult lexed = call_value(lex, lex_args, 1, caller);
+    if (lexed.is_error) { free(source); return lexed; }
+
+    /* parse_tokens(tokens) → ast */
+    Val *parse_args[1] = {lexed.val};
+    ExecResult parsed = call_value(parse_tokens, parse_args, 1, caller);
+    if (parsed.is_error) { free(source); return parsed; }
+
+    /* compile_ast(ast) → bytecode */
+    Val *compile_args[1] = {parsed.val};
+    ExecResult compiled = call_value(compile_ast, compile_args, 1, caller);
+    if (compiled.is_error) { free(source); return compiled; }
+
+    /* 用 execute_bytecode_val 执行模块字节码 */
+    ExecResult executed = execute_bytecode_val(compiled.val, NULL);
+
+    free(source);
+    if (executed.is_error) return executed;
+    r.val = executed.val ? executed.val : val_nil();
+    return r;
 }
 
 Val *builtin_list_thoughts(Env *env) {
@@ -1753,6 +2034,267 @@ Val *builtin_http_delete(Val **args, int argc) {
     return builtin_http_response("DELETE", args, argc);
 }
 
+#ifdef _WIN32
+static int g_winsock_initialized = 0;
+
+static int winsock_init(void) {
+    if (g_winsock_initialized) return 0;
+    WSADATA wsaData;
+    int err = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (err != 0) return err;
+    g_winsock_initialized = 1;
+    return 0;
+}
+#endif
+
+Val *builtin_socket_create(Val **args, int argc) {
+#ifdef _WIN32
+    if (winsock_init() != 0) {
+        Val *result = val_dict();
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str("Winsock initialization failed"));
+        return result;
+    }
+#endif
+    int domain = AF_INET;
+    int type = SOCK_STREAM;
+    int protocol = 0;
+
+    if (argc >= 1 && args[0] && args[0]->type == V_STR) {
+        if (strcmp(args[0]->str, "udp") == 0 || strcmp(args[0]->str, "UDP") == 0) {
+            type = SOCK_DGRAM;
+        } else if (strcmp(args[0]->str, "ipv6") == 0 || strcmp(args[0]->str, "IPv6") == 0) {
+            domain = AF_INET6;
+        }
+    }
+
+    SOCKET_TYPE sock = socket(domain, type, protocol);
+    if (sock == SOCKET_ERROR_VAL) {
+        Val *result = val_dict();
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str(strerror(errno)));
+        return result;
+    }
+    if (!track_socket(sock)) {
+        close_socket_handle(sock);
+        Val *result = val_dict();
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str("socket registry capacity exceeded"));
+        return result;
+    }
+
+    Val *result = val_dict();
+    dict_set(result, "ok", val_bool(1));
+    dict_set(result, "fd", val_num((double)sock));
+    return result;
+}
+
+Val *builtin_socket_connect(Val **args, int argc) {
+    if (argc < 3) {
+        Val *result = val_dict();
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str("Usage: socket_connect(fd, host, port)"));
+        return result;
+    }
+
+    SOCKET_TYPE sock = (SOCKET_TYPE)(args[0]->num);
+    const char *host = (args[1]->type == V_STR) ? args[1]->str : "";
+    int port = (int)(args[2]->num);
+
+    struct addrinfo hints = {0};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    struct addrinfo *addr_result = NULL;
+    char port_str[16];
+    sprintf(port_str, "%d", port);
+
+    int err = getaddrinfo(host, port_str, &hints, &addr_result);
+    if (err != 0) {
+        Val *result = val_dict();
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str("getaddrinfo failed"));
+        return result;
+    }
+
+    int connect_err = -1;
+    for (struct addrinfo *p = addr_result; p != NULL; p = p->ai_next) {
+        connect_err = connect(sock, p->ai_addr, (int)p->ai_addrlen);
+        if (connect_err == 0) break;
+    }
+    freeaddrinfo(addr_result);
+
+    Val *result = val_dict();
+    if (connect_err == 0) {
+        dict_set(result, "ok", val_bool(1));
+    } else {
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str(strerror(errno)));
+    }
+    return result;
+}
+
+Val *builtin_socket_send(Val **args, int argc) {
+    if (argc < 2) {
+        Val *result = val_dict();
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str("Usage: socket_send(fd, data)"));
+        return result;
+    }
+
+    SOCKET_TYPE sock = (SOCKET_TYPE)(args[0]->num);
+    const char *data = (args[1]->type == V_STR) ? args[1]->str : "";
+    size_t len = strlen(data);
+
+    ssize_t sent = send(sock, data, len, 0);
+
+    Val *result = val_dict();
+    if (sent >= 0) {
+        dict_set(result, "ok", val_bool(1));
+        dict_set(result, "sent", val_num((double)sent));
+    } else {
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str(strerror(errno)));
+    }
+    return result;
+}
+
+Val *builtin_socket_recv(Val **args, int argc) {
+    if (argc < 1) {
+        Val *result = val_dict();
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str("Usage: socket_recv(fd, [buffer_size])"));
+        return result;
+    }
+
+    SOCKET_TYPE sock = (SOCKET_TYPE)(args[0]->num);
+    int buf_size = (argc >= 2) ? (int)(args[1]->num) : 4096;
+
+    char *buffer = malloc(buf_size + 1);
+    if (!buffer) {
+        Val *result = val_dict();
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str("Memory allocation failed"));
+        return result;
+    }
+
+    ssize_t received = recv(sock, buffer, buf_size, 0);
+
+    Val *result = val_dict();
+    if (received >= 0) {
+        buffer[received] = '\0';
+        dict_set(result, "ok", val_bool(1));
+        dict_set(result, "data", val_str(buffer));
+        dict_set(result, "received", val_num((double)received));
+    } else {
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str(strerror(errno)));
+    }
+    free(buffer);
+    return result;
+}
+
+Val *builtin_socket_close(Val **args, int argc) {
+    if (argc < 1) {
+        Val *result = val_dict();
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str("Usage: socket_close(fd)"));
+        return result;
+    }
+
+    SOCKET_TYPE sock = (SOCKET_TYPE)(args[0]->num);
+#ifdef _WIN32
+    int err = closesocket(sock);
+#else
+    int err = close(sock);
+#endif
+
+    Val *result = val_dict();
+    if (err == 0) {
+        untrack_socket(sock);
+        dict_set(result, "ok", val_bool(1));
+    } else {
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str(strerror(errno)));
+    }
+    return result;
+}
+
+Val *builtin_socket_listen(Val **args, int argc) {
+    if (argc < 2) {
+        Val *result = val_dict();
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str("Usage: socket_listen(fd, port)"));
+        return result;
+    }
+
+#ifdef _WIN32
+    if (winsock_init() != 0) {
+        Val *result = val_dict();
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str("Winsock initialization failed"));
+        return result;
+    }
+#endif
+
+    SOCKET_TYPE sock = (SOCKET_TYPE)(args[0]->num);
+    int port = (int)(args[1]->num);
+
+    struct sockaddr_in addr = {0};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(port);
+
+    int err = bind(sock, (struct sockaddr *)&addr, sizeof(addr));
+    if (err != 0) {
+        Val *result = val_dict();
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str(strerror(errno)));
+        return result;
+    }
+
+    err = listen(sock, 5);
+    Val *result = val_dict();
+    if (err == 0) {
+        dict_set(result, "ok", val_bool(1));
+    } else {
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str(strerror(errno)));
+    }
+    return result;
+}
+
+Val *builtin_socket_accept(Val **args, int argc) {
+    if (argc < 1) {
+        Val *result = val_dict();
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str("Usage: socket_accept(fd)"));
+        return result;
+    }
+
+    SOCKET_TYPE sock = (SOCKET_TYPE)(args[0]->num);
+    struct sockaddr_in addr;
+    socklen_t addr_len = sizeof(addr);
+
+    SOCKET_TYPE client_sock = accept(sock, (struct sockaddr *)&addr, &addr_len);
+
+    Val *result = val_dict();
+    if (client_sock != SOCKET_ERROR_VAL) {
+        if (track_socket(client_sock)) {
+            dict_set(result, "ok", val_bool(1));
+            dict_set(result, "fd", val_num((double)client_sock));
+        } else {
+            close_socket_handle(client_sock);
+            dict_set(result, "ok", val_bool(0));
+            dict_set(result, "error", val_str("socket registry capacity exceeded"));
+        }
+    } else {
+        dict_set(result, "ok", val_bool(0));
+        dict_set(result, "error", val_str(strerror(errno)));
+    }
+    return result;
+}
+
 typedef struct {
     Instr *instrs;
     int instr_count;
@@ -1769,6 +2311,7 @@ BytecodeParts bytecode_from_val(Val *bc) {
 
     parts.const_count = constants_val && constants_val->type == V_LIST ? constants_val->len : 0;
     parts.constants = calloc(parts.const_count, sizeof(Val *));
+    arena_register(&g_instr_arena, parts.constants);
     for (int i = 0; i < parts.const_count; i++) {
         parts.constants[i] = constants_val->items[i];
     }
@@ -1814,7 +2357,11 @@ Val *builtin_run_bytecode(Val **args, int argc, Env *global) {
         free(parts.instrs[i].str_arg);
     }
     free(parts.instrs);
-    if (result.is_error) return val_str(result.error);
+    if (result.is_error) {
+        Val *error = val_str(result.error);
+        free(result.error);
+        return error;
+    }
     return result.val ? result.val : val_nil();
 }
 
@@ -1835,6 +2382,10 @@ static void register_builtins(Env *global) {
     env_set(global, "float", val_str("float"));
     env_set(global, "abs", val_str("abs"));
     env_set(global, "floor", val_str("floor"));
+    env_set(global, "ceil", val_str("ceil"));
+    env_set(global, "max", val_str("max"));
+    env_set(global, "min", val_str("min"));
+    env_set(global, "round", val_str("round"));
     env_set(global, "slice", val_str("slice"));
     env_set(global, "ord", val_str("ord"));
     env_set(global, "chr", val_str("chr"));
@@ -1842,9 +2393,14 @@ static void register_builtins(Env *global) {
     env_set(global, "is_list", val_str("is_list"));
     env_set(global, "is_dict", val_str("is_dict"));
     env_set(global, "is_none", val_str("is_none"));
+    env_set(global, "is_int", val_str("is_int"));
+    env_set(global, "bool", val_str("bool"));
+    env_set(global, "to_float", val_str("to_float"));
     env_set(global, "has", val_str("has"));
     env_set(global, "keys", val_str("keys"));
     env_set(global, "items", val_str("items"));
+    env_set(global, "values", val_str("values"));
+    env_set(global, "merge", val_str("merge"));
     env_set(global, "type", val_str("type"));
     env_set(global, "print", val_str("print"));
     env_set(global, "and", val_str("and"));
@@ -1867,8 +2423,13 @@ static void register_builtins(Env *global) {
     env_set(global, "sqlite_close", val_str("sqlite_close"));
     env_set(global, "dao_data_dir", val_str("dao_data_dir"));
     env_set(global, "dao_data_path", val_str("dao_data_path"));
+    env_set(global, "getenv", val_str("getenv"));
     env_set(global, "system", val_str("system"));
+    env_set(global, "range", val_str("range"));
+    env_set(global, "sleep", val_str("sleep"));
+    env_set(global, "exit", val_str("exit"));
     env_set(global, "parse", val_str("parse"));
+    env_set(global, "load_ku", val_str("load_ku"));
     env_set(global, "list_thoughts", val_str("list_thoughts"));
     env_set(global, "json_parse", val_str("json_parse"));
     env_set(global, "json_stringify", val_str("json_stringify"));
@@ -1878,6 +2439,13 @@ static void register_builtins(Env *global) {
     env_set(global, "http_post", val_str("http_post"));
     env_set(global, "http_put", val_str("http_put"));
     env_set(global, "http_delete", val_str("http_delete"));
+    env_set(global, "socket_create", val_str("socket_create"));
+    env_set(global, "socket_connect", val_str("socket_connect"));
+    env_set(global, "socket_send", val_str("socket_send"));
+    env_set(global, "socket_recv", val_str("socket_recv"));
+    env_set(global, "socket_close", val_str("socket_close"));
+    env_set(global, "socket_listen", val_str("socket_listen"));
+    env_set(global, "socket_accept", val_str("socket_accept"));
     env_set(global, "run_bytecode", val_str("run_bytecode"));
 }
 
@@ -1938,6 +2506,29 @@ static char *read_stdin_all(size_t *out_len) {
     }
     data[len] = '\0';
     if (out_len) *out_len = len;
+    return data;
+}
+
+static char *read_stdin_line(void) {
+    size_t cap = 1024;
+    size_t len = 0;
+    char *data = malloc(cap);
+    if (!data) return NULL;
+    int ch;
+    while ((ch = getchar()) != EOF) {
+        if (ch == '\n') break;
+        if (ch == '\r') continue;
+        if (len + 1 >= cap) {
+            size_t next_cap = cap * 2;
+            char *next = realloc(data, next_cap);
+            if (!next) { free(data); return NULL; }
+            data = next;
+            cap = next_cap;
+        }
+        data[len++] = (char)ch;
+    }
+    if (ch == EOF && len == 0) { free(data); return NULL; }
+    data[len] = '\0';
     return data;
 }
 
@@ -2212,25 +2803,6 @@ static int append_imports_from_source(StrBuf *out, const char *source, const cha
     return 1;
 }
 
-static char *read_source_files(int count, char **paths, const char *repo_root) {
-    StrBuf out;
-    ModuleLoadContext ctx = {0};
-    sb_init(&out);
-
-    for (int i = 0; i < count; i++) {
-        if (!collect_source_file(&out, paths[i], repo_root, &ctx)) {
-            string_list_free(&ctx.loaded_paths);
-            string_list_free(&ctx.alias_exports);
-            free(out.data);
-            return NULL;
-        }
-    }
-
-    string_list_free(&ctx.loaded_paths);
-    string_list_free(&ctx.alias_exports);
-    return out.data;
-}
-
 static Val *parse_json_value(const char *input) {
     JSParse j = {input, 0};
     js_skip(&j);
@@ -2270,11 +2842,12 @@ static Instr instr_num(const char *op, double arg) {
     return i;
 }
 
-static ExecResult execute_source_with_bootstrap(Env *global, const char *source) {
+static ExecResult compile_source_with_bootstrap(Env *compiler_global, const char *source) {
     Val **constants = calloc(1, sizeof(Val *));
+    arena_register(&g_instr_arena, constants);
     constants[0] = val_str(source);
 
-    Instr *instrs = calloc(18, sizeof(Instr));
+    Instr *instrs = calloc(14, sizeof(Instr));
     int pc = 0;
     instrs[pc++] = instr_num("LOAD_CONST", 0);
     instrs[pc++] = instr_str("STORE_NAME", "source");
@@ -2289,17 +2862,74 @@ static ExecResult execute_source_with_bootstrap(Env *global, const char *source)
     instrs[pc++] = instr_str("LOAD_NAME", "compile_ast");
     instrs[pc++] = instr_str("LOAD_NAME", "ast");
     instrs[pc++] = instr_num("CALL", 1);
-    instrs[pc++] = instr_str("STORE_NAME", "bytecode");
-    instrs[pc++] = instr_str("LOAD_NAME", "run_bytecode");
-    instrs[pc++] = instr_str("LOAD_NAME", "bytecode");
-    instrs[pc++] = instr_num("CALL", 1);
     instrs[pc++] = instr0("RETURN");
 
-    Frame *frame = frame_new(instrs, pc, constants, 1, global, NULL);
+    Env *compile_env = env_new(compiler_global);
+    Frame *frame = frame_new(instrs, pc, constants, 1, compile_env, NULL);
     ExecResult result = exec_frame(frame);
-    /* constants 被 MAKE_FUNCTION 持有的 val_fn 共享，不可释放 */
     for (int i = 0; i < pc; i++) { free(instrs[i].op); free(instrs[i].str_arg); }
     free(instrs);
+    return result;
+}
+
+static ExecResult execute_source_with_bootstrap(Env *compiler_global, Env *runtime_env,
+                                                const char *source) {
+    ExecResult compiled = compile_source_with_bootstrap(compiler_global, source);
+    if (compiled.is_error) return compiled;
+    return execute_bytecode_val(compiled.val, runtime_env);
+}
+
+static ExecResult execute_runtime_files(Env *compiler_global, Env *runtime_env,
+                                         int count, char **paths,
+                                         const char *repo_root) {
+    ModuleLoadContext ctx = {0};
+    ExecResult result = {0, 0, NULL, NULL};
+    Val **compiled_sources = calloc(count, sizeof(Val *));
+
+    /* Compile every source against the unshadowed bootstrap environment first. */
+    for (int i = 0; i < count; i++) {
+        if (!str_has_suffix(paths[i], ".kub.json")) {
+            StrBuf source;
+            sb_init(&source);
+            if (!collect_source_file(&source, paths[i], repo_root, &ctx)) {
+                free(source.data);
+                result = exec_error("unable to read module source");
+                break;
+            }
+            result = compile_source_with_bootstrap(compiler_global, source.data);
+            free(source.data);
+            if (result.is_error) break;
+            compiled_sources[i] = result.val;
+        }
+    }
+
+    for (int i = 0; !result.is_error && i < count; i++) {
+        if (str_has_suffix(paths[i], ".kub.json")) {
+            char *snapshot = read_text_file(paths[i], NULL);
+            if (!snapshot) {
+                result = exec_error("unable to read module snapshot");
+                break;
+            }
+            Val *bytecode = parse_json_value(snapshot);
+            free(snapshot);
+            Val *constants = bytecode && bytecode->type == V_DICT
+                ? dict_get(bytecode, "constants") : NULL;
+            Val *instructions = bytecode && bytecode->type == V_DICT
+                ? dict_get(bytecode, "instructions") : NULL;
+            if (!constants || constants->type != V_LIST ||
+                !instructions || instructions->type != V_LIST) {
+                result = exec_error("invalid module snapshot");
+                break;
+            }
+            result = execute_bytecode_val(bytecode, runtime_env);
+        } else {
+            result = execute_bytecode_val(compiled_sources[i], runtime_env);
+        }
+    }
+
+    free(compiled_sources);
+    string_list_free(&ctx.loaded_paths);
+    string_list_free(&ctx.alias_exports);
     return result;
 }
 
@@ -2307,6 +2937,181 @@ static void print_usage(const char *argv0) {
     fprintf(stderr, "用法:\n");
     fprintf(stderr, "  %s [bytecode.kub.json]\n", argv0);
     fprintf(stderr, "  %s --bootstrap frontend_bootstrap.kub.json [module.ku ...] program.ku\n", argv0);
+    fprintf(stderr, "  %s --serve frontend_bootstrap.kub.json [module.ku ...]\n", argv0);
+}
+
+static void print_server_error(int request_id, const char *message) {
+    StrBuf escaped;
+    sb_init(&escaped);
+    sb_append_json_escaped(&escaped, message ? message : "unknown runtime error");
+    printf("{\"id\":%d,\"ok\":false,\"error\":%s}\n", request_id, escaped.data);
+    fflush(stdout);
+    free(escaped.data);
+}
+
+static void print_server_result(int request_id, Val *value) {
+    char *json = val_to_json_string(value);
+    printf("{\"id\":%d,\"ok\":true,\"value\":%s}\n", request_id, json);
+    fflush(stdout);
+    free(json);
+}
+
+static void close_request_db_connections(sqlite3 *const *baseline) {
+    for (int i = 0; i < MAX_DB_CONNS; i++) {
+        if (db_conns[i] && db_conns[i] != baseline[i]) {
+            sqlite3_close(db_conns[i]);
+            db_conns[i] = NULL;
+        }
+    }
+}
+
+static void close_request_sockets(const TrackedSocket *baseline) {
+    for (int i = 0; i < MAX_TRACKED_SOCKETS; i++) {
+        if (tracked_sockets[i].active &&
+            (!baseline[i].active || tracked_sockets[i].value != baseline[i].value)) {
+            close_socket_handle(tracked_sockets[i].value);
+            tracked_sockets[i].active = 0;
+        }
+    }
+}
+
+typedef struct RequestContainerSnapshot {
+    Val *value;
+    Val **items;
+    int len;
+    int cap;
+    DictEntry *entries;
+    struct RequestContainerSnapshot *next;
+} RequestContainerSnapshot;
+
+static DictEntry *copy_dict_entries(DictEntry *source) {
+    DictEntry *head = NULL;
+    DictEntry **tail = &head;
+    for (DictEntry *entry = source; entry; entry = entry->next) {
+        DictEntry *copy = calloc(1, sizeof(DictEntry));
+        copy->key = strdup(entry->key);
+        copy->val = entry->val;
+        *tail = copy;
+        tail = &copy->next;
+    }
+    return head;
+}
+
+static void free_dict_entries(DictEntry *entries) {
+    while (entries) {
+        DictEntry *next = entries->next;
+        free(entries->key);
+        free(entries);
+        entries = next;
+    }
+}
+
+static RequestContainerSnapshot *snapshot_baseline_containers(ArenaMark baseline) {
+    RequestContainerSnapshot *snapshots = NULL;
+    for (long i = 0; i < baseline.vals; i++) {
+        Val *value = (Val *)g_val_arena.items[i];
+        if (!value || (value->type != V_LIST && value->type != V_DICT)) continue;
+        RequestContainerSnapshot *snapshot = calloc(1, sizeof(RequestContainerSnapshot));
+        snapshot->value = value;
+        snapshot->next = snapshots;
+        snapshots = snapshot;
+        if (value->type == V_LIST) {
+            snapshot->len = value->len;
+            snapshot->cap = value->cap;
+            if (value->cap > 0) {
+                snapshot->items = calloc(value->cap, sizeof(Val *));
+                memcpy(snapshot->items, value->items, value->len * sizeof(Val *));
+            }
+        } else {
+            snapshot->entries = copy_dict_entries(value->entries);
+        }
+    }
+    return snapshots;
+}
+
+static void restore_baseline_containers(RequestContainerSnapshot *snapshots) {
+    while (snapshots) {
+        RequestContainerSnapshot *next = snapshots->next;
+        if (snapshots->value->type == V_LIST) {
+            free(snapshots->value->items);
+            snapshots->value->items = snapshots->items;
+            snapshots->value->len = snapshots->len;
+            snapshots->value->cap = snapshots->cap;
+        } else {
+            free_dict_entries(snapshots->value->entries);
+            snapshots->value->entries = snapshots->entries;
+        }
+        free(snapshots);
+        snapshots = next;
+    }
+}
+
+static void report_request_arena_stats(void) {
+    const char *flag = getenv("DAO_GC_STATS");
+    if (!flag || flag[0] == '\0' || flag[0] == '0') return;
+    fprintf(stderr,
+            "[dao-gc-request] val_active=%ld env_active=%ld frame_active=%ld aux_active=%ld\n",
+            g_val_arena.count, g_env_arena.count,
+            g_frame_arena.count, g_instr_arena.count);
+    fflush(stderr);
+}
+
+static int serve_sources(Env *compiler_global, Env *profile_global) {
+    g_serve_mode = 1;
+    printf("{\"ready\":true}\n");
+    fflush(stdout);
+    for (;;) {
+        char *line = read_stdin_line();
+        if (!line) break;
+        if (line[0] == '\0') { free(line); continue; }
+        ArenaMark request_mark = arena_mark();
+        Val *request = parse_json_value(line);
+        free(line);
+        if (!request || request->type != V_DICT) {
+            print_server_error(0, "worker request must be a JSON object");
+            arena_release_to(request_mark);
+            report_request_arena_stats();
+            continue;
+        }
+        Val *id_val = dict_get(request, "id");
+        Val *source_val = dict_get(request, "source");
+        int request_id = id_val && id_val->type == V_NUM ? (int)id_val->num : 0;
+        if (!source_val || source_val->type != V_STR) {
+            print_server_error(request_id, "worker request source must be a string");
+            arena_release_to(request_mark);
+            report_request_arena_stats();
+            continue;
+        }
+        sqlite3 *db_baseline[MAX_DB_CONNS];
+        for (int i = 0; i < MAX_DB_CONNS; i++) db_baseline[i] = db_conns[i];
+        TrackedSocket socket_baseline[MAX_TRACKED_SOCKETS];
+        for (int i = 0; i < MAX_TRACKED_SOCKETS; i++) {
+            socket_baseline[i] = tracked_sockets[i];
+        }
+        RequestContainerSnapshot *container_baseline =
+            snapshot_baseline_containers(request_mark);
+        Env *request_env = env_new(profile_global);
+        ExecResult result = execute_source_with_bootstrap(
+            compiler_global, request_env, source_val->str);
+        if (result.is_error) {
+            print_server_error(request_id, result.error);
+            free(result.error);
+            close_request_db_connections(db_baseline);
+            close_request_sockets(socket_baseline);
+            restore_baseline_containers(container_baseline);
+            arena_release_to(request_mark);
+            report_request_arena_stats();
+            continue;
+        }
+        print_server_result(request_id, result.val);
+        close_request_db_connections(db_baseline);
+        close_request_sockets(socket_baseline);
+        restore_baseline_containers(container_baseline);
+        arena_release_to(request_mark);
+        report_request_arena_stats();
+    }
+    g_serve_mode = 0;
+    return 0;
 }
 
 /* ═══════════════════════════════════════════
@@ -2577,6 +3382,10 @@ static ExecResult exec_frame(Frame *f) {
                 else if (strcmp(name, "float") == 0) result = builtin_float(args, argc);
                 else if (strcmp(name, "abs") == 0) result = builtin_abs(args, argc);
                 else if (strcmp(name, "floor") == 0) result = builtin_floor(args, argc);
+                else if (strcmp(name, "ceil") == 0) result = builtin_ceil(args, argc);
+                else if (strcmp(name, "max") == 0) result = builtin_max(args, argc);
+                else if (strcmp(name, "min") == 0) result = builtin_min(args, argc);
+                else if (strcmp(name, "round") == 0) result = builtin_round(args, argc);
                 else if (strcmp(name, "slice") == 0) result = builtin_slice(args, argc);
                 else if (strcmp(name, "ord") == 0) result = builtin_ord(args, argc);
                 else if (strcmp(name, "chr") == 0) result = builtin_chr(args, argc);
@@ -2584,9 +3393,14 @@ static ExecResult exec_frame(Frame *f) {
                 else if (strcmp(name, "is_list") == 0) result = builtin_is_list(args, argc);
                 else if (strcmp(name, "is_dict") == 0) result = builtin_is_dict(args, argc);
                 else if (strcmp(name, "is_none") == 0) result = builtin_is_none(args, argc);
+                else if (strcmp(name, "is_int") == 0) result = builtin_is_int(args, argc);
+                else if (strcmp(name, "bool") == 0) result = builtin_bool(args, argc);
+                else if (strcmp(name, "to_float") == 0) result = builtin_to_float(args, argc);
                 else if (strcmp(name, "has") == 0) result = builtin_has(args, argc);
                 else if (strcmp(name, "keys") == 0) result = builtin_keys(args, argc);
                 else if (strcmp(name, "items") == 0) result = builtin_items(args, argc);
+                else if (strcmp(name, "values") == 0) result = builtin_values(args, argc);
+                else if (strcmp(name, "merge") == 0) result = builtin_merge(args, argc);
                 else if (strcmp(name, "type") == 0) result = builtin_type(args, argc);
                 else if (strcmp(name, "print") == 0) result = builtin_print(args, argc);
                 else if (strcmp(name, "and") == 0 || strcmp(name, "且") == 0) result = builtin_and(args, argc);
@@ -2622,7 +3436,11 @@ static ExecResult exec_frame(Frame *f) {
                 else if (strcmp(name, "sqlite_close") == 0) result = builtin_sqlite_close(args, argc);
                 else if (strcmp(name, "dao_data_dir") == 0) result = builtin_dao_data_dir(args, argc);
                 else if (strcmp(name, "dao_data_path") == 0) result = builtin_dao_data_path(args, argc);
+                else if (strcmp(name, "getenv") == 0) result = builtin_getenv(args, argc);
                 else if (strcmp(name, "system") == 0) result = builtin_system(args, argc);
+                else if (strcmp(name, "range") == 0) result = builtin_range(args, argc);
+                else if (strcmp(name, "sleep") == 0) result = builtin_sleep(args, argc);
+                else if (strcmp(name, "exit") == 0) result = builtin_exit(args, argc);
                 else if (strcmp(name, "parse") == 0) {
                     ExecResult pr = builtin_parse(args, argc, f);
                     if (pr.is_error) {
@@ -2636,6 +3454,19 @@ static ExecResult exec_frame(Frame *f) {
                     }
                     result = pr.val;
                 }
+                else if (strcmp(name, "load_ku") == 0) {
+                    ExecResult lr = builtin_load_ku(args, argc, f);
+                    if (lr.is_error) {
+                        if (frame_raise(f, lr.error)) {
+                            free(lr.error);
+                            free(args);
+                            continue;
+                        }
+                        free(args);
+                        return lr;
+                    }
+                    result = lr.val;
+                }
                 else if (strcmp(name, "list_thoughts") == 0) result = builtin_list_thoughts(f->env);
                 else if (strcmp(name, "json_parse") == 0) result = builtin_json_parse(args, argc);
                 else if (strcmp(name, "json_stringify") == 0) result = builtin_json_stringify(args, argc);
@@ -2645,6 +3476,13 @@ static ExecResult exec_frame(Frame *f) {
                 else if (strcmp(name, "http_post") == 0) result = builtin_http_post(args, argc);
                 else if (strcmp(name, "http_put") == 0) result = builtin_http_put(args, argc);
                 else if (strcmp(name, "http_delete") == 0) result = builtin_http_delete(args, argc);
+                else if (strcmp(name, "socket_create") == 0) result = builtin_socket_create(args, argc);
+                else if (strcmp(name, "socket_connect") == 0) result = builtin_socket_connect(args, argc);
+                else if (strcmp(name, "socket_send") == 0) result = builtin_socket_send(args, argc);
+                else if (strcmp(name, "socket_recv") == 0) result = builtin_socket_recv(args, argc);
+                else if (strcmp(name, "socket_close") == 0) result = builtin_socket_close(args, argc);
+                else if (strcmp(name, "socket_listen") == 0) result = builtin_socket_listen(args, argc);
+                else if (strcmp(name, "socket_accept") == 0) result = builtin_socket_accept(args, argc);
                 else if (strcmp(name, "run_bytecode") == 0) result = builtin_run_bytecode(args, argc, f->env);
                 else {
                     char message[256];
@@ -2689,7 +3527,7 @@ static ExecResult exec_frame(Frame *f) {
             for (int i = 0; i < n; i++) {
                 Val *val = frame_pop(f);
                 Val *key = frame_pop(f);
-                dict_set(dict, key->str, val);
+                dict_set(dict, key->str, val_copy(val));
             }
             frame_push(f, dict);
             f->pc++;
@@ -2762,6 +3600,15 @@ static ExecResult exec_frame(Frame *f) {
             } else {
                 frame_push(f, val_nil());
             }
+            f->pc++;
+        }
+        else if (strcmp(op, "SET_ATTR") == 0) {
+            Val *val = frame_pop(f);
+            Val *obj = frame_pop(f);
+            if (obj->type == V_DICT) {
+                dict_set(obj, instr->str_arg, val);
+            }
+            frame_push(f, val);
             f->pc++;
         }
         else if (strcmp(op, "LOOP_BEGIN") == 0) {
@@ -2843,6 +3690,25 @@ static ExecResult exec_frame(Frame *f) {
             }
             free(message);
         }
+        else if (strcmp(op, "IMPORT") == 0) {
+            Val *path_arg = val_str(instr->str_arg);
+            ExecResult lr = builtin_load_ku(&path_arg, 1, f);
+            if (lr.is_error) {
+                if (frame_raise(f, lr.error)) {
+                    free(lr.error);
+                    continue;
+                }
+                return lr;
+            }
+            frame_push(f, lr.val ? lr.val : val_nil());
+            f->pc++;
+        }
+        else if (strcmp(op, "BREAK") == 0) {
+            f->pc++;
+        }
+        else if (strcmp(op, "CONTEXT_COMPRESS") == 0) {
+            f->pc++;
+        }
         else if (strcmp(op, "NOP") == 0) {
             f->pc++;
         }
@@ -2869,11 +3735,11 @@ static ExecResult exec_frame(Frame *f) {
  *    V_FN.closure 指向另一个 Env，由 env_arena 自己回收
  *  四个竞技场都是扁平列表，回收顺序与引用无关，天然免疫 env<->closure 环。
  * ═══════════════════════════════════════════ */
-static void arena_freeall(void) {
+static void arena_release_to(ArenaMark mark) {
     if (!g_arena_enabled) return;
 
-    /* 第一遍：释放 V_FN 的 body 和 params（MAKE_FUNCTION 的独有副本） */
-    for (long i = 0; i < g_val_arena.count; i++) {
+    /* First release function-owned buffers while their Val metadata is intact. */
+    for (long i = mark.vals; i < g_val_arena.count; i++) {
         Val *v = (Val *)g_val_arena.items[i];
         if (!v || v->type != V_FN) continue;
         if (v->body) {
@@ -2891,8 +3757,7 @@ static void arena_freeall(void) {
         }
         /* 不释放 v->constants（frame 共享）和 v->closure（env_arena 管理） */
     }
-    /* 第二遍：释放 Val 的标量字段 */
-    for (long i = 0; i < g_val_arena.count; i++) {
+    for (long i = mark.vals; i < g_val_arena.count; i++) {
         Val *v = (Val *)g_val_arena.items[i];
         if (!v) continue;
         if (v->str) free(v->str);
@@ -2907,12 +3772,9 @@ static void arena_freeall(void) {
         free(v);
         g_val_freed++;
     }
-    free(g_val_arena.items);
-    g_val_arena.items = NULL;
-    g_val_arena.count = g_val_arena.cap = 0;
+    g_val_arena.count = mark.vals;
 
-    /* env_set 批次：释放 Env 内的 names 字符串和指针数组 */
-    for (long i = 0; i < g_env_arena.count; i++) {
+    for (long i = mark.envs; i < g_env_arena.count; i++) {
         Env *e = (Env *)g_env_arena.items[i];
         if (!e) continue;
         for (int n = 0; n < e->count; n++) {
@@ -2923,20 +3785,34 @@ static void arena_freeall(void) {
         free(e);
         g_env_freed++;
     }
-    free(g_env_arena.items);
-    g_env_arena.items = NULL;
-    g_env_arena.count = g_env_arena.cap = 0;
+    g_env_arena.count = mark.envs;
 
-    /* Frame 批次：Frame 不含自有堆字段 */
-    for (long i = 0; i < g_frame_arena.count; i++) {
+    for (long i = mark.frames; i < g_frame_arena.count; i++) {
         Frame *f = (Frame *)g_frame_arena.items[i];
         if (!f) continue;
         free(f);
         g_frame_freed++;
     }
+    g_frame_arena.count = mark.frames;
+
+    for (long i = mark.aux; i < g_instr_arena.count; i++) {
+        free(g_instr_arena.items[i]);
+    }
+    g_instr_arena.count = mark.aux;
+}
+
+static void arena_freeall(void) {
+    ArenaMark empty = {0, 0, 0, 0};
+    arena_release_to(empty);
+    free(g_val_arena.items);
+    free(g_env_arena.items);
     free(g_frame_arena.items);
+    free(g_instr_arena.items);
+    g_val_arena.items = NULL;
+    g_env_arena.items = NULL;
     g_frame_arena.items = NULL;
-    g_frame_arena.count = g_frame_arena.cap = 0;
+    g_instr_arena.items = NULL;
+    g_val_arena.cap = g_env_arena.cap = g_frame_arena.cap = g_instr_arena.cap = 0;
 }
 
 static void arena_report_stats(void) {
@@ -2960,10 +3836,9 @@ int main(int argc, char **argv) {
     register_builtins(global);
 
     char *input = NULL;
-    char *source = NULL;
     ExecResult result = {0, 0, NULL, NULL};
 
-    if (argc >= 4 && strcmp(argv[1], "--bootstrap") == 0) {
+    if (argc >= 3 && strcmp(argv[1], "--serve") == 0) {
         input = read_text_file(argv[2], NULL);
         if (!input) return 1;
         Val *bootstrap_bc = parse_json_value(input);
@@ -2974,15 +3849,42 @@ int main(int argc, char **argv) {
             free(input);
             return 1;
         }
-
-        char *repo_root = repo_root_from_bootstrap(argv[2]);
-        source = read_source_files(argc - 3, argv + 3, repo_root);
-        free(repo_root);
-        if (!source) {
+        Env *profile_global = env_new(global);
+        if (argc > 3) {
+            char *repo_root = repo_root_from_bootstrap(argv[2]);
+            result = execute_runtime_files(
+                global, profile_global, argc - 3, argv + 3, repo_root);
+            free(repo_root);
+            if (result.is_error) {
+                fprintf(stderr, "RuntimeError: %s\n", result.error);
+                free(result.error);
+                free(input);
+                arena_freeall();
+                return 1;
+            }
+        }
+        int serve_status = serve_sources(global, profile_global);
+        free(input);
+        arena_freeall();
+        arena_report_stats();
+        return serve_status;
+    } else if (argc >= 4 && strcmp(argv[1], "--bootstrap") == 0) {
+        input = read_text_file(argv[2], NULL);
+        if (!input) return 1;
+        Val *bootstrap_bc = parse_json_value(input);
+        result = execute_bytecode_val(bootstrap_bc, global);
+        if (result.is_error) {
+            fprintf(stderr, "RuntimeError: %s\n", result.error);
+            free(result.error);
             free(input);
             return 1;
         }
-        result = execute_source_with_bootstrap(global, source);
+        Env *profile_global = env_new(global);
+
+        char *repo_root = repo_root_from_bootstrap(argv[2]);
+        result = execute_runtime_files(
+            global, profile_global, argc - 3, argv + 3, repo_root);
+        free(repo_root);
     } else if (argc == 1 || argc == 2) {
         input = argc == 2 ? read_text_file(argv[1], NULL) : read_stdin_all(NULL);
         if (!input) return 1;
@@ -2997,7 +3899,6 @@ int main(int argc, char **argv) {
         fprintf(stderr, "RuntimeError: %s\n", result.error);
         free(result.error);
         free(input);
-        free(source);
         arena_freeall();
         arena_report_stats();
         return 1;
@@ -3008,7 +3909,6 @@ int main(int argc, char **argv) {
     printf("\n");
 
     free(input);
-    free(source);
     arena_freeall();
     arena_report_stats();
     return 0;

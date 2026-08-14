@@ -1,0 +1,3 @@
+import "recursive_math" as math
+
+thought recursive_import_answer() { math_double(21) }

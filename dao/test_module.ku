@@ -1,0 +1,11 @@
+思 greet(name) {
+    返("你好, " + name + "!")
+}
+
+思 add(a, b) {
+    返(a + b)
+}
+
+version = "1.0.0"
+
+{"greet": greet, "add": add, "version": version}

@@ -1,0 +1,15 @@
+import sensor_distance(0)
+import sensor_bearing(0)
+import actuate(2)
+
+thought main() {
+  d = sensor_distance()
+  while d >= 50 {
+    b = sensor_bearing()
+    ax = 30
+    ay = 30
+    actuate(ax, ay)
+    d = sensor_distance()
+  }
+  return d
+}

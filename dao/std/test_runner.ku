@@ -1,0 +1,165 @@
+// std/test_runner.ku — 道语言测试运行器 (简化版)
+// 用法:
+//   引 "std/test_runner"
+//   tr_注册("test1", 测试_函数)
+//   报告 = 跑()
+//   跑并打印()
+
+tr_suite = {"tests": [], "passed": 0, "failed": 0, "errors": []}
+
+思 tr_注册(名, 函数) {
+  tr_suite["tests"] = tr_suite["tests"] + [{"name": 名, "fn": 函数}]
+  tr_suite
+}
+
+思 tr_重置() {
+  tr_suite["tests"] = []
+  tr_suite["passed"] = 0
+  tr_suite["failed"] = 0
+  tr_suite["errors"] = []
+  tr_suite
+}
+
+思 _记通过() {
+  tr_suite["passed"] = tr_suite["passed"] + 1
+}
+
+思 _记失败(msg) {
+  tr_suite["errors"] = tr_suite["errors"] + [msg]
+  tr_suite["failed"] = tr_suite["failed"] + 1
+}
+
+思 断言_相等(实际, 期望, 信息) {
+  若 is_none(信息) { 信息 = "" }
+  若 实际 == 期望 {
+    _记通过()
+  } 否 {
+    msg = "ASSERT_EQUAL 失败: 期望 " + str(期望) + ", 实际 " + str(实际)
+    若 信息 != "" { msg = msg + " (" + 信息 + ")" }
+    _记失败(msg)
+  }
+}
+
+思 断言_真(条件, 信息) {
+  断言_相等(条件, 真, 信息)
+}
+
+思 断言_假(条件, 信息) {
+  断言_相等(条件, 假, 信息)
+}
+
+思 断言_不等(实际, 期望, 信息) {
+  若 is_none(信息) { 信息 = "" }
+  若 实际 != 期望 {
+    _记通过()
+  } 否 {
+    msg = "ASSERT_NOT_EQUAL 失败: 不应等于 " + str(期望)
+    若 信息 != "" { msg = msg + " (" + 信息 + ")" }
+    _记失败(msg)
+  }
+}
+
+思 断言_近似(a, b, 容差, 信息) {
+  若 is_none(容差) { 容差 = 0.0001 }
+  若 is_none(信息) { 信息 = "" }
+  diff = a - b
+  若 diff < 0 { diff = 0 - diff }
+  若 diff <= 容差 {
+    _记通过()
+  } 否 {
+    msg = "ASSERT_NEAR 失败: 期望 " + str(b) + " ± " + str(容差) + ", 实际 " + str(a)
+    若 信息 != "" { msg = msg + " (" + 信息 + ")" }
+    _记失败(msg)
+  }
+}
+
+思 断言_长度(列表, 期望长度, 信息) {
+  断言_相等(len(列表), 期望长度, 信息)
+}
+
+思 断言_包含(列表, 元素, 信息) {
+  若 is_none(信息) { 信息 = "" }
+  found = 假
+  遍 x 于 列表 {
+    若 x == 元素 { found = 真 }
+  }
+  若 found {
+    _记通过()
+  } 否 {
+    msg = "ASSERT_CONTAINS 失败: 列表中无 " + str(元素)
+    若 信息 != "" { msg = msg + " (" + 信息 + ")" }
+    _记失败(msg)
+  }
+}
+
+思 跑() {
+  saved_passed = tr_suite["passed"]
+  saved_failed = tr_suite["failed"]
+  saved_errors = tr_suite["errors"]
+
+  本次通过 = 0
+  本次失败 = 0
+  results = []
+
+  遍 t 于 tr_suite["tests"] {
+    name = t["name"]
+    fn = t["fn"]
+
+    tr_suite["passed"] = 0
+    tr_suite["failed"] = 0
+    tr_suite["errors"] = []
+    fn()
+    子通过 = tr_suite["passed"]
+    子失败 = tr_suite["failed"]
+    子错误 = tr_suite["errors"]
+
+    result_item = {"name": name, "passed": 子失败 == 0}
+    若 子失败 > 0 {
+      result_item["errors"] = 子错误
+      本次失败 = 本次失败 + 1
+    } {
+      本次通过 = 本次通过 + 1
+    }
+    results = results + [result_item]
+
+    tr_suite["passed"] = saved_passed
+    tr_suite["failed"] = saved_failed
+    tr_suite["errors"] = saved_errors
+  }
+
+  tr_suite["passed"] = saved_passed + 本次通过
+  tr_suite["failed"] = saved_failed + 本次失败
+
+  {"results": results, "total": len(results), "passed": 本次通过, "failed": 本次失败}
+}
+
+思 跑并打印() {
+  r = 跑()
+  print("═══════════════════════════════════")
+  print("  道语言测试报告")
+  print("═══════════════════════════════════")
+  print("  总数: " + str(r["total"]))
+  print("  通过: " + str(r["passed"]))
+  print("  失败: " + str(r["failed"]))
+  print("───────────────────────────────────")
+  遍 item 于 r["results"] {
+    若 item["passed"] {
+      print("  ✓ " + item["name"])
+    } 否 {
+      print("  ✗ " + item["name"])
+      若 has(item, "errors") {
+        遍 e 于 item["errors"] {
+          print("      " + e)
+        }
+      }
+    }
+  }
+  print("═══════════════════════════════════")
+  若 r["failed"] == 0 {
+    print("  ALL PASSED")
+  } 否 {
+    print("  HAS FAILURES")
+  }
+  print("═══════════════════════════════════")
+  r
+}

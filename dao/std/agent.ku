@@ -1,0 +1,144 @@
+// std/agent.ku — Agent 自描述模块（规避 C VM dict 局部变量值 bug）
+
+agent_state = {"name": "", "description": "", "tasks": [], "decisions": [], "executions": [], "memory_ids": [], "created_at": "", "updated_at": ""}
+
+思 agent_init(名字, 描述) {
+  若 is_none(名字) { 名字 = "未命名Agent" }
+  若 is_none(描述) { 描述 = "" }
+  agent_state["name"] = 名字
+  agent_state["description"] = 描述
+  agent_state["tasks"] = []
+  agent_state["decisions"] = []
+  agent_state["executions"] = []
+  agent_state["memory_ids"] = []
+  agent_state["created_at"] = now_fmt()
+  agent_state["updated_at"] = now_fmt()
+  agent_state
+}
+
+思 agent_describe() {
+  r = {}
+  r["name"] = agent_state["name"]
+  r["description"] = agent_state["description"]
+  r["task_count"] = 长度(agent_state["tasks"])
+  r["decision_count"] = 长度(agent_state["decisions"])
+  r["execution_count"] = 长度(agent_state["executions"])
+  r["memory_count"] = 长度(agent_state["memory_ids"])
+  r["created_at"] = agent_state["created_at"]
+  r["updated_at"] = agent_state["updated_at"]
+  r["address"] = "dao://agent/" + agent_state["name"]
+  r
+}
+
+思 agent_task(任务名, 描述, 子任务列表) {
+  若 is_none(任务名) { 任务名 = "未命名任务" }
+  若 is_none(描述) { 描述 = "" }
+  若 is_none(子任务列表) { 子任务列表 = [] }
+  
+  任务 = {}
+  任务["name"] = 任务名
+  任务["description"] = 描述
+  任务["subtasks"] = 子任务列表
+  任务["status"] = "pending"
+  任务["created_at"] = now_fmt()
+  
+  agent_state["tasks"] = agent_state["tasks"] + [任务]
+  agent_state["updated_at"] = now_fmt()
+  
+  ret = {}
+  ret["task"] = 任务
+  ret["status"] = "recorded"
+  ret
+}
+
+思 agent_decide(决策名, 选项列表, 选择) {
+  若 is_none(决策名) { 决策名 = "未命名决策" }
+  若 is_none(选项列表) { 选项列表 = [] }
+  若 is_none(选择) { 选择 = "" }
+  
+  决策 = {}
+  决策["name"] = 决策名
+  决策["options"] = 选项列表
+  决策["choice"] = 选择
+  决策["status"] = "made"
+  决策["created_at"] = now_fmt()
+  
+  agent_state["decisions"] = agent_state["decisions"] + [决策]
+  agent_state["updated_at"] = now_fmt()
+  
+  ret = {}
+  ret["decision"] = 决策
+  ret["status"] = "recorded"
+  ret
+}
+
+思 agent_execute(执行名, 描述, 结果) {
+  若 is_none(执行名) { 执行名 = "未命名执行" }
+  若 is_none(描述) { 描述 = "" }
+  若 is_none(结果) { 结果 = {} }
+  
+  执行 = {}
+  执行["name"] = 执行名
+  执行["description"] = 描述
+  执行["result"] = 结果
+  执行["status"] = "completed"
+  执行["created_at"] = now_fmt()
+  
+  agent_state["executions"] = agent_state["executions"] + [执行]
+  agent_state["updated_at"] = now_fmt()
+  
+  ret = {}
+  ret["execution"] = 执行
+  ret["status"] = "recorded"
+  ret
+}
+
+思 agent_complete_task(任务名, 结果) {
+  若 is_none(结果) { 结果 = {} }
+  
+  ct = now_fmt()
+  更新后任务 = []
+  遍 t 于 agent_state["tasks"] {
+    若 t["name"] == 任务名 {
+      t["status"] = "completed"
+      t["result"] = 结果
+      t["completed_at"] = ct
+    }
+    更新后任务 = 更新后任务 + [t]
+  }
+  agent_state["tasks"] = 更新后任务
+  agent_state["updated_at"] = ct
+  
+  ret = {}
+  ret["task_name"] = 任务名
+  ret["status"] = "completed"
+  ret
+}
+
+思 agent_status() {
+  待处理 = 0
+  已完成 = 0
+  遍 t 于 agent_state["tasks"] {
+    若 t["status"] == "pending" { 待处理 = 待处理 + 1 }
+    若 t["status"] == "completed" { 已完成 = 已完成 + 1 }
+  }
+  
+  r = {}
+  r["name"] = agent_state["name"]
+  r["pending_tasks"] = 待处理
+  r["completed_tasks"] = 已完成
+  r["total_decisions"] = 长度(agent_state["decisions"])
+  r["total_executions"] = 长度(agent_state["executions"])
+  r["total_memories"] = 长度(agent_state["memory_ids"])
+  r["updated_at"] = agent_state["updated_at"]
+  r
+}
+
+思 agent_clear() {
+  agent_state["tasks"] = []
+  agent_state["decisions"] = []
+  agent_state["executions"] = []
+  agent_state["memory_ids"] = []
+  agent_state["updated_at"] = now_fmt()
+  agent_state
+}

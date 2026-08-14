@@ -1,7 +1,9 @@
 import json
 import os
+import sqlite3
 import subprocess
 import sys
+import time
 
 
 def send_request(proc, req_id, method, params=None):
@@ -22,6 +24,74 @@ def send_notification(proc, method):
 
 def tool_text(response):
     return json.loads(response["result"]["content"][0]["text"])
+
+
+def test_tools_list_reads_promotions_without_starting_c_vm(tmp_path):
+    data_dir = tmp_path / "dao_data"
+    data_dir.mkdir()
+    conn = sqlite3.connect(data_dir / "experience.db")
+    try:
+        conn.execute(
+            "CREATE TABLE memory_promotion (thought_name TEXT, tool_name TEXT, "
+            "description TEXT, status TEXT, updated_at TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO memory_promotion VALUES (?, ?, ?, 'active', ?)",
+            ("probe_memory", "ku_memory_probe_memory", "probe", "2026-01-01"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    env = os.environ.copy()
+    env["DAO_DATA_DIR"] = str(data_dir)
+    env.pop("DAO_CVM_PERSISTENT", None)
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "dao.mcp_server"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    try:
+        listed = send_request(proc, 1, "tools/list")
+        names = {tool["name"] for tool in listed["result"]["tools"]}
+        assert "ku_memory_probe_memory" in names
+        proc.stdin.close()
+        assert proc.wait(timeout=5) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=3)
+
+
+def test_default_ku_eval_uses_core_snapshot():
+    env = os.environ.copy()
+    env.pop("DAO_CVM_PERSISTENT", None)
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "dao.mcp_server"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    try:
+        response = send_request(proc, 1, "tools/call", {
+            "name": "ku_eval", "arguments": {"code": 'is_numeric("123")'},
+        })
+        assert tool_text(response) == {"result": True}
+        proc.stdin.close()
+        assert proc.wait(timeout=5) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=3)
 
 
 def test_dao_mcp_server_lists_and_calls_tools():
@@ -61,12 +131,17 @@ def test_dao_mcp_server_lists_and_calls_tools():
             "ku_search_experience",
             "ku_recall_memory",
             "ku_recall_memory_explain",
+            "ku_locate_memory",
             "ku_promote_memory",
             "ku_list_memory_promotions",
             "ku_suggest_memory_promotions",
             "ku_call_memory",
             "ku_record_dataset",
             "ku_record_data_memory",
+            "ku_graph_from_experience",
+            "ku_graph_search_memory",
+            "ku_graph_expand_memory",
+            "ku_graph_memory_stats",
         }.issubset(names)
         # 不应默认把每个 thought 展成单独工具。
         assert "ku_斐波那契" not in names
@@ -303,6 +378,69 @@ def test_promoted_memories_are_exposed_as_dynamic_mcp_tools(tmp_path):
         assert called["thought_name"] == "dao_thought_memory_identity"
         assert called["memory"]["id"] == recorded["id"]
         assert called["memory"]["topic"] == "Dao 原生对象"
+    finally:
+        if proc.stdin:
+            proc.stdin.close()
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def test_tools_list_reuses_promoted_memory_cache(tmp_path):
+    env = dict(os.environ)
+    env["DAO_DATA_DIR"] = str(tmp_path / "dao_data")
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "dao.mcp_server"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    try:
+        send_request(
+            proc,
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "pytest", "version": "0"},
+            },
+        )
+        send_notification(proc, "notifications/initialized")
+
+        start = time.perf_counter()
+        first = send_request(proc, 2, "tools/list")
+        first_elapsed = time.perf_counter() - start
+
+        start = time.perf_counter()
+        second = send_request(proc, 3, "tools/list")
+        second_elapsed = time.perf_counter() - start
+
+        assert len(first["result"]["tools"]) == len(second["result"]["tools"])
+        assert first_elapsed < 0.05
+        assert second_elapsed < 0.05
+
+        recorded = tool_text(send_request(proc, 4, "tools/call", {"name": "ku_record_data_memory", "arguments": {
+            "topic": "Dao cache refresh test",
+            "key": "dynamic-memory-cache",
+            "value_json": "{\"ok\":true}",
+            "tags": "dao,memory,cache",
+        }}))["result"]
+        tool_text(send_request(proc, 5, "tools/call", {"name": "ku_promote_memory", "arguments": {
+            "experience_id": recorded["id"],
+            "thought_name": "dynamic_memory_cache_refresh",
+            "description": "Dynamic memory cache refresh",
+        }}))
+
+        listed = send_request(proc, 6, "tools/list")
+        names = {tool["name"] for tool in listed["result"]["tools"]}
+        assert "ku_memory_dynamic_memory_cache_refresh" in names
     finally:
         if proc.stdin:
             proc.stdin.close()

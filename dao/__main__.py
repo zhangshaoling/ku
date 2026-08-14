@@ -1,4 +1,12 @@
 import sys
+import warnings
+
+warnings.warn(
+    "python -m dao (old CLI) is deprecated. "
+    "Use 'python bindings/python/dao_kernel/cli.py' for the new kernel CLI.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 def main():

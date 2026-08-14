@@ -1,0 +1,24 @@
+thought factorial(n) {
+  result = 1
+  while n > 1 {
+    result = result * n
+    n = n - 1
+  }
+  return result
+}
+
+thought collection_total() {
+  data = {"items": [2, 3, 5]}
+  total = 0
+  for item in data["items"] { total = total + item }
+  return total
+}
+
+thought protected() {
+  try { throw "handled" } catch error { return error }
+}
+
+thought canonical_edges(value) {
+  value = value
+  if value > 0 { -1 + 43 } else { 0 }
+}

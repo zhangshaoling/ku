@@ -1,6 +1,9 @@
 ;; parser.ku — 简化 Ku parser
 ;; 生成嵌套字典 AST
 
+import host_value_type(1)
+import host_string_to_i64(1)
+
 thought node(type, value, children) {
     { "type": type, "value": value, "children": children }
 }
@@ -85,7 +88,7 @@ thought _stmt(tokens, pos, end) {
     ;; 索引赋值: name[idx] = expr
     if (and(t["type"] == "name",
          and(< (+ (pos, 2), end),
-              tokens[+ (pos, 1)]["value"] == "[")) {
+              tokens[+ (pos, 1)]["value"] == "["))) {
         idx_end = _find_close(tokens, + (pos, 2), end, "[", "]")
         if (and(< (+ (idx_end, 1), end),
                 tokens[+ (idx_end, 1)]["value"] == "=")) {
@@ -378,7 +381,7 @@ thought _has_placeholder(node) {
         found = false
         while (and(< (i, len(node["children"])), not(found))) {
             c = node["children"][i]
-            if (type(c) == "dict") {
+            if (host_value_type(c) == "map") {
                 found = _has_placeholder(c)
             } {}
             i = + (i, 1)
@@ -395,7 +398,7 @@ thought _replace_placeholder(nd, replacement) {
         i = 0
         while (< (i, len(nd["children"]))) {
             c = nd["children"][i]
-            new_kids = if (type(c) == "dict") {
+            new_kids = if (host_value_type(c) == "map") {
                 push(new_kids, _replace_placeholder(c, replacement))
             } {
                 push(new_kids, c)
@@ -411,7 +414,7 @@ thought desugar_pipe(nd) {
     i = 0
     while (< (i, len(nd["children"]))) {
         c = nd["children"][i]
-        new_kids = if (type(c) == "dict") {
+        new_kids = if (host_value_type(c) == "map") {
             push(new_kids, desugar_pipe(c))
         } {
             push(new_kids, c)
@@ -468,7 +471,7 @@ thought _tail(arr) {
 thought _atom(tokens, pos, end) {
     t = tokens[pos]
     if (t["type"] == "number") {
-        num_val = if (str_contains(t["value"], ".")) { float(t["value"]) } { int(t["value"]) }
+        num_val = host_string_to_i64(t["value"])
         _res(node_lit(num_val), + (pos, 1))
     } {
     if (t["type"] == "string") {

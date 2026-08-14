@@ -62,7 +62,7 @@ _OP_BP = {
 }
 # Chinese keyword mapping
 _KW_CN = {
-    '思': 'thought', '若': 'if', '否': 'else',
+    '思': 'thought', '若': 'if', '若非': 'unless', '否': 'else',
     '当': 'while', '遍': 'for', '返': 'return',
     '断': 'break', '续': 'continue',
     '试': 'try', '捕': 'catch', '抛': 'throw', '终': 'finally',
@@ -163,6 +163,12 @@ def _stmt(tokens, pos, end):
     # if
     if t["type"] == "keyword" and _kw(t["value"]) == "if":
         return _parse_if(tokens, pos + 1, end)
+
+    # unless / 若非
+    if t["type"] == "keyword" and _kw(t["value"]) == "unless":
+        node, new_pos = _parse_if(tokens, pos + 1, end)
+        node["children"][0] = _op("not", node["children"][0], _lit(""))
+        return node, new_pos
 
     # while
     if t["type"] == "keyword" and _kw(t["value"]) == "while":

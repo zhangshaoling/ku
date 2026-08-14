@@ -1,3 +1,4 @@
+import warnings
 """
 天书 MCP Server v2 — 将天书运行时完整暴露为 MCP 工具
 
@@ -250,6 +251,12 @@ def get_tianshu_state():
 # ── MCP Server main ──
 
 def main():
+    warnings.warn(
+        "dao.mcp_server_v2 (old MCP server v2) is deprecated. "
+        "Use 'dao.mcp_server_kernel' for the new kernel MCP bridge.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     # 加载所有 .ku 文件
     env, loaded_files = load_all_ku_files()
 

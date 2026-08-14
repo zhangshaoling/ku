@@ -1,0 +1,39 @@
+// std/coroutine.ku — 道语言协程调度器 (简化版)
+// 用法:
+//   引 "std/coroutine"
+//   起(协程函数)        // 启动协程
+//   调度()              // 运行所有协程直到完成
+
+co_state = {"queue": []}
+
+思 起(函数) {
+  co_state["queue"] = co_state["queue"] + [{"fn": 函数, "state": "ready"}]
+  长度(co_state["queue"]) - 1
+}
+
+思 调度() {
+  结果 = []
+  遍 协程 于 co_state["queue"] {
+    fn = 协程["fn"]
+    协程["state"] = "running"
+    结果 = 结果 + [fn()]
+    协程["state"] = "done"
+  }
+  结果
+}
+
+思 协程数() {
+  长度(co_state["queue"])
+}
+
+思 清空协程() {
+  co_state["queue"] = []
+}
+
+思 协程状态(索引) {
+  若 索引 < 长度(co_state["queue"]) {
+    co_state["queue"][索引]["state"]
+  } 否 {
+    "不存在"
+  }
+}

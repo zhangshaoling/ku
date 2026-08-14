@@ -1,0 +1,26 @@
+// Migrated compositional subset of ku/std/io.ku.
+// Import with: import "std/io" as io
+
+import "ku:std/fs@1.0.0" as fs
+import "ku:std/string@1.0.0" as string
+
+thought file_exists(path) { fs_exists(path) }
+
+thought file_size(path) {
+  if fs_exists(path) { string_length(fs_read_text(path)) } else { 0 }
+}
+
+thought append_file(path, content) {
+  existing = fs_read_or(path, "")
+  fs_write_text(path, string_concat(existing, content))
+}
+
+thought append_line(path, line) {
+  existing = fs_read_or(path, "")
+  if string_not_empty(existing) { existing = string_concat(existing, "\n") }
+  fs_write_text(path, string_concat(existing, line))
+}
+
+thought read_or(path, default_value) { fs_read_or(path, default_value) }
+thought copy_file(source, destination) { fs_copy_file(source, destination) }
+thought safe_delete(path) { fs_safe_delete(path) }

@@ -1,0 +1,16 @@
+print("=== load_ku 运行时模块加载测试 ===")
+
+mod = load_ku("test_module.ku")
+print("module loaded: " + str(mod))
+print("version: " + str(mod["version"]))
+
+g = mod["greet"]
+r = g("小明")
+print("greet result: " + str(r))
+
+a = mod["add"]
+s = a(3, 7)
+print("add(3, 7): " + str(s))
+
+print()
+print("ALL load_ku TESTS PASSED")

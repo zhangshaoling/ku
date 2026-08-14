@@ -7,9 +7,11 @@ import sys
 import pytest
 
 
-def _spawn(data_dir):
+def _spawn(data_dir, runtime_timeout=None):
     env = dict(os.environ)
     env["DAO_DATA_DIR"] = str(data_dir)
+    if runtime_timeout is not None:
+        env["DAO_CVM_TIMEOUT"] = str(runtime_timeout)
     build = subprocess.run(
         [
             "powershell",
@@ -206,6 +208,54 @@ def test_memory_recall_uses_fts_and_preserves_utf8(tmp_path):
     assert fts_table is not None
 
 
+def test_memory_locate_returns_stable_address_and_promoted_route(tmp_path):
+    data_dir = tmp_path / "dao_data"
+
+    proc = _spawn(data_dir)
+    try:
+        _init(proc)
+
+        recorded = _text(_req(proc, 2, "tools/call", {"name": "ku_record_data_memory", "arguments": {
+            "topic": "Executable Memory Route",
+            "key": "data-code-memory-tool",
+            "value_json": "{\"rule\":\"data equals code equals memory equals tool\"}",
+            "tags": "dao,memory,capability",
+        }}))
+
+        located = _text(_req(proc, 3, "tools/call", {"name": "ku_locate_memory", "arguments": {
+            "query": "Executable Memory Route",
+            "kind": "data_memory",
+            "limit": 5,
+        }}))
+        assert located["count"] == 1
+        locator = located["locators"][0]
+        assert locator["id"] == recorded["id"]
+        assert locator["address"] == f"dao://experience/{recorded['id']}"
+        assert locator["route"]["store"] == "experience"
+        assert locator["route"]["table"] == "experience"
+        assert locator["route"]["id"] == recorded["id"]
+        assert locator["promoted"] is False
+        assert locator["tool_name"] == ""
+
+        _text(_req(proc, 4, "tools/call", {"name": "ku_promote_memory", "arguments": {
+            "experience_id": recorded["id"],
+            "thought_name": "executable_memory_route",
+            "description": "Executable memory route locator",
+        }}))
+
+        promoted_located = _text(_req(proc, 5, "tools/call", {"name": "ku_locate_memory", "arguments": {
+            "query": "Executable Memory Route",
+            "kind": "data_memory",
+            "limit": 5,
+        }}))
+        promoted_locator = promoted_located["locators"][0]
+        assert promoted_locator["promoted"] is True
+        assert promoted_locator["thought_name"] == "executable_memory_route"
+        assert promoted_locator["tool_name"] == "ku_memory_executable_memory_route"
+    finally:
+        _close(proc)
+
+
 def test_memory_promotion_makes_memory_callable(tmp_path):
     data_dir = tmp_path / "dao_data"
 
@@ -332,6 +382,69 @@ def test_promoted_memory_missing_target_returns_structured_error(tmp_path):
         assert called["thought_name"] == "deleted_target_memory"
     finally:
         _close(proc2)
+
+
+def test_memory_lifecycle_archives_retires_and_compacts(tmp_path):
+    data_dir = tmp_path / "dao_data"
+    data_dir.mkdir(parents=True)
+    recorded_id = "exp_retention_target"
+    with sqlite3.connect(data_dir / "experience.db") as conn:
+        conn.executescript("""
+            CREATE TABLE experience (
+                id TEXT PRIMARY KEY, kind TEXT NOT NULL, topic TEXT DEFAULT '',
+                context TEXT DEFAULT '', input TEXT DEFAULT '', output TEXT DEFAULT '',
+                missing TEXT DEFAULT '', next_action TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'open',
+                tags_json TEXT DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                success_count INTEGER DEFAULT 0, failure_count INTEGER DEFAULT 0,
+                recall_count INTEGER DEFAULT 0, last_recalled_at TEXT,
+                confidence REAL DEFAULT 0.5, trust REAL DEFAULT 0.5,
+                tool_generated INTEGER DEFAULT 0, quality_status TEXT DEFAULT 'active'
+            );
+            CREATE TABLE memory_promotion (
+                id TEXT PRIMARY KEY, experience_id TEXT NOT NULL,
+                thought_name TEXT NOT NULL UNIQUE, tool_name TEXT NOT NULL,
+                description TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+        """)
+        conn.execute(
+            "INSERT INTO experience (id, kind, topic, created_at, updated_at, confidence, quality_status) VALUES (?, 'data_memory', '待退休记忆', '2000-01-01 00:00:00', '2000-01-01 00:00:00', 0.01, 'active')",
+            (recorded_id,),
+        )
+        conn.execute(
+            "INSERT INTO memory_promotion (id, experience_id, thought_name, tool_name, status, created_at, updated_at) VALUES ('promo_retention', ?, 'retention_target', 'ku_memory_retention_target', 'active', '2000-01-01 00:00:00', '2000-01-01 00:00:00')",
+            (recorded_id,),
+        )
+        conn.commit()
+
+    proc = _spawn(data_dir, runtime_timeout=180)
+    try:
+        _init(proc)
+        maintained = _text(_req(proc, 2, "tools/call", {"name": "ku_maintain_memories", "arguments": {
+            "retention_days": 30,
+            "min_confidence": 0.15,
+        }}))
+        assert maintained["policy"] == "memory_lifecycle_v1"
+        assert maintained["archived"] == 1
+        assert maintained["retired_promotions"] == 1
+        assert maintained["compacted_index_rows"] == 1
+
+    finally:
+        _close(proc)
+
+    with sqlite3.connect(data_dir / "experience.db") as conn:
+        quality_status = conn.execute(
+            "SELECT quality_status FROM experience WHERE id = ?", (recorded_id,)
+        ).fetchone()[0]
+        promotion_status = conn.execute(
+            "SELECT status FROM memory_promotion WHERE experience_id = ?", (recorded_id,)
+        ).fetchone()[0]
+        indexed = conn.execute(
+            "SELECT COUNT(*) FROM experience_fts WHERE id = ?", (recorded_id,)
+        ).fetchone()[0]
+    assert quality_status == "archived"
+    assert promotion_status == "retired"
+    assert indexed == 0
 
 
 def test_experience_db_lands_in_dao_data_dir(tmp_path):

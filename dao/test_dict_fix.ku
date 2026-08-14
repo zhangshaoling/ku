@@ -1,0 +1,25 @@
+思 agent_describe() {
+  n = "测试Agent"
+  tc = 0
+  dc = 0
+  ec = 0
+  mc = 0
+  ca = "2025-01-01"
+  ua = "2025-01-01"
+  返({
+    "name": n,
+    "description": "描述",
+    "task_count": tc,
+    "decision_count": dc,
+    "execution_count": ec,
+    "memory_count": mc,
+    "created_at": ca,
+    "updated_at": ua
+  })
+}
+
+r = agent_describe()
+print(r)
+print("name: " + str(r["name"]))
+print("description: " + str(r["description"]))
+print("task_count: " + str(r["task_count"]))

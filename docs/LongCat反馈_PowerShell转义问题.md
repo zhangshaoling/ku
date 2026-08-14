@@ -1,3 +1,5 @@
+> **PROCESS NOTE** — This document records a specific tooling/workflow observation. It may be stale; verify against current tool behavior before relying on it.
+
 # LongCat 实用反馈：PowerShell 转义导致工具调用失败
 
 > 发现时间：2026-06-04

@@ -241,6 +241,11 @@ def c_vm_cmd():
     if build_native.returncode == 0 and C_VM_NATIVE_PATH.exists():
         return [str(C_VM_NATIVE_PATH)]
 
+    # build 脚本失败时（如 PATH 无 gcc/cl），复用已存在的 dao_core.exe。
+    # 对应 Phase 5 handoff 状态：原生 exe 已存在且能跑 demos。
+    if C_VM_NATIVE_PATH.exists():
+        return [str(C_VM_NATIVE_PATH)]
+
     probe = subprocess.run(
         ["wsl", "-d", "kali-linux", "--", "true"],
         capture_output=True,
@@ -1529,3 +1534,118 @@ def test_c_vm_bootstrap_helper_regenerates_usable_frontend_image(c_vm_cmd, tmp_p
 
         assert smoke.returncode == 0, smoke_stderr
         assert smoke_stdout == expected_stdout
+
+
+# ── Phase 1: type() 契约对齐门禁 ──────────────────────────────────────────
+# 见 docs/C_VM_补完指导文书.md Phase 1。
+# 覆盖 type()/is_int/is_str/is_list/is_dict/is_none 在 C VM 与 Python 间的一致性，
+# 并显式记录由 C VM V_NUM(double) 统一数字类型导致的已知差异。
+
+
+def _run_both(c_vm_cmd, ast):
+    bytecode = compile_ast(ast)
+    c_result = run_c_vm(c_vm_cmd, bytecode)
+    python_result = DaoVM().execute(bytecode)
+    return c_result, format_python_value(python_result)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("hello", '"str"'),
+        ([], '"list"'),
+        ({}, '"dict"'),
+        (True, '"bool"'),
+    ],
+)
+def test_c_vm_type_builtin_aligned_for_str_list_dict_bool(c_vm_cmd, value, expected):
+    # 这些类型 C VM 和 Python 的 type() 返回值一致
+    c_result, py_result = _run_both(c_vm_cmd, block(call_node("type", lit(value))))
+    assert c_result == expected
+    assert c_result == py_result
+
+
+def test_c_vm_type_builtin_known_divergence_for_numbers(c_vm_cmd):
+    # C VM 用 V_NUM(double) 统一存数字，type() 返回 "num"；
+    # Python 区分 int/float，type() 返回 "int"/"float"。
+    # 此差异由 ABI 决定，记录为门禁，待 C VM 引入 int/float 类型标记后消除。
+    for val in (5, 5.0):
+        c_result, py_result = _run_both(c_vm_cmd, block(call_node("type", lit(val))))
+        assert c_result == '"num"', f"type({val}): C={c_result}"
+        assert py_result in ('"int"', '"float"'), f"type({val}): Py={py_result}"
+
+
+def test_c_vm_type_builtin_known_divergence_for_null(c_vm_cmd):
+    c_result, py_result = _run_both(c_vm_cmd, block(call_node("type", lit(None))))
+    assert c_result == '"nil"'
+    assert py_result == '"NoneType"'
+
+
+@pytest.mark.parametrize(
+    ("fn", "value", "expected"),
+    [
+        ("is_str", "hello", "true"),
+        ("is_str", 5, "false"),
+        ("is_str", [1], "false"),
+        ("is_list", [1, 2], "true"),
+        ("is_list", "x", "false"),
+        ("is_list", {}, "false"),
+        ("is_dict", {}, "true"),
+        ("is_dict", [1], "false"),
+        ("is_dict", "x", "false"),
+        ("is_none", None, "true"),
+        ("is_none", 5, "false"),
+        ("is_none", "x", "false"),
+    ],
+)
+def test_c_vm_type_predicates_parity(c_vm_cmd, fn, value, expected):
+    # is_str/is_list/is_dict/is_none 在 C VM 与 Python 间行为一致
+    c_result, py_result = _run_both(c_vm_cmd, block(call_node(fn, lit(value))))
+    assert c_result == expected, f"{fn}({value!r}): C={c_result}"
+    assert c_result == py_result, f"{fn}({value!r}): C={c_result} Py={py_result}"
+
+
+def test_c_vm_is_int_aligned_for_integral_value(c_vm_cmd):
+    # is_int(5): C=true (整数值), Python=true (int 类型) — 一致
+    c_result, py_result = _run_both(c_vm_cmd, block(call_node("is_int", lit(5))))
+    assert c_result == "true"
+    assert c_result == py_result
+
+
+def test_c_vm_is_int_known_divergence_for_float_value(c_vm_cmd):
+    # is_int(5.0): C VM 按整数值判断 → true；Python 按 int 类型判断 → false。
+    # 由 V_NUM(double) ABI 决定，记录为门禁。
+    c_result, py_result = _run_both(c_vm_cmd, block(call_node("is_int", lit(5.0))))
+    assert c_result == "true", f"is_int(5.0) C={c_result}"
+    assert py_result == "false", f"is_int(5.0) Py={py_result}"
+
+
+def test_c_vm_type_ku_is_num_aligned_via_bootstrap(c_vm_cmd, tmp_path):
+    # type.ku 的 is_num 用兼容表达式同时匹配 "num"(C) 和 "int"/"float"(Python)，
+    # 在两侧都应返回 true。通过 bootstrap 加载 type.ku 验证。
+    bootstrap_path = ROOT / "demos" / "frontend_bootstrap.kub.json"
+    type_path = ROOT / "dao" / "std" / "type.ku"
+    source = (
+        '{"int": is_num(5), "float": is_num(5.0), "str": is_num("x"), '
+        '"list": is_num([1]), "null": is_num(空)}\n'
+    )
+    source_path = tmp_path / "type_ku_is_num_probe.ku"
+    source_path.write_text(source, encoding="utf-8")
+    result = subprocess.run(
+        c_vm_cmd
+        + [
+            "--bootstrap",
+            c_vm_path(c_vm_cmd, bootstrap_path),
+            c_vm_path(c_vm_cmd, type_path),
+            c_vm_path(c_vm_cmd, source_path),
+        ],
+        capture_output=True,
+        timeout=60,
+    )
+    stderr = result.stderr.decode("utf-8", "replace")
+    stdout = result.stdout.decode("utf-8", "replace").strip()
+    assert result.returncode == 0, stderr
+    # is_num(5)=true, is_num(5.0)=true, is_num("x")=false, is_num([1])=false, is_num(空)=false
+    # C VM dict 输出 key 顺序不保证，用 JSON 解析比较。
+    expected = {"int": True, "float": True, "str": False, "list": False, "null": False}
+    assert json.loads(stdout) == expected

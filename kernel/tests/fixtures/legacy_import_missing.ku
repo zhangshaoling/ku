@@ -1,0 +1,3 @@
+import "module_that_does_not_exist" as missing
+
+thought must_not_compile() { missing_value() }

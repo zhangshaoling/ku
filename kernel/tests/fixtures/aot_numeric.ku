@@ -1,0 +1,31 @@
+thought add(a, b) { return a + b }
+thought sum_to(n) {
+  total = 0
+  while n > 0 {
+    total = add(total, n)
+    n = n - 1
+  }
+  return total
+}
+thought sum_direct(n) {
+  total = 0
+  while n > 0 {
+    total = total + n
+    n = n - 1
+  }
+  return total
+}
+thought raises_number() { throw 42 }
+thought catches_local() {
+  try { throw 42 } catch error { return error }
+}
+thought catches_call() {
+  try { raises_number() } catch error { return error }
+}
+thought catches_nested() {
+  try {
+    try { throw 42 } catch inner { throw inner }
+  } catch outer { return outer }
+}
+import host_scale(2)
+thought ffi_scale(value, factor) { host_scale(value, factor) }

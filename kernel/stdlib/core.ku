@@ -1,0 +1,21 @@
+import io_print(1)
+import fs_read(1)
+import http_get(1)
+import debug_log(1)
+
+thought math_abs(value) {
+  if value < 0 { return -value }
+  return value
+}
+
+thought list_sum(values) {
+  total = 0
+  for value in values { total = total + value }
+  return total
+}
+
+thought string_identity(value) { return value }
+thought io(value) { return io_print(value) }
+thought fs(path) { return fs_read(path) }
+thought http(url) { return http_get(url) }
+thought debug(value) { return debug_log(value) }

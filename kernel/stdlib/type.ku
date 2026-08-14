@@ -1,0 +1,11 @@
+// Dynamic value inspection backed by an explicit Host capability.
+// Import with: import "std/type" as type
+
+import host_value_type(1)
+
+thought type_of(value) { host_value_type(value) }
+thought is_null(value) { host_value_type(value) == "null" }
+thought is_num(value) { host_value_type(value) == "i64" }
+thought is_string(value) { host_value_type(value) == "string" }
+thought is_list(value) { host_value_type(value) == "list" }
+thought is_map(value) { host_value_type(value) == "map" }

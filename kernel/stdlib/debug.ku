@@ -1,0 +1,38 @@
+// Migrated scalar subset of ku/std/debug.ku.
+// Import with: import "std/debug" as debug
+
+import debug_log(1)
+import monotonic_now(0)
+import memory_current(0)
+
+thought trace(value) { debug_log(value) }
+
+thought timer_start() { monotonic_now() }
+
+thought timer_elapsed(start) { monotonic_now() - start }
+
+thought measure(fn) {
+  start = monotonic_now()
+  result = fn()
+  elapsed = monotonic_now() - start
+  debug_log(elapsed)
+  {"result": result, "elapsed": elapsed}
+}
+
+thought assert(condition, message) {
+  if not condition {
+    debug_log(message)
+    false
+  } else { true }
+}
+
+thought assert_eq(actual, expected) {
+  if actual == expected { true }
+  else {
+    debug_log(actual)
+    debug_log(expected)
+    false
+  }
+}
+
+thought memory_usage() { memory_current() }

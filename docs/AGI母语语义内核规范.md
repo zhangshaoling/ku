@@ -1,3 +1,5 @@
+> **HISTORICAL** — This document is from the project's pre-Ku (AGI/Dao) phase. It is preserved as migration evidence but does not guide current implementation. See [docs/README.md](README.md) for the authoritative document hierarchy.
+
 # AGI 母语语义内核规范
 
 > 版本：v0.1  

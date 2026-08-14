@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.25)
+project(dao_sdk_consumer LANGUAGES C)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+find_package(DaoKernel 0.2 REQUIRED CONFIG)
+add_executable(dao_sdk_consumer main.c)
+target_link_libraries(dao_sdk_consumer PRIVATE Dao::dao_kernel)

@@ -1,0 +1,128 @@
+// Migrated executable subset of ku/std/lexer.ku.
+// Import with: import "std/lexer" as lexer
+
+import "ku:std/string@1.0.0" as string
+
+thought make_token(type, value, line, column) {
+  {"type": type, "value": value, "line": line, "column": column}
+}
+
+thought is_digit(value) {
+  code = string_ord(value)
+  code >= 48 and code <= 57
+}
+
+thought is_letter(value) {
+  code = string_ord(value)
+  (code >= 65 and code <= 90) or (code >= 97 and code <= 122)
+}
+
+thought is_id_start(value) { is_letter(value) or value == "_" }
+thought is_id_char(value) { is_id_start(value) or is_digit(value) }
+
+thought is_keyword(value) {
+  keywords = ["thought", "if", "else", "while", "for", "in", "return", "break",
+              "continue", "import", "true", "false", "null", "and", "or", "not",
+              "try", "catch", "throw"]
+  for keyword in keywords {
+    if keyword == value { return true }
+  }
+  false
+}
+
+thought lex_number(source, index, size, line) {
+  start = index
+  while index < size {
+    value = string_char_at(source, index)
+    if not is_digit(value) { break }
+    index = index + 1
+  }
+  {"token": make_token("number", string_substring(source, start, index), line, 1),
+   "index": index}
+}
+
+thought lex_identifier(source, index, size, line) {
+  start = index
+  while index < size {
+    value = string_char_at(source, index)
+    if not is_id_char(value) { break }
+    index = index + 1
+  }
+  word = string_substring(source, start, index)
+  kind = if is_keyword(word) { "keyword" } else { "name" }
+  {"token": make_token(kind, word, line, 1), "index": index}
+}
+
+thought lex_string(source, index, size, line) {
+  index = index + 1
+  value = ""
+  while index < size {
+    current = string_char_at(source, index)
+    if current == string_chr(34) { break }
+    if current == string_chr(92) and index + 1 < size {
+      index = index + 1
+      escaped = string_char_at(source, index)
+      if escaped == "n" { current = string_chr(10) }
+      else if escaped == "t" { current = string_chr(9) }
+      else { current = escaped }
+    }
+    value = string_concat(value, current)
+    index = index + 1
+  }
+  {"token": make_token("string", value, line, 1), "index": index + 1}
+}
+
+thought lex_operator(source, index, size, line) {
+  value = string_char_at(source, index)
+  next = index + 1
+  if next < size {
+    pair = string_concat(value, string_char_at(source, next))
+    if pair == "==" or pair == "!=" or pair == "<=" or pair == ">=" or pair == "->" or pair == "|>" {
+      return {"token": make_token("op", pair, line, 1), "index": next + 1}
+    }
+  }
+  {"token": make_token("op", value, line, 1), "index": next}
+}
+
+thought next_token(source, index, size, line) {
+  value = string_char_at(source, index)
+  if is_digit(value) { return lex_number(source, index, size, line) }
+  if value == string_chr(34) { return lex_string(source, index, size, line) }
+  if is_id_start(value) { return lex_identifier(source, index, size, line) }
+  if value == "+" or value == "-" or value == "*" or value == "/" or value == "%" or value == "=" or value == "!" or value == "<" or value == ">" or value == "|" {
+    return lex_operator(source, index, size, line)
+  }
+  if value == ";" and index + 1 < size and string_char_at(source, index + 1) == ";" {
+    cursor = index
+    while cursor < size and string_char_at(source, cursor) != string_chr(10) {
+      cursor = cursor + 1
+    }
+    return {"token": null, "index": cursor}
+  }
+  {"token": make_token("punct", value, line, 1), "index": index + 1}
+}
+
+thought lex(source) {
+  tokens = []
+  index = 0
+  line = 1
+  size = string_length(source)
+  while index < size {
+    value = string_char_at(source, index)
+    if value == string_chr(10) {
+      push(tokens, make_token("newline", value, line, 1))
+      index = index + 1
+      line = line + 1
+      continue
+    }
+    if value == " " or value == string_chr(9) or value == string_chr(13) {
+      index = index + 1
+      continue
+    }
+    result = next_token(source, index, size, line)
+    if result["token"] != null { push(tokens, result["token"]) }
+    index = result["index"]
+  }
+  push(tokens, make_token("eof", "", line, 1))
+  tokens
+}

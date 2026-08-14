@@ -1,0 +1,37 @@
+// Migrated from ku/std/fs.ku. OS access remains behind explicit Host imports.
+// Import with: import "std/fs" as fs
+
+import path_exists(1)
+import read_file(1)
+import write_file(2)
+import mkdir(1)
+import delete_file(1)
+
+thought exists(path) { path_exists(path) }
+
+thought read_text(path) { read_file(path) }
+
+thought write_text(path, content) { write_file(path, content) }
+
+thought ensure_dir(path) {
+  if not path_exists(path) { mkdir(path) }
+  true
+}
+
+thought read_or(path, default_value) {
+  if path_exists(path) { read_file(path) } else { default_value }
+}
+
+thought copy_file(source, destination) {
+  if path_exists(source) {
+    write_file(destination, read_file(source))
+    true
+  } else { false }
+}
+
+thought safe_delete(path) {
+  if path_exists(path) {
+    delete_file(path)
+    true
+  } else { false }
+}

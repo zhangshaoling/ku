@@ -1,0 +1,15 @@
+res = socket_create()
+print(res)
+若(res["ok"]) {
+    fd = res["fd"]
+    conn = socket_connect(fd, "www.example.com", 80)
+    print(conn)
+    若(conn["ok"]) {
+        send_res = socket_send(fd, "GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n")
+        print(send_res)
+        recv_res = socket_recv(fd, 2048)
+        print(recv_res)
+    }
+    close_res = socket_close(fd)
+    print(close_res)
+}

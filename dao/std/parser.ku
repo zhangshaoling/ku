@@ -882,12 +882,12 @@
     若 (< (from, to)) {
         t = tokens[from]
         若 (t["type"] == "string") {
-            t["value"]
+            返(t["value"])
         } {
             key = ""
             若 (t["type"] == "name") { key = t["value"] }
-            key
+            返(key)
         }
-    } { "" }
+    } { 返("") }
 }
 

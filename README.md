@@ -1,195 +1,72 @@
-# Ku / Dao
+# Ku Language System
 
-**Ku / Dao** is an AI-native language runtime for executable memory:
+Ku is an AI machine-language system being rebuilt on a high-performance runtime that any agent, model, application, or host can embed.
 
-<p align="center">
-  <a href="https://github.com/zhangshaoling/ku/actions/workflows/ci.yml"><img src="https://github.com/zhangshaoling/ku/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/version-0.9.0-blue" alt="Version 0.9.0">
-  <img src="https://img.shields.io/badge/runtime-C%20VM-2ea44f" alt="C VM runtime">
-  <img src="https://img.shields.io/badge/MCP-C%20VM%20default-6f42c1" alt="MCP C VM default">
-  <img src="https://img.shields.io/badge/memory-SQLite%20six--table-f97316" alt="SQLite six-table memory">
-  <img src="https://img.shields.io/badge/Python-harness%20only-64748b" alt="Python harness only">
-  <img src="https://img.shields.io/badge/license-MIT-yellow" alt="MIT license">
-</p>
+Existing `dao_*` symbols, Dao Binary Module names, and the `dao/` directory are implementation and compatibility identifiers. They do not represent a second language. See the [Ku naming and authority decision](docs/KU_NAMING_AND_AUTHORITY.md).
+
+The new kernel does not design an Agent framework. It provides a deterministic binary module, a verified Register VM, Trit logic, and a stable C ABI.
 
 ```text
-thought = code = memory
+Host / Agent
+  -> Ku C ABI (current dao_* symbols)
+  -> verified Dao Binary Module
+  -> Register VM
+  -> optional AOT/JIT backend
 ```
 
-This repository is not trying to become a general-purpose scripting language.
-Its purpose is narrower: make a thought writable as source, inspectable as
-structured code, persistent as memory, executable by the C VM, and callable by
-agents through MCP.
+## Canonical Syntax
 
-The canonical system map is `docs/DAO_SYSTEM_ARCHITECTURE.md`. The long-term
-AGI memory direction is defined in `docs/AGI_EXECUTABLE_MEMORY_ROADMAP.md`.
+Ku's canonical surface syntax is Chinese. The idiomatic form is:
 
-## Names
-
-- **Ku** is the public package name, repository lineage, and historical language
-  name.
-- **Dao** is the active runtime line: Chinese-first syntax, self-hosted
-  frontend, C VM execution, executable memory, and MCP tools.
-- The repository may stay named `ku`, but new core runtime work should live
-  under `dao/`.
-
-## Current Status
-
-The project has moved beyond the early Python prototype:
-
-- `dao/dao_core.exe` runs committed bytecode demos and source through
-  `--bootstrap`.
-- `dao/std/lexer.ku`, `dao/std/parser.ku`, and `dao/std/compiler.ku` form the
-  self-hosting frontend path.
-- `dao/c_vm_runtime.py` is the Python gateway for invoking the C VM from tests
-  and MCP.
-- SQLite-backed experience memory, task queues, gaps, datasets, and data memory
-  records persist under `DAO_DATA_DIR`.
-- `dao/std/memory.ku` defines the six-table Dao memory model:
-  Experience, Knowledge, Tool, Concept, Goal, and Relation.
-- `dao/std/tiandao_mcp.ku` provides the low-latency Tiandao MCP hot path for
-  agent scheduling and memory recording.
-- Selected memory records can be promoted into callable thought/tool candidates
-  through the C VM-backed MCP path, and active promotions appear as dynamic
-  `ku_memory_<thought_name>` tools.
-- Memory recall can return explainability metadata, and promotion suggestions
-  use local Dao policy rules without calling an external model.
-- MCP tools use the C VM by default; Python semantic fallback is opt-in only for
-  parity/debug work.
-
-Python is still allowed as packaging, test harness, fixture generation, and MCP
-stdio glue. It must not silently become the semantic authority.
-
-## Architecture
-
-```text
-Dao source
-  -> self-hosted lexer/parser/compiler
-  -> bytecode
-  -> C VM
-  -> executable memory
-  -> MCP tool surface
+```ku
+思 加一(x) { x + 1 }
 ```
 
-The practical bootstrap path still uses generated fixtures:
+English keywords (`thought`, `if`, `return`, `import`, …) compile to identical bytecode but are
+compatibility-tier: they are not shown in examples or entry points and may be removed after a
+migration window. See [Ku v1 semantics](docs/KU_V1_SEMANTICS.md).
 
-```text
-Python harness -> bootstrap image -> C VM -> Dao frontend -> Dao source
-```
+## Current Kernel
 
-The long-term direction is to move more of that generation and runtime support
-into Dao itself.
+The clean implementation lives in [`kernel/`](kernel/README.md):
 
-## Repository Map
+- deterministic Dao Binary Module builder (current format: v2 / ABI10; v1 / ABI9 also accepted per kernel/FORMAT.md)
+- strict section and instruction verifier
+- numeric Register Bytecode ABI
+- `i64` arithmetic and checked overflow
+- balanced Trit `-1 / 0 / +1`
+- explicit negative/zero/positive branches
+- internal function calls and instruction budgets
+- zero-copy borrowed bytes and UTF-8 string views
+- dynamically linked C ABI and pure C header smoke test
+- native conformance and performance benchmarks
 
-```text
-dao/        Active Dao runtime, C VM, MCP server, and std .ku modules
-demos/      Generated bootstrap images and checked demo bytecode
-docs/       Architecture notes, module gates, and migration records
-ku/         Legacy compatibility package and historical Python runtime
-syntaxes/   Ku syntax highlighting assets
-tests/      Python, frontend, C VM, memory, and MCP regression tests
-tools/      Build, verification, and fixture generation scripts
-vendor/     Vendored runtime dependencies such as SQLite amalgamation
-```
-
-Maintained maps:
-
-- `docs/PROJECT_STRUCTURE.md`
-- `docs/MODULE_COMPLETION_PLAN.md`
-- `docs/PROJECT_CONSTITUTION.md`
-
-## Quick Verification
-
-On Windows, run the local test gate:
+Build and test on Windows:
 
 ```powershell
-.\tools\test.ps1 -q
+.\tools\build_kernel.ps1
 ```
 
-Run module smoke checks:
+Run the baseline benchmark:
 
 ```powershell
-.\tools\verify_module.ps1 c-vm
-.\tools\verify_module.ps1 frontend
-.\tools\verify_module.ps1 std
-.\tools\verify_module.ps1 memory
-.\tools\verify_module.ps1 mcp
+.\tools\benchmark_kernel.ps1 -SkipBuild
 ```
 
-Run a `.ku` file through the C VM gateway:
+## Authority
 
-```powershell
-uv run python -m dao run demos/golden_path.ku --profile frontend
-uv run python -m dao run demos/memory_6table_golden_path.ku --profile frontend --module dao/std/memory.ku
-```
+- [Ku naming and document authority](docs/KU_NAMING_AND_AUTHORITY.md)
+- [Ku v1 language semantics](docs/KU_V1_SEMANTICS.md)
+- [Ku subproject worksheets](docs/KU_SUBPROJECT_WORKSHEETS.md)
+- [Ku current project progress](docs/KU_PROJECT_PROGRESS.md)
+- [Kernel implementation guide](docs/DAO_KERNEL_IMPLEMENTATION_GUIDE.md)
+- [Binary Module and Bytecode v1](kernel/FORMAT.md)
+- [Migration boundary](kernel/MIGRATION.md)
+- [Benchmark baseline](kernel/BENCHMARKS.md)
+- [Managed C++ toolchain](docs/TOOLCHAIN.md)
 
-Start the minimal C VM-backed REPL:
+## Legacy Tree
 
-```powershell
-uv run python -m dao repl --profile frontend
-```
+The existing Python runtime, legacy C VM, text frontend, `.ku` standard library, MCP, memory, Tiandao, and life modules under `dao/` and `ku/` remain in this branch as migration inputs.
 
-Build the C VM:
-
-```powershell
-.\tools\build_dao_core.ps1
-```
-
-The checked-in golden path demo is `demos/golden_path.ku`. It exercises the
-current source -> frontend -> bytecode -> C VM path and is covered by:
-
-```powershell
-.\tools\verify_module.ps1 c-vm
-.\tools\verify_module.ps1 mcp
-```
-
-## MCP
-
-Run the MCP server:
-
-```powershell
-python -m dao.mcp_server
-```
-
-A local MCP client can use this server definition:
-
-```json
-{
-  "mcpServers": {
-    "dao_tiandao": {
-      "command": "A:\\path\\to\\ku\\.venv\\Scripts\\python.exe",
-      "args": ["-m", "dao.mcp_server"],
-      "env": {
-        "PYTHONPATH": "A:\\path\\to\\ku",
-        "DAO_DATA_DIR": "A:\\path\\to\\ku\\.dao_data"
-      }
-    }
-  }
-}
-```
-
-The default `ku_eval`, `ku_call`, `ku_golden_path`, `ku_tiandao`,
-`ku_tiandao_stats`, and experience-memory tools run through the C VM gateway.
-Memory recall and promotion are exposed through `ku_recall_memory`,
-`ku_recall_memory_explain`, `ku_promote_memory`, `ku_list_memory_promotions`,
-`ku_suggest_memory_promotions`, and `ku_call_memory`. Active promotions are also
-exposed as dynamic `ku_memory_<thought_name>` tools. If the C VM binary is
-missing, `ku_eval` fails loudly by default.
-
-Python fallback for `ku_eval` is reserved for debug/parity work:
-
-```powershell
-$env:DAO_MCP_ALLOW_PYTHON_FALLBACK = "1"
-```
-
-## Philosophy
-
-Dao treats memory as something that can run, and code as something that can be
-remembered, inspected, linked, and rewritten.
-
-The finish line is not "a nicer syntax." The finish line is an executable memory
-system where an agent can load a thought, inspect it, run it, persist its result,
-and evolve the system without Python owning the meaning.
-
-MIT licensed.
+They are not dependencies of the new `kernel/` implementation. New kernel behavior must be specified and tested inside `kernel/` before legacy behavior is migrated.

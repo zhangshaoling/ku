@@ -1,0 +1,6 @@
+res = socket_create()
+print("socket_create returned")
+keys = keys(res)
+print("keys:", keys)
+ok_val = res["ok"]
+print("ok:", ok_val)
