@@ -123,6 +123,11 @@ target_link_libraries(ku_std_list_tests PRIVATE dao_kernel dao_module_builder da
 dao_enable_strict_warnings(ku_std_list_tests)
 dao_enable_sanitizers(ku_std_list_tests)
 
+add_executable(ku_std_error_tests kernel/tests/ku_std_error_tests.cpp)
+target_link_libraries(ku_std_error_tests PRIVATE dao_kernel dao_module_builder dao_ku_migration)
+dao_enable_strict_warnings(ku_std_error_tests)
+dao_enable_sanitizers(ku_std_error_tests)
+
 add_executable(ku_std_type_tests kernel/tests/ku_std_type_tests.cpp)
 target_link_libraries(ku_std_type_tests PRIVATE dao_kernel dao_module_builder dao_ku_migration)
 dao_enable_strict_warnings(ku_std_type_tests)
@@ -280,6 +285,12 @@ add_test(NAME ku_compile_std_list COMMAND ${CMAKE_COMMAND}
 add_test(NAME ku_std_list COMMAND ku_std_list_tests
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/list.ku"
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/type.ku")
+add_test(NAME ku_compile_std_error COMMAND dao-ku
+    --identity ku:std/error 1.0.0
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/error.ku"
+    "${CMAKE_BINARY_DIR}/stdlib_error.dao")
+add_test(NAME ku_std_error COMMAND ku_std_error_tests
+    "${CMAKE_SOURCE_DIR}/kernel/stdlib/error.ku")
 add_test(NAME ku_compile_std_type COMMAND dao-ku
     --identity ku:std/type 1.0.0
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/type.ku"
@@ -413,6 +424,8 @@ set(DAO_RUNTIME_TESTS
     ku_std_math
     ku_compile_std_list
     ku_std_list
+    ku_compile_std_error
+    ku_std_error
     ku_compile_std_type
     ku_std_type
     ku_compile_std_fs
