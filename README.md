@@ -14,6 +14,18 @@ Host / Agent
   -> optional AOT/JIT backend
 ```
 
+## Canonical Syntax
+
+Ku's canonical surface syntax is Chinese. The idiomatic form is:
+
+```ku
+思 加一(x) { x + 1 }
+```
+
+English keywords (`thought`, `if`, `return`, `import`, …) compile to identical bytecode but are
+compatibility-tier: they are not shown in examples or entry points and may be removed after a
+migration window. See [Ku v1 semantics](docs/KU_V1_SEMANTICS.md).
+
 ## Current Kernel
 
 The clean implementation lives in [`kernel/`](kernel/README.md):

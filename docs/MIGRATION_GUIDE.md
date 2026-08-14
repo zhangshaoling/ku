@@ -58,7 +58,7 @@ The new kernel provides:
 | `dao.mcp_server` (old C VM) | `dao.mcp_server_kernel` (new kernel bridge) |
 | `dao.mcp_server_v2` | `dao.mcp_server_kernel` |
 
-> **Migration blocker:** Old .ku files use Chinese keywords, new kernel uses English. Full MCP migration requires syntax migration (P16).
+> **Migration note:** Both the old `dao/` `.ku` files and the new `kernel/` accept Chinese keywords — Chinese is Ku's sole canonical syntax, and English keywords are compatibility-tier only. The real MCP migration cost is old std-module semantics and builtins (P16), not keyword language.
 
 ## Quick Start (New Kernel)
 
