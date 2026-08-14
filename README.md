@@ -1,72 +1,85 @@
-# Ku Language System
-
-Ku is an AI machine-language system being rebuilt on a high-performance runtime that any agent, model, application, or host can embed.
-
-Existing `dao_*` symbols, Dao Binary Module names, and the `dao/` directory are implementation and compatibility identifiers. They do not represent a second language. See the [Ku naming and authority decision](docs/KU_NAMING_AND_AUTHORITY.md).
-
-The new kernel does not design an Agent framework. It provides a deterministic binary module, a verified Register VM, Trit logic, and a stable C ABI.
+# Ku — 可执行记忆语言
 
 ```text
-Host / Agent
-  -> Ku C ABI (current dao_* symbols)
-  -> verified Dao Binary Module
-  -> Register VM
-  -> optional AOT/JIT backend
+思 = 代码 = 记忆
 ```
 
-## Canonical Syntax
+Ku 是一门为 AGI 而生的语言：一个「念头」同时是可执行的代码、可检查的数据结构、
+可持久化的记忆、可被智能体通过 MCP 调用的工具。
 
-Ku's canonical surface syntax is Chinese. The idiomatic form is:
+规范语法是中文：
 
 ```ku
-思 加一(x) { x + 1 }
+思 main(x, y) {
+  返 x + y
+}
 ```
 
-English keywords (`thought`, `if`, `return`, `import`, …) compile to identical bytecode but are
-compatibility-tier: they are not shown in examples or entry points and may be removed after a
-migration window. See [Ku v1 semantics](docs/KU_V1_SEMANTICS.md).
+## Ku v1
 
-## Current Kernel
+语义基线已冻结（[`docs/KU_V1_SEMANTICS.md`](docs/KU_V1_SEMANTICS.md)），新内核三平台 CI 全绿。
 
-The clean implementation lives in [`kernel/`](kernel/README.md):
+### 关键字
 
-- deterministic Dao Binary Module builder (current format: v2 / ABI10; v1 / ABI9 also accepted per kernel/FORMAT.md)
-- strict section and instruction verifier
-- numeric Register Bytecode ABI
-- `i64` arithmetic and checked overflow
-- balanced Trit `-1 / 0 / +1`
-- explicit negative/zero/positive branches
-- internal function calls and instruction budgets
-- zero-copy borrowed bytes and UTF-8 string views
-- dynamically linked C ABI and pure C header smoke test
-- native conformance and performance benchmarks
+| 中文 | 含义 | 中文 | 含义 |
+|---|---|---|---|
+| `思` | 定义函数 | `返` | 返回 |
+| `若` / `否` | 分支 | `当` | 循环 |
+| `遍 … 于` | 遍历 | `断` / `续` | break / continue |
+| `试` / `抛` / `捕` | 异常 | `引 … 别` | 导入模块 |
+| `真` / `假` | Trit（+1 / -1） | `空` | null |
 
-Build and test on Windows:
+英文关键字（`thought`、`if`、`return`、`import` …）编译到完全相同的字节码，仅为兼容期保留，
+不在任何入口展示。
+
+### 例子
+
+```ku
+思 分类(x) {
+  若 x > 10 { 返 3 }
+  否 若 x > 0 { 返 2 }
+  否 { 返 1 }
+}
+
+思 求和(items) {
+  total = 0
+  遍 item 于 items { total = total + item }
+  返 total
+}
+```
+
+## 运行
 
 ```powershell
 .\tools\build_kernel.ps1
+.\kernel\out\cmake\bin\dao-ku.exe input.ku output.dao
 ```
 
-Run the baseline benchmark:
+## 内核（实现）
 
-```powershell
-.\tools\benchmark_kernel.ps1 -SkipBuild
+`kernel/` 是新内核的实现权威：
+
+```text
+.ku 源码 → 编译器 → .dao 二进制模块 → 校验器 → Register VM → C ABI → 结果 / 记忆 / 工具
 ```
 
-## Authority
+- 确定性二进制模块（v2 / ABI10；v1 / ABI9 兼容）
+- 严格 section / 指令校验器
+- `i64` 算术（检查溢出）、Trit 三值逻辑
+- C ABI / FFI / AOT / Python·Rust 绑定
+- 可执行记忆：每个记忆就是一个可调用的 Thought
 
-- [Ku naming and document authority](docs/KU_NAMING_AND_AUTHORITY.md)
-- [Ku v1 language semantics](docs/KU_V1_SEMANTICS.md)
-- [Ku subproject worksheets](docs/KU_SUBPROJECT_WORKSHEETS.md)
-- [Ku current project progress](docs/KU_PROJECT_PROGRESS.md)
-- [Kernel implementation guide](docs/DAO_KERNEL_IMPLEMENTATION_GUIDE.md)
-- [Binary Module and Bytecode v1](kernel/FORMAT.md)
-- [Migration boundary](kernel/MIGRATION.md)
-- [Benchmark baseline](kernel/BENCHMARKS.md)
-- [Managed C++ toolchain](docs/TOOLCHAIN.md)
+详见 [`kernel/README.md`](kernel/README.md)。
 
-## Legacy Tree
+## 权威文档
 
-The existing Python runtime, legacy C VM, text frontend, `.ku` standard library, MCP, memory, Tiandao, and life modules under `dao/` and `ku/` remain in this branch as migration inputs.
+- [命名与权威](docs/KU_NAMING_AND_AUTHORITY.md)
+- [Ku v1 语义](docs/KU_V1_SEMANTICS.md)
+- [项目进度](docs/KU_PROJECT_PROGRESS.md)
+- [二进制格式](kernel/FORMAT.md)
 
-They are not dependencies of the new `kernel/` implementation. New kernel behavior must be specified and tested inside `kernel/` before legacy behavior is migrated.
+## 旧线
+
+`dao/`（旧 C VM）与 `ku/`（更早的 Python 实现）保留为迁移输入，不再承载新功能。
+
+MIT License
