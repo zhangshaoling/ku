@@ -18,7 +18,7 @@ Host / Agent
 
 The clean implementation lives in [`kernel/`](kernel/README.md):
 
-- deterministic Dao Binary Module v1 builder
+- deterministic Dao Binary Module builder (current format: v2 / ABI10; v1 / ABI9 also accepted per kernel/FORMAT.md)
 - strict section and instruction verifier
 - numeric Register Bytecode ABI
 - `i64` arithmetic and checked overflow

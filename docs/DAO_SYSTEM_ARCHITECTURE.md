@@ -1,5 +1,18 @@
 # Dao System Architecture
 
+> ## ⚠️ 文档状态：历史迁移参考（Legacy Migration Map）
+>
+> 本文件 **不是** 当前实现权威，而是 **旧 C VM 运行线（`dao/`）的历史架构记录与迁移输入**。
+> 当前实现权威为 **`kernel/`**（详见 [`KU_NAMING_AND_AUTHORITY.md`](./KU_NAMING_AND_AUTHORITY.md) §3 实现分层 / §4 文档权威顺序）。
+>
+> 冲突裁决（节选自 `KU_NAMING_AND_AUTHORITY.md` §4）：
+> 1. 本文档属于 §4 第 8 类「其他旧 C VM / 历史阶段文档：迁移证据或设计输入」，**非权威**。
+> 2. 文中自称的 "canonical map" 仅指旧 C VM 运行线（`dao/`）内部约定，不覆盖 `kernel/` 权威。
+> 3. **任何冲突以 `KU_NAMING_AND_AUTHORITY.md` 裁决为准**；进度状态以 `KU_PROJECT_PROGRESS.md` 为准。
+> 4. 任何文档声明都不能覆盖当前代码和可重复测试结果。
+>
+> 阅读指引：请将 `dao/`、`ku/`、`dao_core.c` 理解为「待迁移的旧实现」，而非「权威规范」。
+
 This document is the canonical map for the Dao runtime line. It separates the
 philosophy, the implemented files, and the planned migration path.
 
@@ -18,8 +31,8 @@ Mission sentence:
 ## Path Law
 
 ```text
-dao/      Active runtime line. New core architecture belongs here.
-ku/       Compatibility and historical lineage. Do not add new core authority here.
+dao/      [历史] Old C VM / migration-input line. New core authority belongs in `kernel/` (per `KU_NAMING_AND_AUTHORITY.md` §3).
+ku/       [历史] Compatibility and historical lineage. Do not add new core authority here.
 demos/    Deterministic runnable fixtures.
 tests/    Test harnesses. Python is allowed here as harness only.
 tools/    Build and generation tools.
@@ -28,7 +41,7 @@ docs/     Architecture records and migration notes.
 
 Rules:
 
-- `.ku` source plus `dao/dao_core.c` is the semantic authority.
+- [历史声明] `.ku` source plus `dao/dao_core.c` is the semantic authority **for the legacy C VM line only**. 当前实现权威为 `kernel/`（`KU_NAMING_AND_AUTHORITY.md` §3）。本条作为迁移对拍依据保留。
 - Python may remain as test harness, fixture generator, packaging, and MCP stdio glue.
 - New memory, Tiandao, reasoning, and tool semantics belong under `dao/std/`.
 - Existing `ku/std/*` modules are compatibility or migration sources unless a task says otherwise.

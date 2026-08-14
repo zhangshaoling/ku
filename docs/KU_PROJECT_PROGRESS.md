@@ -210,7 +210,7 @@ Binary Module -> Loader/Verifier -> Register VM -> C ABI -> AOT/SDK
 
 ### 第四批：收口发布
 
-1. KU-P15：旧链入口已加 deprecation 警告；旧 CLI run 已委托给新 kernel（compile + execute via C ABI）；repl/status 加 DEPRECATED 提示；迁移指南已编写。
+1. KU-P15：旧链入口已加 deprecation 警告；CLI run 已委托给新 kernel；repl/status 加 DEPRECATED 提示；MCP server 加 Deprecation（旧 .ku 用中文关键字，新 kernel 用英文，语法不兼容，待 P16 迁移）；迁移指南已发布。
 2. KU-P16：完成多平台、fuzz、soak、benchmark、SDK 和语法包发布门禁。
 
 ## 7. 下一张工作单

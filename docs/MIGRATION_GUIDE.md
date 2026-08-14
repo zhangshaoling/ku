@@ -58,6 +58,8 @@ The new kernel provides:
 | `dao.mcp_server` (old C VM) | `dao.mcp_server_kernel` (new kernel bridge) |
 | `dao.mcp_server_v2` | `dao.mcp_server_kernel` |
 
+> **Migration blocker:** Old .ku files use Chinese keywords, new kernel uses English. Full MCP migration requires syntax migration (P16).
+
 ## Quick Start (New Kernel)
 
 ```python
