@@ -1,0 +1,13 @@
+// Ku v1 structured error convention.
+// Errors are ordinary string-keyed Maps, so they remain inspectable values.
+
+thought make(code, message) {
+  {"ok": false, "code": code, "message": message}
+}
+
+thought is_error(value) {
+  if value.ok == false { true } else { false }
+}
+
+thought code(value) { value.code }
+thought message(value) { value.message }

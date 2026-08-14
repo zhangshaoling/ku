@@ -83,7 +83,7 @@ Ku v1 采用新内核恢复编译器已经验证的语义作为规范目标，�
 | 返回 | `return/返 expr` 显式返回；函数最后一个表达式可隐式返回。v1 程序不得依赖空函数或控制流落空的默认值 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 | 分支 | `if/若 ... { ... } else/否 { ... }`；允许 `else if` 与 `否 若` | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 | 循环 | `while/当`、List 上的 `for/遍 item in/于 list`、Map 上的 `for/遍 key, value in/于 map`、`break/断`、`continue/续`；循环外使用 `break/continue` 是编译错误 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
-| 异常 | `throw/抛 value` 可跨本模块函数传播；`try/试 ... catch/捕 name` 只捕获显式抛出的值，不捕获类型/校验错误 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
+| 异常 | `throw/抛 value` 可跨本模块函数传播；`try/试 ... catch/捕 name` 只捕获显式抛出的值，不捕获类型/校验错误；`std/error.ku` 约定错误值为 `{ "ok": false, "code": ..., "message": ... }` Map | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed`、`ku_compile_std_error` |
 | 注释与分隔 | `//`、`;;` 为行注释；换行和 `;` 都可分隔语句 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 
 `func`、无 `else/否` 的裸备用块、前缀运算符调用（如 `>= (a, b)`）、变参
