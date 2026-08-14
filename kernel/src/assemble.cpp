@@ -173,7 +173,8 @@ Opcode parse_opcode(std::string_view token) {
             if (token == "LOAD_STRING" || token == "load_string") return Opcode::LoadString;
             if (token == "LOAD_FUNCTION" || token == "load_function") return Opcode::LoadFunction;
             if (token == "LOAD_NULL" || token == "load_null") return Opcode::LoadNull;
-            if (token == "LIST_LEN" || token == "list_len") return Opcode::ListLength;
+            if (token == "LIST_LEN" || token == "list_len" || token == "LEN" || token == "len") return Opcode::ListLength;
+            if (token == "MAP_KEYS" || token == "map_keys") return Opcode::MapKeys;
             if (token == "LIST_GET" || token == "list_get") return Opcode::ListGet;
             if (token == "LIST_APPEND" || token == "list_append") return Opcode::ListAppend;
             if (token == "LT_I64" || token == "lt_i64") return Opcode::CompareLtI64;
@@ -186,6 +187,7 @@ Opcode parse_opcode(std::string_view token) {
             if (token == "MAKE_LIST" || token == "make_list") return Opcode::MakeList;
             if (token == "MAKE_CLOSURE" || token == "make_closure") return Opcode::MakeClosure;
             if (token == "MAKE_MAP" || token == "make_map") return Opcode::MakeMap;
+            if (token == "MAP_KEYS" || token == "map_keys") return Opcode::MapKeys;
             break;
         case 'A':
         case 'a':
@@ -430,6 +432,7 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
     case Opcode::Move:
     case Opcode::TritNot:
     case Opcode::ListLength:
+    case Opcode::MapKeys:
     case Opcode::ListAppend: {
         if (fields.size() - operand_start < 2) {
             return fail(error, "instruction: expected dst, a");

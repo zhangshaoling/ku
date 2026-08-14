@@ -60,7 +60,9 @@ enum class Opcode : uint8_t {
     CompareGeI64 = 24,
     LoadString = 25,
     MakeList = 26,
+    // Generic container length; ListLength remains the source-compatible alias.
     ListLength = 27,
+    Length = ListLength,
     ListGet = 28,
     MakeMap = 29,
     IndexGet = 30,
@@ -75,6 +77,7 @@ enum class Opcode : uint8_t {
     CallValue = 39,
     MakeClosure = 40,
     CallModule = 41,
+    MapKeys = 42,
 };
 
 struct SemanticVersion {

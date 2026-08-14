@@ -148,7 +148,7 @@ Branch targets are function-local instruction indexes.
 | 24 | `GE_I64` | integer greater-than-or-equal, returning Trit true/false |
 | 25 | `LOAD_STRING` | load a module-owned UTF-8 constant |
 | 26 | `MAKE_LIST` | construct a VM-owned list from consecutive registers |
-| 27 | `LIST_LEN` | return list length as i64 |
+| 27 | `LEN` | return list or map length as i64 (`LIST_LEN` is accepted as a compatibility spelling) |
 | 28 | `LIST_GET` | read list element by i64 index |
 | 29 | `MAKE_MAP` | construct a string-keyed map from key/value register pairs |
 | 30 | `INDEX_GET` | dynamically index a list or map |
@@ -162,6 +162,8 @@ Branch targets are function-local instruction indexes.
 | 38 | `LOAD_FUNCTION` | load same-module function `immediate` into `dst` |
 | 39 | `CALL_VALUE` | call function reference `a`, args start at `b`, count `immediate`, result to `dst` |
 | 40 | `MAKE_CLOSURE` | bind registers `a..a+b-1` to same-module function `immediate` in `dst` |
+| 41 | `CALL_MODULE` | call an identified linked module export |
+| 42 | `MAP_KEYS` | return a List of string keys for a Map |
 | 41 | `CALL_MODULE` | call module import `immediate`, args start at `a`, count `b`, result to `dst` |
 
 Arithmetic requires `i64`. Trit operations and branches require payload `-1`, `0`, or `+1`.

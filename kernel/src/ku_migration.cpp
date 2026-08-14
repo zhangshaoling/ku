@@ -13,7 +13,7 @@
 namespace dao::km {
 namespace {
 
-enum class Kind { End, Newline, Name, Number, String, LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Op };
+enum class Kind { End, Newline, Name, Number, String, LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Dot, Op };
 struct Token { Kind kind; std::string text; size_t offset; };
 
 void clear(dao_error* error) {
@@ -90,6 +90,7 @@ std::vector<Token> lex(std::string_view source) {
         case ']': push(Kind::RBracket, start, 1); break;
         case ',': push(Kind::Comma, start, 1); break;
         case ':': push(Kind::Colon, start, 1); break;
+        case '.': push(Kind::Dot, start, 1); break;
         case '+': case '-': case '*': case '/': case '%': case '=': case '!': case '<': case '>': {
             if (i < source.size() && source[i] == '=') ++i;
             push(Kind::Op, start, i - start); break;
@@ -110,6 +111,7 @@ struct Expr {
 struct Stmt {
     enum class Type { Expression, Assign, IndexAssign, Return, If, While, For, Try, Throw, Break, Continue } type = Type::Expression;
     std::string target;
+    std::string value_target;
     Expr expr;
     Expr assignment_target;
     std::vector<Stmt> body;
@@ -283,6 +285,11 @@ class Parser {
             take(); stmt.type = Stmt::Type::For;
             if (peek().kind != Kind::Name) error("expected loop variable");
             stmt.target = take().text;
+            if (peek().kind == Kind::Comma) {
+                take();
+                if (peek().kind != Kind::Name) error("expected map value variable");
+                stmt.value_target = take().text;
+            }
             if (!(word("in") || word("于"))) error("expected in");
             take();
             stmt.expr = expression(); skip_lines(); stmt.body = block(); return stmt;
@@ -418,6 +425,12 @@ class Parser {
         else if (token.kind == Kind::LParen) { result = expression(); expect(Kind::RParen, ")"); }
         else error("expected expression");
         while (peek().kind == Kind::LBracket) { take(); Expr index = expression(); expect(Kind::RBracket, "]"); result = {Expr::Type::Index, {}, {std::move(result), std::move(index)}, token.offset}; }
+        while (peek().kind == Kind::Dot) {
+            take();
+            if (peek().kind != Kind::Name) error("expected field name after .");
+            Expr field = {Expr::Type::String, take().text, {}, token.offset};
+            result = {Expr::Type::Index, {}, {std::move(result), std::move(field)}, token.offset};
+        }
         return result;
     }
     std::unordered_set<std::string> memory_hosts_;
@@ -575,12 +588,23 @@ class Emitter {
                 loops_.pop_back(); continue;
             }
             if (stmt.type == Stmt::Type::For) {
-                const uint16_t list = expr(stmt.expr); const uint16_t length = temporary();
+                const uint16_t source = expr(stmt.expr);
+                const uint16_t map_source = source;
+                uint16_t list = source;
+                if (!stmt.value_target.empty()) {
+                    list = temporary();
+                    code_.push_back(instruction(Opcode::MapKeys, list, source));
+                }
+                const uint16_t length = temporary();
                 code_.push_back(instruction(Opcode::ListLength, length, list));
                 const uint16_t index = temporary(); code_.push_back(instruction(Opcode::LoadI64, index));
                 const size_t condition = code_.size(); const uint16_t test = temporary();
                 code_.push_back(instruction(Opcode::CompareLtI64, test, index, length)); const auto branches = branch_false(test);
                 const uint16_t item = variable(stmt.target, false); code_.push_back(instruction(Opcode::ListGet, item, list, index));
+                if (!stmt.value_target.empty()) {
+                    const uint16_t value = variable(stmt.value_target, false);
+                    code_.push_back(instruction(Opcode::IndexGet, value, map_source, item));
+                }
                 loops_.push_back({{}, {}}); emit_block(stmt.body);
                 const size_t increment = code_.size();
                 const uint16_t one = temporary(); code_.push_back(instruction(Opcode::LoadI64, one, 0, 0, 1));
@@ -735,6 +759,15 @@ class Emitter {
                 const uint16_t dst = temporary();
                 code_.push_back(instruction(Opcode::MakeClosure, dst, base,
                                             static_cast<uint16_t>(captured.size()), target->second.index));
+                return dst;
+            }
+            if (e.value == "keys") {
+                if (e.children.size() != 1)
+                    throw std::runtime_error("keys expects exactly one argument at offset " +
+                                             std::to_string(e.offset));
+                const uint16_t value = expr(e.children[0]);
+                const uint16_t dst = temporary();
+                code_.push_back(instruction(Opcode::MapKeys, dst, value));
                 return dst;
             }
             if (e.value == "len") {

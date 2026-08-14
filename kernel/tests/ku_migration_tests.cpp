@@ -125,6 +125,24 @@ thought map_read() {
   values = {"answer": 42, "other": 7}
   return values["answer"]
 }
+thought map_length() { len({"answer": 42, "other": 7}) }
+thought map_keys() { keys({"z": 1, "a": 2}) }
+thought map_for() {
+  values = {"z": 1, "a": 2}
+  total = 0
+  for key, value in values { total = total + value }
+  total
+}
+thought map_for_zh() {
+  values = {"z": 1, "a": 2}
+  total = 0
+  遍 key, value 于 values { total = total + value }
+  total
+}
+thought field_access() {
+  user = {"name": "dao", "age": 42}
+  user.age
+}
 thought return_list() { [4, 5, 6] }
 thought return_map() { {"answer": 42} }
 thought mutate() {
@@ -259,9 +277,30 @@ thought negative_index() { [1][-1] }
     CHECK("find map_read", dao_module_find_export(module, symbol_id("map_read"), &fn) == DAO_OK);
     CHECK("execute map read", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
     CHECK("map read result", result.type == DAO_VALUE_I64 && result.payload == 42);
+    CHECK("find map_length", dao_module_find_export(module, symbol_id("map_length"), &fn) == DAO_OK);
+    CHECK("execute map length", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("map length result", result.type == DAO_VALUE_I64 && result.payload == 2);
+    size_t list_size = 0; dao_value item{};
+    CHECK("find map_keys", dao_module_find_export(module, symbol_id("map_keys"), &fn) == DAO_OK);
+    CHECK("execute map keys", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("map keys list", result.type == DAO_VALUE_LIST);
+    CHECK("map keys size", dao_value_list_size(vm, &result, &list_size) == DAO_OK && list_size == 2);
+    CHECK("map keys first", dao_value_list_get(vm, &result, 0, &item) == DAO_OK && item.type == DAO_VALUE_STRING);
+    dao_bytes key_view{};
+    CHECK("map keys first value", dao_value_get_view(&item, &key_view) == DAO_OK &&
+          std::string_view(reinterpret_cast<const char*>(key_view.data), key_view.size) == "a");
+    CHECK("find map_for", dao_module_find_export(module, symbol_id("map_for"), &fn) == DAO_OK);
+    CHECK("execute map for", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("map for result", result.type == DAO_VALUE_I64 && result.payload == 3);
+    CHECK("find map_for_zh", dao_module_find_export(module, symbol_id("map_for_zh"), &fn) == DAO_OK);
+    CHECK("execute map for zh", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("map for zh result", result.type == DAO_VALUE_I64 && result.payload == 3);
+    CHECK("find field_access", dao_module_find_export(module, symbol_id("field_access"), &fn) == DAO_OK);
+    CHECK("execute field access", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
+    CHECK("field access result", result.type == DAO_VALUE_I64 && result.payload == 42);
     CHECK("find return_list", dao_module_find_export(module, symbol_id("return_list"), &fn) == DAO_OK);
     CHECK("execute return_list", dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) == DAO_OK);
-    const dao_value old_list = result; size_t list_size = 0; dao_value item{};
+    const dao_value old_list = result;
     CHECK("inspect list size", dao_value_list_size(vm, &result, &list_size) == DAO_OK && list_size == 3);
     CHECK("inspect list item", dao_value_list_get(vm, &result, 1, &item) == DAO_OK && item.type == DAO_VALUE_I64 && item.payload == 5);
     CHECK("find return_map", dao_module_find_export(module, symbol_id("return_map"), &fn) == DAO_OK);

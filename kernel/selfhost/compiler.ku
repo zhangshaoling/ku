@@ -161,6 +161,7 @@ thought tokenize(source, size) {
       continue
     }
     if byte == 58 { index = index + 1 tokens = tokens + [make_token(12, start, 1)] continue }
+    if byte == 46 { index = index + 1 tokens = tokens + [make_token(27, start, 1)] continue }
     if byte == 43 { index = index + 1 tokens = tokens + [make_token(13, start, 1)] continue }
     if byte == 45 { index = index + 1 tokens = tokens + [make_token(14, start, 1)] continue }
     if byte == 42 { index = index + 1 tokens = tokens + [make_token(15, start, 1)] continue }
@@ -991,6 +992,17 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
     name_hash = source_hash(source, token_start(token), token_length(token))
     token_index = token_index + 1
     if token_type(tokens[token_index]) == 4 {
+      if token_length(token) == 5 and source_byte(source, token_start(token)) == 107 and source_byte(source, token_start(token) + 1) == 101 and source_byte(source, token_start(token) + 2) == 121 and source_byte(source, token_start(token) + 3) == 115 {
+        parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+        value_reg = packed_result(parsed)
+        next_reg = packed_next(parsed)
+        token_index = packed_index(parsed)
+        if token_type(tokens[token_index]) != 5 { fail_token("expected ) after keys argument", tokens, token_index) }
+        token_index = token_index + 1
+        result_reg = next_reg
+        builder_emit(handle, 42, result_reg, value_reg, 0, 0)
+        return pack(token_index, next_reg + 1, result_reg)
+      }
       if token_length(token) == 3 and source_byte(source, token_start(token)) == 108 and source_byte(source, token_start(token) + 1) == 101 and source_byte(source, token_start(token) + 2) == 110 {
         parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
         value_reg = packed_result(parsed)
@@ -1108,6 +1120,21 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
       token_index = token_index + 1
       value_reg = next_reg
       builder_emit(handle, 30, value_reg, result_reg, index_reg, 0)
+      next_reg = next_reg + 1
+      result_reg = value_reg
+    }
+    while token_type(tokens[token_index]) == 27 {
+      token_index = token_index + 1
+      field_token = tokens[token_index]
+      if token_type(field_token) != 3 { fail_token("expected field name after .", tokens, token_index) }
+      field_text = source_slice(source, token_start(field_token), token_length(field_token))
+      data_index = builder_add_string(handle, field_text)
+      key_reg = next_reg
+      builder_emit(handle, 25, key_reg, 0, 0, data_index)
+      next_reg = next_reg + 1
+      token_index = token_index + 1
+      value_reg = next_reg
+      builder_emit(handle, 30, value_reg, result_reg, key_reg, 0)
       next_reg = next_reg + 1
       result_reg = value_reg
     }
@@ -1412,12 +1439,26 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
         if token_type(item_token) != 3 { fail_token("expected variable after for", tokens, token_index) }
         item_hash = source_hash(source, token_start(item_token), token_length(item_token))
         token_index = token_index + 1
+        value_hash = 0
+        if token_type(tokens[token_index]) == 10 {
+          token_index = token_index + 1
+          value_token = tokens[token_index]
+          if token_type(value_token) != 3 { fail_token("expected map value variable", tokens, token_index) }
+          value_hash = source_hash(source, token_start(value_token), token_length(value_token))
+          token_index = token_index + 1
+        }
         if token_type(tokens[token_index]) != 3 or not (is_kw(source, tokens[token_index], 2, 105, 110, 0, 0, 0, 0, 0, 0) or is_zh_kw(source, tokens[token_index], 228, 186, 142)) { fail_token("expected in after for variable", tokens, token_index) }
         token_index = token_index + 1
         parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
         token_index = packed_index(parsed)
         next_reg = packed_next(parsed)
         list_reg = packed_result(parsed)
+        map_reg = list_reg
+        if value_hash != 0 {
+          list_reg = next_reg
+          builder_emit(handle, 42, list_reg, map_reg, 0, 0)
+          next_reg = next_reg + 1
+        }
         if token_type(tokens[token_index]) != 6 { fail_token("expected { after for iterable", tokens, token_index) }
         token_index = token_index + 1
         length_reg = next_reg
@@ -1442,6 +1483,16 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
           next_reg = next_reg + 1
         } else { item_reg = regs[slot - 1] }
         builder_emit(handle, 28, item_reg, list_reg, cursor_reg, 0)
+        if value_hash != 0 {
+          value_slot = lookup_slot(names, value_hash)
+          if value_slot == 0 {
+            value_reg = next_reg
+            names = names + [value_hash]
+            regs = regs + [value_reg]
+            next_reg = next_reg + 1
+          } else { value_reg = regs[value_slot - 1] }
+          builder_emit(handle, 30, value_reg, map_reg, item_reg, 0)
+        }
         body_start = builder_position(handle)
         parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth + 1, size, 1 != 1)
         token_index = packed_index(parsed)

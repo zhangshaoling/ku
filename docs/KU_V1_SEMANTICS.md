@@ -60,8 +60,11 @@ Ku v1 采用新内核恢复编译器已经验证的语义作为规范目标，�
 |---|---|---|---|---|---|
 | List | 列表有序、可变；索引必须是非负 `i64`；越界和负索引报错 | 核心 | 是 | 是 | `ku_migration`、`kernel_conformance` |
 | Map | 字面量键必须是字符串；动态访问键也必须是字符串；缺失键返回 `null` | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
+| 属性访问 | `object.field` 是 `object["field"]` 的语法糖，当前适用于字符串键 Map；缺失字段返回 `null` | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 | 索引赋值 | `list[i] = value` 与 `map[key] = value` 原地修改当前调用代际的容器 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 | 追加 | `push(list, value)` 是规范追加操作并返回同一 List | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
+| 容器长度 | `len(value)` 接受 List 或 Map，返回 `i64` 长度；其他值是类型错误 | 核心 | 是 | 是 | `ku_migration`、`kernel_conformance` |
+| Map 键枚举 | `keys(map)` 返回按 UTF-8 字节序排序的字符串 List；其他值是类型错误 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 | 函数引用 | 本模块函数名可作为值，并可在同一次顶层调用中调用；Host capability 不能作为函数值 | 核心 | 是 | 是 | `ku_selfhost_seed`、`ku_std_type`、`ku_std_list` |
 | 绑定 | `bind(function, captured...)` 创建同一次顶层调用内有效的绑定 | 核心 | 是 | 是 | `ku_selfhost_seed`、`ku_std_type`、`ku_std_list`、`kernel_conformance` |
 | 持久闭包 | 闭包跨顶层调用、跨 VM 或持久化后继续执行 | 推迟 | 拒绝复用 | 拒绝复用 | `kernel/OWNERSHIP.md`、`kernel_conformance` |
@@ -79,7 +82,7 @@ Ku v1 采用新内核恢复编译器已经验证的语义作为规范目标，�
 | 求值顺序 | 表达式、调用参数、List 项和 Map 值从左到右求值 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 | 返回 | `return/返 expr` 显式返回；函数最后一个表达式可隐式返回。v1 程序不得依赖空函数或控制流落空的默认值 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 | 分支 | `if/若 ... { ... } else/否 { ... }`；允许 `else if` 与 `否 若` | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
-| 循环 | `while/当`、List 上的 `for/遍 ... in/于`、`break/断`、`continue/续`；循环外使用 `break/continue` 是编译错误 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
+| 循环 | `while/当`、List 上的 `for/遍 item in/于 list`、Map 上的 `for/遍 key, value in/于 map`、`break/断`、`continue/续`；循环外使用 `break/continue` 是编译错误 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 | 异常 | `throw/抛 value` 可跨本模块函数传播；`try/试 ... catch/捕 name` 只捕获显式抛出的值，不捕获类型/校验错误 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 | 注释与分隔 | `//`、`;;` 为行注释；换行和 `;` 都可分隔语句 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 

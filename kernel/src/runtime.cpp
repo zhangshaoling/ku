@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <deque>
 #include <limits>
 #include <new>
 #include <memory>
@@ -421,6 +422,7 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
         break;
     }
     case Opcode::ListLength:
+    case Opcode::MapKeys:
         if (valid_register(instruction.dst) && valid_register(instruction.a)) return DAO_OK;
         break;
     case Opcode::ListAppend:
@@ -617,11 +619,39 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
             vm->maps.push_back(std::move(map));
             registers[instruction.dst] = dao_value{DAO_VALUE_MAP, 0, container_handle(vm->container_generation, vm->maps.size() - 1)}; ++pc; break;
         }
+        case Opcode::MapKeys: {
+            const dao_value& value = registers[instruction.a];
+            if (value.type != DAO_VALUE_MAP) return fail(error, DAO_TYPE_ERROR, "MAP_KEYS requires a map", function_index, pc);
+            const auto* map = resolve_container(vm->maps, vm->container_generation, value);
+            if (map == nullptr) return fail(error, DAO_RUNTIME_ERROR, "stale map handle", function_index, pc);
+            std::vector<std::string_view> ordered_keys;
+            ordered_keys.reserve(map->values.size());
+            for (const auto& entry : map->values) ordered_keys.emplace_back(entry.first);
+            std::sort(ordered_keys.begin(), ordered_keys.end());
+            auto keys = std::make_unique<dao_vm::List>();
+            keys->values.reserve(ordered_keys.size());
+            for (const std::string_view key : ordered_keys) {
+                keys->values.push_back(dao_value{DAO_VALUE_STRING, static_cast<uint32_t>(key.size()),
+                                                 static_cast<int64_t>(reinterpret_cast<intptr_t>(key.data()))});
+            }
+            vm->lists.push_back(std::move(keys));
+            registers[instruction.dst] = dao_value{DAO_VALUE_LIST, 0, container_handle(vm->container_generation, vm->lists.size() - 1)};
+            ++pc; break;
+        }
         case Opcode::ListLength: {
-            if (registers[instruction.a].type != DAO_VALUE_LIST) return fail(error, DAO_TYPE_ERROR, "LIST_LEN requires a list", function_index, pc);
-            const auto* list = resolve_container(vm->lists, vm->container_generation, registers[instruction.a]);
-            if (list == nullptr) return fail(error, DAO_RUNTIME_ERROR, "stale list handle", function_index, pc);
-            registers[instruction.dst] = dao_value{DAO_VALUE_I64, 0, static_cast<int64_t>(list->values.size())}; ++pc; break;
+            const dao_value& value = registers[instruction.a];
+            if (value.type == DAO_VALUE_LIST) {
+                const auto* list = resolve_container(vm->lists, vm->container_generation, value);
+                if (list == nullptr) return fail(error, DAO_RUNTIME_ERROR, "stale list handle", function_index, pc);
+                registers[instruction.dst] = dao_value{DAO_VALUE_I64, 0, static_cast<int64_t>(list->values.size())};
+            } else if (value.type == DAO_VALUE_MAP) {
+                const auto* map = resolve_container(vm->maps, vm->container_generation, value);
+                if (map == nullptr) return fail(error, DAO_RUNTIME_ERROR, "stale map handle", function_index, pc);
+                registers[instruction.dst] = dao_value{DAO_VALUE_I64, 0, static_cast<int64_t>(map->values.size())};
+            } else {
+                return fail(error, DAO_TYPE_ERROR, "LEN requires a list or map", function_index, pc);
+            }
+            ++pc; break;
         }
         case Opcode::ListAppend: {
             if (registers[instruction.dst].type != DAO_VALUE_LIST)
