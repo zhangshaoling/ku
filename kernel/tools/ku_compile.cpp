@@ -1,5 +1,6 @@
 #include "dao/selfhost.hpp"
 #include "dao/ku_migration.hpp"
+#include "dao/module_store.hpp"
 
 #include <charconv>
 #include <cstdlib>
@@ -95,14 +96,34 @@ bool read_compiler_source(const char* executable, std::string* source) {
 int main(int argc, char** argv) {
     bool recovery = false;
     bool identified = false;
+    bool check_mode = false;
+    bool store_mode = false;
+    std::filesystem::path store_root;
+    bool has_parent = false;
+    std::string parent_identity;
+    dao::SemanticVersion parent_version{};
     std::string identity_name;
     dao::SemanticVersion identity_version{};
     int input_index = 1;
     while (input_index < argc && std::string_view(argv[input_index]).starts_with("--")) {
         const std::string_view option = argv[input_index++];
+        if (option == "--check" && !check_mode) {
+            check_mode = true;
+            continue;
+        }
         if (option == "--recovery" && !recovery) {
             recovery = true;
             continue;
+        }
+        if (option == "--store" && !store_mode && input_index < argc) {
+            store_root = argv[input_index++];
+            store_mode = !store_root.empty();
+            if (store_mode) continue;
+        }
+        if (option == "--parent" && !has_parent && input_index + 1 < argc) {
+            parent_identity = argv[input_index++];
+            has_parent = !parent_identity.empty() && parse_version(argv[input_index++], &parent_version);
+            if (has_parent) continue;
         }
         if (option == "--identity" && !identified && input_index + 1 < argc) {
             identity_name = argv[input_index++];
@@ -115,9 +136,23 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
     const int output_index = input_index + 1;
-    if (input_index + 2 != argc) {
+    if (check_mode) {
+        if (input_index + 1 != argc) {
+            std::cerr << "usage: dao-ku --check [--recovery] <input.ku>\n";
+            return EXIT_FAILURE;
+        }
+    } else if (store_mode) {
+        if (!identified || input_index + 1 != argc) {
+            std::cerr << "usage: dao-ku --store DIR --identity NAME MAJOR.MINOR.PATCH <input.ku>\n";
+            return EXIT_FAILURE;
+        }
+    } else if (input_index + 2 != argc) {
         std::cerr << "usage: dao-ku [--recovery] [--identity NAME MAJOR.MINOR.PATCH] "
                      "<input.ku> <output.dao>\n";
+        return EXIT_FAILURE;
+    }
+    if (check_mode && (store_mode || identified || has_parent)) {
+        std::cerr << "--check cannot be combined with --store, --parent, or --identity\n";
         return EXIT_FAILURE;
     }
     std::ifstream input(argv[input_index], std::ios::binary);
@@ -133,6 +168,7 @@ int main(int argc, char** argv) {
         module_root = module_root.parent_path();
     FileResolver resolver{std::filesystem::weakly_canonical(module_root)};
     std::vector<uint8_t> bytes;
+    std::string compiler_source;
     if (recovery) {
         dao::ModuleBuilder builder;
         if (identified)
@@ -151,7 +187,6 @@ int main(int argc, char** argv) {
             return EXIT_FAILURE;
         }
     } else {
-        std::string compiler_source;
         if (!read_compiler_source(argv[0], &compiler_source)) {
             std::cerr << "cannot locate self-hosted compiler.ku\n";
             return EXIT_FAILURE;
@@ -182,6 +217,27 @@ int main(int argc, char** argv) {
     }
     dao_module_release(module);
     dao_vm_destroy(vm);
+    if (check_mode) {
+        std::cout << "checked " << argv[input_index] << "\n";
+        return EXIT_SUCCESS;
+    }
+    if (store_mode) {
+        dao::store::ModuleStore store(store_root);
+        if (has_parent && recovery) {
+            std::cerr << "--parent requires the self-hosted compiler path\n";
+            return EXIT_FAILURE;
+        }
+        const dao_status store_status = has_parent
+            ? store.save_derived_source(compiler_source, source, identity_name, identity_version,
+                                        parent_identity, parent_version, &error)
+            : store.save(bytes, source, &error);
+        if (store_status != DAO_OK) {
+            std::cerr << "cannot store module: " << error.message << '\n';
+            return EXIT_FAILURE;
+        }
+        std::cout << "stored " << bytes.size() << " bytes in " << store_root << '\n';
+        return EXIT_SUCCESS;
+    }
     std::ofstream output(argv[output_index], std::ios::binary | std::ios::trunc);
     if (!output || !output.write(reinterpret_cast<const char*>(bytes.data()),
                                  static_cast<std::streamsize>(bytes.size()))) {

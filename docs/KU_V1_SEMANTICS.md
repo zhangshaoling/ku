@@ -102,6 +102,8 @@ Ku v1 采用新内核恢复编译器已经验证的语义作为规范目标，�
 
 当前源码组合使用 `alias_function` 作为导入调用名。这是 Ku v1 的临时模块语义，不能被描述成已经完成的运行时模块 ABI。
 
+`dao-ku --check input.ku` 只执行恢复或自举编译、模块验证和诊断，不写出 `.dao` 文件；默认走自举编译器，传入 `--recovery` 时走恢复编译器。成功输出 `checked <input.ku>`，失败输出稳定的编译阶段和错误信息。
+
 ## 6. AI 机器语边界
 
 `thought/思` 在 Ku v1 中首先是可调用函数声明。Thought schema、canonical AST、trace、
