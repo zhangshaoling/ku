@@ -28,11 +28,11 @@ uint32_t symbol_id(std::string_view name) {
     return hash;
 }
 
-enum class Operation { Length, Trim, Upper, Lower, Replace, Contains, Starts, Ends, Substring, CharAt, Concat, Ord, Chr, ToString };
+enum class Operation { Length, Trim, Upper, Lower, Replace, Contains, Starts, Ends, Substring, CharAt, Concat, Split, Join, Ord, Chr, ToString };
 
 struct StringHost;
 struct CallbackContext { StringHost* host; Operation operation; };
-struct StringHost { std::deque<std::string> results; };
+struct StringHost { dao_vm* vm = nullptr; std::deque<std::string> results; };
 
 bool string_arg(const dao_value& value, std::string* out) {
     dao_bytes bytes{};
@@ -133,6 +133,40 @@ dao_status string_callback(void* user_data, const dao_value* args, size_t count,
         if (count != 2 || !string_arg(args[1], &right)) return DAO_TYPE_ERROR;
         return return_string(context->host, value + right, out);
     }
+    case Operation::Split: {
+        std::string separator;
+        if (count != 2 || !string_arg(args[1], &separator) || separator.empty()) return DAO_TYPE_ERROR;
+        dao_value list{};
+        if (dao_vm_make_list(context->host->vm, &list) != DAO_OK) return DAO_RUNTIME_ERROR;
+        size_t start = 0;
+        for (;;) {
+            const size_t end = value.find(separator, start);
+            const std::string part = value.substr(start, end == std::string::npos ? end : end - start);
+            dao_value item{};
+            if (dao_value_make_string_view({reinterpret_cast<const uint8_t*>(part.data()), part.size()}, &item) != DAO_OK ||
+                dao_value_list_append(context->host->vm, &list, &item) != DAO_OK) return DAO_RUNTIME_ERROR;
+            if (end == std::string::npos) break;
+            start = end + separator.size();
+        }
+        *out = list;
+        return DAO_OK;
+    }
+    case Operation::Join: {
+        std::string separator;
+        if (count != 2 || !string_arg(args[0], &separator) || args[1].type != DAO_VALUE_LIST) return DAO_TYPE_ERROR;
+        size_t size = 0;
+        if (dao_value_list_size(context->host->vm, &args[1], &size) != DAO_OK) return DAO_RUNTIME_ERROR;
+        std::string result;
+        for (size_t index = 0; index < size; ++index) {
+            dao_value item{};
+            if (dao_value_list_get(context->host->vm, &args[1], index, &item) != DAO_OK) return DAO_RUNTIME_ERROR;
+            std::string text;
+            if (!string_arg(item, &text)) return DAO_TYPE_ERROR;
+            if (index != 0) result += separator;
+            result += text;
+        }
+        return return_string(context->host, std::move(result), out);
+    }
     case Operation::Ord:
         if (count != 1 || value.empty()) return DAO_TYPE_ERROR;
         *out = {DAO_VALUE_I64, 0, static_cast<unsigned char>(value[0])};
@@ -188,6 +222,8 @@ thought ends_case() { string_ends_with("dao kernel", "kernel") }
 thought substring_case() { string_substring("abcdef", 1, 4) }
 thought char_case() { string_char_at("abc", 1) }
 thought concat_case() { string_concat("dao", " kernel") }
+thought split_case() { string_split("a,b,c", ",") }
+thought join_case() { string_join("/", ["usr", "bin"]) }
 thought ord_case() { string_ord("A") }
 thought chr_case() { string_chr(65) }
 thought string_case() { string_string(42) }
@@ -204,22 +240,22 @@ thought string_case() { string_string(42) }
     check(dao_vm_load_module(vm, {bytes.data(), bytes.size()}, &module, &error) == DAO_OK,
           "load migrated string");
 
-    StringHost host{};
+    StringHost host{vm, {}};
     CallbackContext contexts[] = {
         {&host, Operation::Length}, {&host, Operation::Trim}, {&host, Operation::Upper},
         {&host, Operation::Lower}, {&host, Operation::Replace}, {&host, Operation::Contains},
         {&host, Operation::Starts}, {&host, Operation::Ends}, {&host, Operation::Substring},
         {&host, Operation::CharAt},
-        {&host, Operation::Concat},
+        {&host, Operation::Concat}, {&host, Operation::Split}, {&host, Operation::Join},
         {&host, Operation::Ord}, {&host, Operation::Chr}, {&host, Operation::ToString},
     };
     const char* names[] = {"host_string_length", "host_string_trim", "host_string_upper",
                            "host_string_lower", "host_string_replace", "host_string_contains",
                            "host_string_starts_with", "host_string_ends_with",
                            "host_string_substring", "host_string_char_at",
-                           "host_string_concat", "host_string_ord", "host_string_chr",
+                           "host_string_concat", "host_string_split", "host_string_join", "host_string_ord", "host_string_chr",
                            "host_to_string"};
-    const uint32_t arities[] = {1, 1, 1, 1, 3, 2, 2, 2, 3, 2, 2, 1, 1, 1};
+    const uint32_t arities[] = {1, 1, 1, 1, 3, 2, 2, 2, 3, 2, 2, 2, 2, 1, 1, 1};
     for (size_t index = 0; index < std::size(contexts); ++index) {
         const dao_host_function function{sizeof(dao_host_function), symbol_id(names[index]),
                                          arities[index], 0, string_callback, &contexts[index]};
@@ -254,6 +290,12 @@ thought string_case() { string_string(42) }
               "string char at");
         check(call(vm, module, "concat_case", &result, &error) &&
                   equals_string(result, "dao kernel"), "string concat");
+        size_t list_size = 0;
+        check(call(vm, module, "split_case", &result, &error) && result.type == DAO_VALUE_LIST &&
+                  dao_value_list_size(vm, &result, &list_size) == DAO_OK && list_size == 3,
+              "string split");
+        check(call(vm, module, "join_case", &result, &error) && equals_string(result, "usr/bin"),
+              "string join");
         check(call(vm, module, "ord_case", &result, &error) &&
                   result.type == DAO_VALUE_I64 && result.payload == 65, "string ord");
         check(call(vm, module, "chr_case", &result, &error) && equals_string(result, "A"),
