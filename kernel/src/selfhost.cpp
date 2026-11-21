@@ -501,8 +501,7 @@ bool compile(std::string_view compiler_source, std::string_view source,
         set_error(error, DAO_OUT_OF_MEMORY, "cannot create compiler VM");
         return false;
     }
-    Context context{};
-    context.options = options;
+    Context context{options, {}, {}, {}, {}};
     for (const Host& host : hosts) {
         const dao_host_function function{sizeof(function), symbol(host.name), host.arity, 0,
                                          host.callback, &context};
