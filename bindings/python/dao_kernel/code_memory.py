@@ -4,6 +4,8 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from . import DaoKernelError
@@ -31,6 +33,18 @@ class CodeMemory:
             raise ValueError("version must be a non-negative (major, minor, patch) tuple")
         return ".".join(str(int(part)) for part in version)
 
+    @contextmanager
+    def _source_file(self, source: str):
+        self.directory.mkdir(parents=True, exist_ok=True)
+        descriptor, name = tempfile.mkstemp(prefix=".agent-source-", suffix=".ku", dir=self.directory)
+        path = Path(name)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                output.write(source)
+            yield path
+        finally:
+            path.unlink(missing_ok=True)
+
     def save_source(self, source: str, identity: str, version: tuple[int, int, int] = (1, 0, 0),
                     *, recovery: bool = False) -> str:
         """Compile source and persist it; return the CLI confirmation text."""
@@ -38,18 +52,13 @@ class CodeMemory:
             raise ValueError("source and identity are required")
         if not self.IDENTITY_PATTERN.fullmatch(identity):
             raise ValueError("identity must match ku:agent/<name>")
-        temp_source = self.directory / ".agent-source.ku"
-        temp_source.parent.mkdir(parents=True, exist_ok=True)
-        temp_source.write_text(source, encoding="utf-8")
-        command = [str(self.compiler)]
-        if recovery:
-            command.append("--recovery")
-        command += ["--store", str(self.directory), "--identity", identity,
-                    self._version(version), str(temp_source)]
-        try:
+        with self._source_file(source) as temp_source:
+            command = [str(self.compiler)]
+            if recovery:
+                command.append("--recovery")
+            command += ["--store", str(self.directory), "--identity", identity,
+                        self._version(version), str(temp_source)]
             result = subprocess.run(command, capture_output=True, text=True, check=False)
-        finally:
-            temp_source.unlink(missing_ok=True)
         if result.returncode != 0:
             raise DaoKernelError(result.stderr.strip() or result.stdout.strip() or "code memory save failed")
         return result.stdout.strip()
@@ -59,18 +68,14 @@ class CodeMemory:
                             *, recovery: bool = False) -> str:
         if not self.IDENTITY_PATTERN.fullmatch(identity) or not self.IDENTITY_PATTERN.fullmatch(parent_identity):
             raise ValueError("identity and parent_identity must match ku:agent/<name>")
-        temp_source = self.directory / ".agent-derived-source.ku"
-        temp_source.write_text(source, encoding="utf-8")
-        command = [str(self.compiler)]
-        if recovery:
-            command.append("--recovery")
-        command += ["--store", str(self.directory), "--identity", identity,
-                    self._version(version), "--parent", parent_identity,
-                    self._version(parent_version), str(temp_source)]
-        try:
+        with self._source_file(source) as temp_source:
+            command = [str(self.compiler)]
+            if recovery:
+                command.append("--recovery")
+            command += ["--store", str(self.directory), "--identity", identity,
+                        self._version(version), "--parent", parent_identity,
+                        self._version(parent_version), str(temp_source)]
             result = subprocess.run(command, capture_output=True, text=True, check=False)
-        finally:
-            temp_source.unlink(missing_ok=True)
         if result.returncode != 0:
             raise DaoKernelError(result.stderr.strip() or result.stdout.strip() or "derived code memory save failed")
         return result.stdout.strip()

@@ -222,7 +222,8 @@ KU-P16 质量、跨平台与发布：横跨全部项目
 - 当前入口：原生 `dao-ku --store` / `dao-module verify|run` 已接入；Python CodeMemory 仅作为兼容适配器和测试工具，不是生产语义入口。
 - 2026-11-21 本地集成验收：ModuleStore 静态库、`dao-module`、`dao-ku` 链接和 SDK 安装目标已接入 CMake；修复精确篡改测试对象后，排除独立性能阈值的功能 CTest 53/53 通过；随后新增并单独通过 `python_memory_host` 门禁，覆盖无 Host 回调时 Runtime 关闭，以及标量记忆跨进程召回、执行删除和删除持久化。以上为 Windows 本地证据，未替代多平台 CI。
 - 同日后续验收：修复缺失 manifest 后重试保存的假成功，并拒绝已存在的不匹配 manifest；补充 `module_cli_versions`，拒绝尾随字符、负数、空段和 uint32 溢出版本；功能 CTest 55/55、Python 集成测试 21/21 通过。多文件事务、跨进程并发写入和来源链冻结仍待完成。
-- 下一步：冻结 manifest schema/version chain 规范，并将旧 Python Thought/MemorySystem 逐步降级为迁移兼容层。
+- 同日契约收口：`MODULE_ABI.md` 已定义 schema-1 必需字段、可选源码校验和、旧格式兼容、父版本不可变、manifest 最后发布与相同输入重试恢复。native 保存采用目录级非阻塞 OS 锁，重叠写入返回忙碌错误。父记录须预先存在并通过验证，自父关系被拒绝。功能 CTest 57/57、Python 集成 21/21 本地通过，新增两项 CTest 覆盖原生持久化契约和 Python 输入隔离。断电持久性不在当前保证内。
+- 下一步：验证当前提交的三平台 CI，并将旧 Python Thought/MemorySystem 逐步降级为迁移兼容层。
 
 ### KU-P12：可执行记忆存储、召回与生命周期
 

@@ -500,6 +500,15 @@ set_tests_properties(${DAO_RUNTIME_TESTS} PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${DAO_COMPILER_DIR}")
 
 if(Python3_Interpreter_FOUND)
+    add_test(NAME python_code_memory COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_SOURCE_DIR}/bindings/python/test_code_memory.py" "$<TARGET_FILE:dao-ku>")
+    set_tests_properties(python_code_memory PROPERTIES
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${DAO_COMPILER_DIR}")
+    add_test(NAME module_store_contract COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_SOURCE_DIR}/kernel/tests/module_store_contract.py"
+        "$<TARGET_FILE:dao-ku>" "$<TARGET_FILE:dao-module>")
+    set_tests_properties(module_store_contract PROPERTIES
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${DAO_COMPILER_DIR}")
     add_test(NAME python_binding COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_SOURCE_DIR}/bindings/python/test_binding.py"
         "$<TARGET_FILE:dao_kernel>"

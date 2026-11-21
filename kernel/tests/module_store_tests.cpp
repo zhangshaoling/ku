@@ -29,6 +29,32 @@ int main() {
     const auto bytes = builder.encode();
     dao::store::ModuleStore store(root);
     dao_error error{};
+    dao::ModuleBuilder unicode_builder;
+    unicode_builder.set_identity("ku:memory/中文😀\"\\\n", {1, 0, 0});
+    dao::FunctionSpec unicode_function;
+    unicode_function.register_count = 1;
+    unicode_function.code = {{dao::Opcode::LoadI64, 0, 0, 0, 0, 42},
+                             {dao::Opcode::Return, 0, 0, 0, 0, 0}};
+    const auto unicode_index = unicode_builder.add_function(std::move(unicode_function));
+    unicode_builder.add_export(symbol("main"), unicode_index);
+    if (store.save(unicode_builder.encode(), {}, &error) != DAO_OK ||
+        store.verify("ku:memory/中文😀\"\\\n", {1, 0, 0}, &error) != DAO_OK) return EXIT_FAILURE;
+    bool escaped_unicode = false;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+        if (entry.path().extension() != ".json") continue;
+        std::ifstream input(entry.path(), std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(input)), {});
+        input.close();
+        const auto position = text.find("中文😀");
+        if (position == std::string::npos) continue;
+        text.replace(position, std::string("中文😀").size(), "\\u4e2d\\u6587\\ud83d\\ude00");
+        std::ofstream output(entry.path(), std::ios::binary | std::ios::trunc);
+        output << text;
+        output.close();
+        escaped_unicode = true;
+    }
+    if (!escaped_unicode || store.verify("ku:memory/中文😀\"\\\n", {1, 0, 0}, &error) != DAO_OK)
+        return EXIT_FAILURE;
     const auto compiler_path = std::filesystem::path(__FILE__).parent_path().parent_path() / "selfhost" / "compiler.ku";
     std::ifstream compiler_file(compiler_path, std::ios::binary);
     const std::string compiler_source((std::istreambuf_iterator<char>(compiler_file)), {});
@@ -121,6 +147,9 @@ int main() {
     alternate_builder.add_export(symbol("main"), alternate_index);
     conflicting = alternate_builder.encode();
     if (store.save(conflicting, {}, &error) != DAO_MODULE_CONFLICT) return EXIT_FAILURE;
+    if (store.load("", {1, 0, 0}, &loaded, &error) != DAO_INVALID_ARGUMENT || !loaded.empty())
+        return EXIT_FAILURE;
+    if (store.load("ku:memory/answer", {1, 0, 0}, &loaded, &error) != DAO_OK) return EXIT_FAILURE;
     dao_vm_config config = dao_vm_config_default();
     dao_vm* vm = dao_vm_create(&config);
     if (vm == nullptr) return EXIT_FAILURE;
