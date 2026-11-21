@@ -70,6 +70,26 @@ retained reference; callers release it with `dao_module_release`.
 The registry is VM-local and externally synchronized. It contains no process address,
 filename, resolver callback, or global mutable registry.
 
+`dao::store::ModuleStore` is the optional host-side persistence layer for identified
+modules. It stores verified `.dao` bytes under an identity-hash/version path and may keep
+an adjacent `.ku` source file for provenance. Loading from the store validates the module
+through the normal loader and requires the embedded identity/version to match the lookup
+key. The store does not alter linking: callers still load, link, and execute through the
+VM APIs. `ModuleStore::save_source` is the minimal code-memory entry point: it compiles
+source through the self-hosted frontend with an explicit identity/version, then persists
+the verified result and source provenance in one store record. `save_derived_source`
+adds a parent identity/version to the manifest, allowing code memories to form an
+explicit, auditable version chain without changing the binary ABI.
+
+A repeated save of identical bytes succeeds only if the existing manifest matches.
+If the module bytes exist but the manifest is missing (for example, after an interrupted
+write), retrying the save rebuilds the manifest. An existing mismatched manifest is
+rejected with `DAO_BAD_MODULE`; different bytes at the same identity/version are rejected
+with `DAO_MODULE_CONFLICT`. Module and manifest stream failures are checked before their
+temporary files are published. This is retry recovery, not a multi-file transaction:
+cross-process writers and durable crash recovery remain outside the current guarantee.
+The fingerprint checks consistency and is not an authenticity signature.
+
 ## Call boundary
 
 `CALL_MODULE` executes the target export inside the same VM call generation. It shares the

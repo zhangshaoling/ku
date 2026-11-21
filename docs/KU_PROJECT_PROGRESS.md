@@ -1,6 +1,6 @@
 # Ku 语言系统项目进度
 
-> 更新时间：2026-07-28  
+> 更新时间：2026-11-21
 > 状态依据：当前工作区代码、现有设计文档和本轮实测。  
 > 说明：工作区存在用户未提交改动，本看板描述的是当前本地状态，不等同于 `main` 已发布状态。
 
@@ -24,6 +24,18 @@ Ku 已经拥有一套可工作的高性能新内核和一套功能较丰富的�
 项目当前处于：**内核已成形，语言与 AI 上层迁移/集成阶段；尚未达到统一发布状态。**
 
 ## 2. 实测基线
+
+### 2026-11-21 当前本地验收
+
+- 增量构建成功；排除 `aot_performance_gate` 的功能 CTest **55/55 通过**（27.12 秒）。
+- CI 选用的 Python/MCP/记忆/任务测试 **21/21 通过**，包含中文 Thought 参数持久化回归。
+- 三个缺陷先经失败测试复现，再修复：相同模块保存时恢复缺失 manifest；严格拒绝非法版本号；中文 `思` 参数推断与英文兼容语法一致。
+- 原生模块存储、标量记忆 Host、格式化及其测试作为开发分支的集成候选提交；这些证据不等于已发布版本。
+- 已核对历史远端 CI：[run 31774870246](https://github.com/zhangshaoling/ku/actions/runs/31774870246) 的 Windows/Linux/macOS 和 `test` 均成功；它对应旧提交 `1db456a`，不能替代本轮改动的三平台验证。
+- SDK 安装和 `tools/test_installed_sdk.ps1` 独立 CMake consumer 验证通过；这不等于已验证脱离源码树、系统工具链的完整发行包。
+- 本轮没有执行性能阈值、全量旧链 pytest、fuzz 或 soak；完整发行验证仍需独立收口。
+
+以下 2026-07 的测试记录保留为历史证据，不代表当前测试数量或未完成项状态。
 
 ### 新内核
 
@@ -117,18 +129,18 @@ Ku 已经拥有一套可工作的高性能新内核和一套功能较丰富的�
 | KU-P08 | 恢复/迁移编译器 | 已完成 | 已按 Ku v1 矩阵完成一致性审计；边界语料与 12 项交叉门禁通过 |
 | KU-P09 | Ku 自举编译器 | 已完成 | 自举 lowering 与 recovery 达到 canonical identity；`B0 == B1 == B2`，生产默认/恢复入口同源字节一致 |
 | KU-P10 | 模块系统与标准库 | 已完成 | v2/ABI10、双前端 runtime import、全部 std 依赖边和 `ku:std/*@1.0.0` 版本矩阵已闭合 |
-| KU-P11 | Thought 与语义 IR | 已完成 | 新内核 Thought 类：编译/执行/持久化(save/load/scan)；MCP 服务器桥接 |
-| KU-P12 | 可执行记忆 | 已完成 | MemorySystem：文件持久化，每个条目是可执行的 Thought；store/recall/search/forget/stats |
-| KU-P13 | 任务与工具闭环 | 已完成 | Task + TaskPlanner：依赖解析、优先级排序、C ABI 执行、目标分解 |
-| KU-P14 | 原生 Agent Gateway | 已完成 | Agent：think-act-observe-replan 循环，工具通过 C ABI 执行 |
+| KU-P11 | Thought 与语义 IR | 进行中 | Python Thought 和原生 ModuleStore 已有编译/执行/持久化路径；完整 schema、语义 IR 与来源链契约待收口 |
+| KU-P12 | 可执行记忆 | 进行中 | 文件记忆和跨进程标量 Host 已验证；生命周期、迁移、反馈排序和并发事务未闭合 |
+| KU-P13 | 任务与工具闭环 | 进行中 | 依赖排序和 C ABI 执行可用；目标分解仍含占位实现，晋升/退役与 outcome 闭环未完成 |
+| KU-P14 | 原生 Agent Gateway | 进行中 | Python Agent/MCP 可调用新内核；完整原生长期运行网关及取消、恢复未完成 |
 | KU-P15 | 旧链迁移与退役 | 进行中 | 旧 CLI run 委托给新 kernel；repl/status 加 DEPRECATED；MCP server 加 Deprecation；迁移指南已发布 |
-| KU-P16 | 质量、跨平台与发布 | 进行中 | 新 Kernel 三平台 CI matrix 已配置；远端证据、全量超时、fuzz/soak/发布门禁未闭合 |
+| KU-P16 | 质量、跨平台与发布 | 进行中 | 历史三平台 CI 成功；本轮 55 项本地功能测试通过，更新后的远端 CI 和发布门禁待验证 |
 
 状态计数：
 
 - `已完成`：9 项；
-- `进行中`：4 项；
-- `待迁移`：4 项；
+- `进行中`：8 项；
+- `待迁移`：0 项；
 - `待开始 / 受阻`：0 项。
 
 不计算单一总百分比。原因是“新内核完成度”和“AI 上层仍在旧链”不能简单平均，否则会把迁移缺口隐藏起来。
@@ -162,7 +174,9 @@ Binary Module -> Loader/Verifier -> Register VM -> C ABI -> AOT/SDK
 
 - 在已冻结的 module/std ABI 上继续扩展语言与 AI 层能力。
 
-### C. AI 机器语：旧链可用，新链待迁移
+### C. AI 机器语：新链已有闭环，完整语义继续迁移
+
+新链已有 Python Thought/MemorySystem、原生 ModuleStore、标量记忆 Host 和 MCP 工具闭环。Agent 的工具选择仍以名称匹配为主，TaskPlanner 的目标分解仍包含占位 Thought；这些实现不代表完整语义 IR、模型规划或原生网关已完成。
 
 旧链已经证明的能力：
 
@@ -183,12 +197,14 @@ Binary Module -> Loader/Verifier -> Register VM -> C ABI -> AOT/SDK
 
 1. **双运行时风险**：新 Register VM 与旧 C VM 都在发展；若不按迁移矩阵推进，测试通过也不能证明生产路径唯一。
 2. **兼容语法仍有双入口**：Ku v1 核心语料和自举编译器已达到 canonical identity，但若干旧兼容语法仍需显式 `--recovery`。
-3. **CI 证据待生成**：新内核 39 项 CTest 已成为显式三平台 CI 门禁，但尚未取得首次远端运行结果。
+3. **当前改动的 CI 待生成**：历史三平台 CI 已成功；本地未提交改动仍需在 PR 上重新验证，不能沿用历史绿灯。
 4. **全量测试耗时**：本地 `pytest -q` 五分钟未结束，需要拆分慢测试、标记 soak 或定位异常耗时。
-5. **AI 层尚未迁入新内核**：当前“AI 机器语系统”能力真实存在，但主要证据仍来自旧链。
+5. **AI 层只完成部分迁移**：新内核执行闭环已有证据，完整 Thought schema、记忆生命周期、工具反馈与原生长期运行网关仍未完成。
 6. **Verifier 待复现审计项**：零长度 section 可能遮蔽相邻非空 section 重叠；属于 KU-P02，不由本次 typed-builder 切片代修。
 
 ## 6. 下一阶段计划
+
+> 下列分批计划保留历史顺序；当前优先级为模块存储契约与恢复、未提交改动审查、PR CI 和安装发布验收。第三批各项均已启动，不能再视为从零开始，也不能仅凭 Python 桥接标记全部完成。
 
 ### 第一批：统一地基
 
@@ -214,6 +230,8 @@ Binary Module -> Loader/Verifier -> Register VM -> C ABI -> AOT/SDK
 2. KU-P16：完成多平台、fuzz、soak、benchmark、SDK 和语法包发布门禁。
 
 ## 7. 下一张工作单
+
+> 当前工作单：`KU-P10-M6 / 代码模块存储与同步收口`，保持进行中。以下是 P09/P10 的历史工作单记录。
 
 已完成工作单：`KU-P09 / canonical identity`。
 

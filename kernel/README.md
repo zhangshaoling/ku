@@ -44,6 +44,18 @@ Compile the supported scalar Ku subset to a verified Dao module with:
 .\kernel\out\cmake\bin\dao-ku.exe input.ku output.dao
 ```
 
+The native code-memory path does not require Python:
+
+```powershell
+.\kernel\out\cmake\bin\dao-ku.exe --store .ku_agent_memory --identity ku:agent/example 1.0.0 input.ku
+.\kernel\out\cmake\bin\dao-module verify .ku_agent_memory ku:agent/example 1.0.0
+.\kernel\out\cmake\bin\dao-module run .ku_agent_memory ku:agent/example 1.0.0 main
+```
+
+`dao-ku --store` is the production code-memory entry point. Python bindings are
+compatibility tooling and tests only; they are not required to save, verify, or execute
+code memories.
+
 `dao-ku` accepts legacy source imports such as `引 "std/math" 别 math` and
 `import "std/math" as math`. Imported functions are namespaced as `math_<name>`;
 resolution is recursive, cycle-checked, and restricted to the input module root.

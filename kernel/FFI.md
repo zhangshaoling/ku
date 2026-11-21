@@ -36,6 +36,12 @@ dao_status status = dao_vm_register_host_function(vm, &function);
 
 The callback receives a read-only contiguous argument view and writes one result. Dao validates the declared signature, callback status, result type, Trit range, and reserved fields.
 
+The direction-two memory Host convention uses numeric symbols for `memory_store/2`,
+`memory_recall/1`, and `memory_forget/1`. The current language slice passes a UTF-8
+String key and i64 values: store returns the stored value, recall returns the value or
+zero when absent, and forget returns one when a key was removed or zero otherwise.
+Persistence and synchronization remain Host-owned; the VM does not persist these values.
+
 ## Borrowed Bytes And Strings
 
 `DAO_VALUE_BYTES` and `DAO_VALUE_STRING` are zero-copy borrowed views. Construct and inspect them through the C ABI helpers:

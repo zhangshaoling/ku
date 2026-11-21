@@ -98,11 +98,13 @@ Ku v1 采用新内核恢复编译器已经验证的语义作为规范目标，�
 | Host 导入 | `import name(arity)` 声明固定参数个数的显式 Host capability；调用走数值 C ABI | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed` |
 | 记忆原语 | `存 key value` 写入持久 i64，返回 value；`取 key` 读取 i64，不存在返回 0；`忘 key` 删除并返回 1/0；运行时由 `memory_store/recall/forget` Host capability 提供 | 实验 | 是 | 是 | `ku_migration`、`ku_selfhost_seed`、方向二 memory Host |
 | 源模块导入 | `import "path" as alias` 与 `引 "path" 别 alias` 在编译期递归组合源码；路径受模块根限制并检查循环 | 核心 | 是 | 是 | `ku_migration`、`ku_selfhost_seed`、`ku_compile_recursive_import`、`ku_reject_import_*` |
-| 运行时模块 ABI | 独立编译模块之间的动态链接、版本解析和运行时状态共享 | 推迟 | 无 | 无 | KU-P10 |
+| 运行时模块 ABI | 独立编译模块按 identity 和精确版本链接，校验 export/arity；模块调用共享当前 VM 的预算和容器代际 | 核心 | 是 | 是 | `module_abi`、`ku_selfhost_seed`、`kernel/MODULE_ABI.md` |
 
-当前源码组合使用 `alias_function` 作为导入调用名。这是 Ku v1 的临时模块语义，不能被描述成已经完成的运行时模块 ABI。
+源码组合仍使用 `alias_function` 作为导入调用名；它与 v2/ABI10 的运行时模块链接是两条不同路径。运行时 ABI 支持精确版本，不提供包下载、版本范围或模块全局状态；详见 `kernel/MODULE_ABI.md`。
 
 `dao-ku --check input.ku` 只执行恢复或自举编译、模块验证和诊断，不写出 `.dao` 文件；默认走自举编译器，传入 `--recovery` 时走恢复编译器。成功输出 `checked <input.ku>`，失败输出稳定的编译阶段和错误信息。
+
+`dao-ku --fmt input.ku` 将 Ku 源码格式化到 stdout，不修改输入文件、不生成 `.dao`、不写入 ModuleStore；默认走自举编译器，传入 `--recovery` 时走恢复编译器。v1 最小格式保证为 2 个空格缩进、规范块换行、逗号后的单空格、删除行尾空白和文件末尾单个换行。字符串、转义、注释和关键字表层保持不变；`--write`、输出路径、`--store`、`--parent`、`--identity` 暂不支持。格式化结果必须满足 `format(format(source)) == format(source)`，并可分别通过默认和 recovery 的 `--check`。缺少输入、额外输出路径或与 `--check`、`--store`、`--parent`、`--identity` 混用时返回非零并打印用法。
 
 ## 6. AI 机器语边界
 
