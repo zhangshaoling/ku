@@ -202,7 +202,8 @@ KU-P16 质量、跨平台与发布：横跨全部项目
 
 ### KU-P11：Thought 对象与语义 IR
 
-- 状态：`待迁移`
+- 状态：`进行中`
+- 当前证据：Python Thought 已桥接新 C ABI，原生 ModuleStore 支持带 identity/version 的代码持久化；完整 schema/IR/来源链契约尚未验收。
 - 目标：让 Thought 同时具有源码、结构、可执行入口、持久身份和派生关系。
 - 范围：Thought schema、semantic environment、trace、patch、provenance。
 - 不包含：先做通用 Agent framework。
@@ -211,9 +212,23 @@ KU-P16 质量、跨平台与发布：横跨全部项目
 - 验收：一个 Thought 可编译、检查、执行、序列化定位并生成可验证派生版本。
 - 依赖：KU-P04、KU-P07、KU-P10。
 
+### KU-P10-M6：代码模块存储（Code Module Store）
+
+- 状态：`进行中`
+- 目标：让带 identity/version 的 `.dao` 模块可脱离 MCP 持久化、校验、重新加载，作为可复用代码记忆。
+- 范围：文件系统 ModuleStore、原子写入、嵌入 identity/version 校验、源码 provenance 侧车、精确版本读取。
+- 不包含：包仓库、版本范围、全局状态、跨 VM 值和 MCP 协议。
+- 当前证据：`module_store` CTest 已覆盖 identified module 保存、读取、缺失、冲突、源码编译保存、跨模块 link/call、manifest/fingerprint 一致性检查、篡改拒绝和 parent/version 派生。VM linking 仍由 `dao_vm_link_module` 负责。
+- 当前入口：原生 `dao-ku --store` / `dao-module verify|run` 已接入；Python CodeMemory 仅作为兼容适配器和测试工具，不是生产语义入口。
+- 2026-11-21 本地集成验收：ModuleStore 静态库、`dao-module`、`dao-ku` 链接和 SDK 安装目标已接入 CMake；修复精确篡改测试对象后，排除独立性能阈值的功能 CTest 53/53 通过；随后新增并单独通过 `python_memory_host` 门禁，覆盖无 Host 回调时 Runtime 关闭，以及标量记忆跨进程召回、执行删除和删除持久化。以上为 Windows 本地证据，未替代多平台 CI。
+- 同日后续验收：修复缺失 manifest 后重试保存的假成功，并拒绝已存在的不匹配 manifest；补充 `module_cli_versions`，拒绝尾随字符、负数、空段和 uint32 溢出版本；功能 CTest 55/55、Python 集成测试 21/21 通过。多文件事务、跨进程并发写入和来源链冻结仍待完成。
+- 同日契约收口：`MODULE_ABI.md` 已定义 schema-1 必需字段、可选源码校验和、旧格式兼容、父版本不可变、manifest 最后发布与相同输入重试恢复。native 保存采用目录级非阻塞 OS 锁，重叠写入返回忙碌错误。父记录须预先存在并通过验证，自父关系被拒绝。功能 CTest 57/57、Python 集成 21/21 本地通过，新增两项 CTest 覆盖原生持久化契约和 Python 输入隔离。断电持久性不在当前保证内。
+- 下一步：验证当前提交的三平台 CI，并将旧 Python Thought/MemorySystem 逐步降级为迁移兼容层。
+
 ### KU-P12：可执行记忆存储、召回与生命周期
 
-- 状态：`待迁移`
+- 状态：`进行中`
+- 当前证据：文件记忆闭环和标量 Host 跨进程存/取/忘已验证；完整生命周期和迁移契约尚未验收。
 - 目标：实现 `thought = code = memory` 的持久化闭环。
 - 范围：经验、数据、图、地址、FTS 召回、留存、迁移、压实、可信度和版本。
 - 不包含：在没有文本召回闭环前先引入强绑定 embedding。
@@ -224,7 +239,8 @@ KU-P16 质量、跨平台与发布：横跨全部项目
 
 ### KU-P13：任务、工具晋升与反馈闭环
 
-- 状态：`待迁移`
+- 状态：`进行中`
+- 当前证据：Python TaskPlanner 已能按依赖排序并调用新内核；目标分解仍有占位实现，晋升/退役与反馈闭环尚未验收。
 - 目标：把缺口转成任务，把可信程序记忆晋升为工具，并让调用结果反向更新记忆。
 - 范围：task queue、gap-to-task、promotion/demotion、调用 outcome、trust 更新。
 - 不包含：模型自行猜测成功/失败；outcome 契约必须明确。
@@ -235,7 +251,8 @@ KU-P16 质量、跨平台与发布：横跨全部项目
 
 ### KU-P14：原生 Ku Agent Gateway
 
-- 状态：`待迁移`
+- 状态：`进行中`
+- 当前证据：Python Agent/MCP 已调用新 C ABI；无 Python 语义依赖的长期运行网关尚未验收。
 - 目标：通过原生长期运行网关暴露 Ku Thought、记忆和工具，不依赖 Python 语义服务器。
 - 范围：MCP/JSON-RPC framing、schema discovery、取消、超时、资源限制和恢复。
 - 不包含：把协议逻辑放进 VM 内核。

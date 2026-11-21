@@ -1,5 +1,6 @@
 #include "dao/selfhost.hpp"
 #include "dao/ku_migration.hpp"
+#include "dao/module_store.hpp"
 
 #include <charconv>
 #include <cstdlib>
@@ -75,11 +76,127 @@ bool resolve_import(void* user_data, std::string_view module_path, std::string* 
     return true;
 }
 
+std::string format_source(std::string_view source) {
+    std::string output;
+    int indent = 0;
+    bool line_start = true;
+    bool in_string = false;
+    bool in_line_comment = false;
+    bool escaped = false;
+    bool pending_space = false;
+    std::vector<bool> block_braces;
+    char previous = 0;
+    auto begin_line = [&]() {
+        if (line_start) {
+            output.append(static_cast<size_t>(indent) * 2, ' ');
+            line_start = false;
+        }
+    };
+    auto newline = [&]() {
+        while (!output.empty() && output.back() == ' ') output.pop_back();
+        if (output.empty() || output.back() != '\n') output.push_back('\n');
+        line_start = true;
+        pending_space = false;
+    };
+    for (size_t i = 0; i < source.size(); ++i) {
+        const char ch = source[i];
+        const char next = i + 1 < source.size() ? source[i + 1] : 0;
+        if (in_line_comment) {
+            begin_line(); output.push_back(ch);
+            if (ch == '\n') { in_line_comment = false; line_start = true; }
+            continue;
+        }
+        if (in_string) {
+            begin_line(); output.push_back(ch);
+            if (escaped) escaped = false;
+            else if (ch == '\\') escaped = true;
+            else if (ch == '"') in_string = false;
+            previous = ch;
+            continue;
+        }
+        if (ch == '/' && next == '/') {
+            begin_line(); if (pending_space && !output.empty() && output.back() != ' ') output.push_back(' ');
+            output += "//"; ++i; in_line_comment = true; pending_space = false; continue;
+        }
+        if (ch == ';' && next == ';') {
+            begin_line(); if (pending_space && !output.empty() && output.back() != ' ') output.push_back(' ');
+            output += ";;"; ++i; in_line_comment = true; pending_space = false; continue;
+        }
+        if (ch == '"') { begin_line(); if (pending_space && !output.empty() && output.back() != ' ') output.push_back(' '); output.push_back(ch); in_string = true; pending_space = false; continue; }
+        if (ch == '+' || ch == '-' || ch == '*' || ch == '/' || ch == '%' || ch == '=' ||
+            ch == '!' || ch == '<' || ch == '>') {
+            size_t length = 1;
+            if (i + 1 < source.size() && source[i + 1] == '=') length = 2;
+            const std::string_view op = source.substr(i, length);
+            const bool unary = (ch == '+' || ch == '-') &&
+                (previous == 0 || previous == '(' || previous == '[' || previous == '{' ||
+                 previous == ',' || previous == ':' || previous == '=' || previous == '\n' ||
+                 (!output.empty() && output.back() == '\n'));
+            while (!output.empty() && output.back() == ' ') output.pop_back();
+            begin_line();
+            if (!unary && !output.empty() && output.back() != '\n') output.push_back(' ');
+            output.append(op);
+            if (!unary) output.push_back(' ');
+            i += length - 1;
+            pending_space = false;
+            previous = op.back();
+            continue;
+        }
+        if (ch == '\r' || ch == '\t' || ch == ' ') { pending_space = true; continue; }
+        if (ch == '\n' || ch == ';') { newline(); previous = ch; continue; }
+        if (ch == '{') {
+            begin_line(); if (pending_space && !output.empty() && output.back() != ' ') output.push_back(' ');
+            output.push_back('{'); pending_space = false;
+            const size_t line_begin = output.find_last_of('\n');
+            const std::string line = output.substr(line_begin == std::string::npos ? 0 : line_begin + 1);
+            const size_t first_text = line.find_first_not_of(' ');
+            const std::string_view code_line = first_text == std::string::npos
+                ? std::string_view{}
+                : std::string_view(line).substr(first_text);
+            const bool block = previous == ')' || code_line.starts_with("thought ") || code_line.starts_with("思 ") ||
+                               code_line.starts_with("func ") || code_line.starts_with("if ") || code_line.starts_with("若 ") ||
+                               code_line.starts_with("while ") || code_line.starts_with("当 ") || code_line.starts_with("for ") ||
+                               code_line.starts_with("遍 ") || code_line.starts_with("try ") || code_line.starts_with("试 ") ||
+                               code_line.starts_with("catch ") || code_line.starts_with("捕 ") || code_line.starts_with("else ") ||
+                               code_line.starts_with("否 ");
+            block_braces.push_back(block);
+            if (block) { ++indent; newline(); }
+            continue;
+        }
+        if (ch == '}') {
+            const bool block = !block_braces.empty() && block_braces.back();
+            if (!block_braces.empty()) block_braces.pop_back();
+            if (block && indent > 0) --indent;
+            if (block && !line_start && previous != '{') newline();
+            begin_line(); output.push_back('}'); pending_space = false;
+            size_t lookahead = i + 1;
+            while (lookahead < source.size() &&
+                   (source[lookahead] == ' ' || source[lookahead] == '\t' || source[lookahead] == '\r' ||
+                    source[lookahead] == '\n')) ++lookahead;
+            const std::string_view continuation = source.substr(lookahead);
+            const bool joins_clause = continuation.starts_with("catch") || continuation.starts_with("捕") ||
+                                      continuation.starts_with("else") || continuation.starts_with("否");
+            if (block && joins_clause) output.push_back(' ');
+            else if (block && next != ';' && next != ',' && next != ']' && next != ')') newline();
+            previous = ch; continue;
+        }
+        begin_line();
+        if (pending_space && !output.empty() && output.back() != ' ' && output.back() != '\n' && ch != ',' && ch != ')' && ch != ']' && ch != '.') output.push_back(' ');
+        if ((ch == ',' || ch == ':' || ch == ')' || ch == ']' || ch == '.') && !output.empty() && output.back() == ' ') output.pop_back();
+        output.push_back(ch);
+        pending_space = ch == ',';
+        previous = ch;
+    }
+    while (!output.empty() && (output.back() == ' ' || output.back() == '\n')) output.pop_back();
+    output.push_back('\n');
+    return output;
+}
+
 bool read_compiler_source(const char* executable, std::string* source) {
     const std::filesystem::path candidates[] = {
-        std::filesystem::path(DAO_SELFHOST_COMPILER_SOURCE),
         std::filesystem::absolute(executable).parent_path() / ".." / "share" / "dao" /
             "selfhost" / "compiler.ku",
+        std::filesystem::path(DAO_SELFHOST_COMPILER_SOURCE),
     };
     for (const auto& candidate : candidates) {
         std::ifstream input(candidate, std::ios::binary);
@@ -95,14 +212,39 @@ bool read_compiler_source(const char* executable, std::string* source) {
 int main(int argc, char** argv) {
     bool recovery = false;
     bool identified = false;
+    bool check_mode = false;
+    bool fmt_mode = false;
+    bool store_mode = false;
+    std::filesystem::path store_root;
+    bool has_parent = false;
+    std::string parent_identity;
+    dao::SemanticVersion parent_version{};
     std::string identity_name;
     dao::SemanticVersion identity_version{};
     int input_index = 1;
     while (input_index < argc && std::string_view(argv[input_index]).starts_with("--")) {
         const std::string_view option = argv[input_index++];
+        if (option == "--check" && !check_mode && !fmt_mode) {
+            check_mode = true;
+            continue;
+        }
+        if (option == "--fmt" && !fmt_mode && !check_mode) {
+            fmt_mode = true;
+            continue;
+        }
         if (option == "--recovery" && !recovery) {
             recovery = true;
             continue;
+        }
+        if (option == "--store" && !store_mode && input_index < argc) {
+            store_root = argv[input_index++];
+            store_mode = !store_root.empty();
+            if (store_mode) continue;
+        }
+        if (option == "--parent" && !has_parent && input_index + 1 < argc) {
+            parent_identity = argv[input_index++];
+            has_parent = !parent_identity.empty() && parse_version(argv[input_index++], &parent_version);
+            if (has_parent) continue;
         }
         if (option == "--identity" && !identified && input_index + 1 < argc) {
             identity_name = argv[input_index++];
@@ -112,12 +254,31 @@ int main(int argc, char** argv) {
                 continue;
         }
         std::cerr << "invalid dao-ku option\n";
+        if (fmt_mode || option == "--fmt")
+            std::cerr << "usage: dao-ku --fmt [--recovery] <input.ku>\n";
         return EXIT_FAILURE;
     }
     const int output_index = input_index + 1;
-    if (input_index + 2 != argc) {
+    if (check_mode || fmt_mode) {
+        if (input_index + 1 != argc) {
+            std::cerr << "usage: dao-ku " << (fmt_mode ? "--fmt" : "--check") << " [--recovery] <input.ku>\n";
+            return EXIT_FAILURE;
+        }
+    } else if (store_mode) {
+        if (!identified || input_index + 1 != argc) {
+            std::cerr << "usage: dao-ku --store DIR --identity NAME MAJOR.MINOR.PATCH <input.ku>\n";
+            return EXIT_FAILURE;
+        }
+    } else if (input_index + 2 != argc) {
         std::cerr << "usage: dao-ku [--recovery] [--identity NAME MAJOR.MINOR.PATCH] "
                      "<input.ku> <output.dao>\n";
+        return EXIT_FAILURE;
+    }
+    if ((check_mode || fmt_mode) && (store_mode || identified || has_parent)) {
+        std::cerr << (fmt_mode ? "--fmt" : "--check")
+                  << " cannot be combined with --store, --parent, or --identity\n";
+        std::cerr << "usage: dao-ku " << (fmt_mode ? "--fmt" : "--check")
+                  << " [--recovery] <input.ku>\n";
         return EXIT_FAILURE;
     }
     std::ifstream input(argv[input_index], std::ios::binary);
@@ -133,6 +294,7 @@ int main(int argc, char** argv) {
         module_root = module_root.parent_path();
     FileResolver resolver{std::filesystem::weakly_canonical(module_root)};
     std::vector<uint8_t> bytes;
+    std::string compiler_source;
     if (recovery) {
         dao::ModuleBuilder builder;
         if (identified)
@@ -151,7 +313,6 @@ int main(int argc, char** argv) {
             return EXIT_FAILURE;
         }
     } else {
-        std::string compiler_source;
         if (!read_compiler_source(argv[0], &compiler_source)) {
             std::cerr << "cannot locate self-hosted compiler.ku\n";
             return EXIT_FAILURE;
@@ -182,6 +343,31 @@ int main(int argc, char** argv) {
     }
     dao_module_release(module);
     dao_vm_destroy(vm);
+    if (check_mode) {
+        std::cout << "checked " << argv[input_index] << "\n";
+        return EXIT_SUCCESS;
+    }
+    if (fmt_mode) {
+        std::cout << format_source(source);
+        return EXIT_SUCCESS;
+    }
+    if (store_mode) {
+        dao::store::ModuleStore store(store_root);
+        if (has_parent && recovery) {
+            std::cerr << "--parent requires the self-hosted compiler path\n";
+            return EXIT_FAILURE;
+        }
+        const dao_status store_status = has_parent
+            ? store.save_derived_source(compiler_source, source, identity_name, identity_version,
+                                        parent_identity, parent_version, &error)
+            : store.save(bytes, source, &error);
+        if (store_status != DAO_OK) {
+            std::cerr << "cannot store module: " << error.message << '\n';
+            return EXIT_FAILURE;
+        }
+        std::cout << "stored " << bytes.size() << " bytes in " << store_root << '\n';
+        return EXIT_SUCCESS;
+    }
     std::ofstream output(argv[output_index], std::ios::binary | std::ios::trunc);
     if (!output || !output.write(reinterpret_cast<const char*>(bytes.data()),
                                  static_cast<std::streamsize>(bytes.size()))) {

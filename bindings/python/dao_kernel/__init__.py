@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import ctypes as c
+import inspect
 import os
 from pathlib import Path
 
 DAO_OK = 0
+DAO_VALUE_NULL = 0
 DAO_VALUE_I64 = 1
 DAO_VALUE_BYTES = 3
 DAO_VALUE_STRING = 4
@@ -46,6 +48,7 @@ class Runtime:
     def __init__(self, library: str | Path):
         library = Path(library).resolve()
         self._dll_dirs = []
+        self._host_callbacks = {}
         if os.name == "nt":
             for directory in [library.parent, *(Path(p) for p in os.environ.get("DAO_KERNEL_DLL_DIRS", "").split(os.pathsep) if p)]:
                 self._dll_dirs.append(os.add_dll_directory(str(directory)))
@@ -72,41 +75,72 @@ class Runtime:
         lib.dao_value_list_append.argtypes = [c.c_void_p, c.POINTER(DaoValue), c.POINTER(DaoValue)]
         lib.dao_vm_make_map.argtypes = [c.c_void_p, c.POINTER(DaoValue)]
         lib.dao_value_map_set.argtypes = [c.c_void_p, c.POINTER(DaoValue), DaoBytes, c.POINTER(DaoValue)]
+        lib.dao_value_make_string_view.argtypes = [DaoBytes, c.POINTER(DaoValue)]
+        lib.dao_value_make_string_view.restype = c.c_int
+        lib.dao_value_get_view.argtypes = [c.POINTER(DaoValue), c.POINTER(DaoBytes)]
+        lib.dao_value_get_view.restype = c.c_int
         lib.dao_vm_register_host_function.argtypes = [c.c_void_p, c.POINTER(DaoHostFunction)]
         lib.dao_vm_register_host_function.restype = c.c_int
         lib.dao_vm_unregister_host_function.argtypes = [c.c_void_p, c.c_uint32]
         lib.dao_vm_unregister_host_function.restype = c.c_int
 
     def register_host_function(self, symbol_id, parameter_count, callback, user_data=None):
-        """Register a host function callable from Ku bytecode.
+        """Register a callback receiving ``(args, count, user_data)``.
 
-        callback signature: (args: list[DaoValue], count: int) -> DaoValue
-        The callback receives a list of DaoValue arguments and must return a DaoValue.
+        The callback may return a DaoValue or raise; exceptions are converted to a
+        runtime error by the C ABI bridge. Returned callback references are retained
+        until explicit unregistration or Runtime.close().
         """
         @c.CFUNCTYPE(c.c_int, c.c_void_p, c.POINTER(DaoValue), c.c_size_t, c.POINTER(DaoValue))
-        def _host_callback(user_data, raw_args, arg_count, out_value):
+        def _host_callback(raw_user_data, raw_args, arg_count, out_value):
             try:
                 args = [raw_args[i] for i in range(arg_count)] if raw_args else []
-                result = callback(args, arg_count)
+                if len(inspect.signature(callback).parameters) >= 3:
+                    result = callback(args, arg_count, user_data)
+                else:
+                    result = callback(args, arg_count)
                 out_value[0] = result
-                return 0
+                return DAO_OK
             except Exception:
                 return 11
 
-        self._host_callbacks = getattr(self, '_host_callbacks', [])
-        self._host_callbacks.append(_host_callback)
-        function = DaoHostFunction(
-            struct_size=c.sizeof(DaoHostFunction),
-            symbol_id=symbol_id,
-            parameter_count=parameter_count,
-            reserved=0,
-            callback=c.cast(_host_callback, c.c_void_p).value,
-            user_data=None
-        )
+        self._host_callbacks = getattr(self, '_host_callbacks', {})
+        function = DaoHostFunction(c.sizeof(DaoHostFunction), symbol_id, parameter_count, 0,
+                                   c.cast(_host_callback, c.c_void_p).value,
+                                   c.c_void_p(id(user_data)) if user_data is not None else None)
         status = self._lib.dao_vm_register_host_function(self._vm, c.byref(function))
         if status != DAO_OK:
             raise DaoKernelError(f"register_host_function failed with status {status}")
+        self._host_callbacks[symbol_id] = _host_callback
         return _host_callback
+
+    def unregister_host_function(self, symbol_id):
+        status = self._lib.dao_vm_unregister_host_function(self._vm, symbol_id)
+        if status == DAO_OK:
+            self._host_callbacks.pop(symbol_id, None)
+        return status
+
+    def register_host_import(self, name, parameter_count, callback, user_data=None):
+        """Register a named Host import using the compiler's FNV-1a symbol ID."""
+        return self.register_host_function(fnv1a(name), parameter_count, callback, user_data)
+
+    def make_string(self, value: str) -> DaoValue:
+        encoded = value.encode("utf-8")
+        storage = (c.c_uint8 * len(encoded)).from_buffer_copy(encoded)
+        result = DaoValue()
+        status = self._lib.dao_value_make_string_view(DaoBytes(storage, len(encoded)), c.byref(result))
+        if status != DAO_OK:
+            raise DaoKernelError(f"string value creation failed with status {status}")
+        self._view_storage = getattr(self, "_view_storage", [])
+        self._view_storage.append(storage)
+        return result
+
+    def value_text(self, value: DaoValue) -> str:
+        view = DaoBytes()
+        status = self._lib.dao_value_get_view(c.byref(value), c.byref(view))
+        if status != DAO_OK:
+            raise DaoKernelError(f"value is not a valid bytes/string view: {status}")
+        return bytes(view.data[:view.size]).decode("utf-8") if view.size else ""
 
     def load(self, payload: bytes) -> "Module":
         storage = (c.c_uint8 * len(payload)).from_buffer_copy(payload)
@@ -137,6 +171,11 @@ class Runtime:
 
     def close(self) -> None:
         if self._vm:
+            memory_host = getattr(self, "_ku_memory_host", None)
+            if memory_host is not None:
+                memory_host.close()
+                self._ku_memory_host = None
+            self._host_callbacks.clear()
             self._lib.dao_vm_destroy(self._vm); self._vm = None
 
     def __enter__(self) -> "Runtime": return self
@@ -149,13 +188,15 @@ class Module:
         result = self.call(symbol, *values)
         if result.type != DAO_VALUE_I64: raise DaoKernelError("result is not i64")
         return result.payload
-    def call(self, symbol: int, *values: int) -> DaoValue:
+    def call(self, symbol: int, *values) -> DaoValue:
         function = c.c_uint32(); lib = self._runtime._lib
         if lib.dao_module_find_export(self._handle, symbol, c.byref(function)) != DAO_OK:
             raise DaoKernelError(f"export {symbol} not found")
-        args = (DaoValue * len(values))(*(DaoValue(DAO_VALUE_I64, 0, value) for value in values))
+        converted = [self._runtime.make_string(value) if isinstance(value, str)
+                     else DaoValue(DAO_VALUE_I64, 0, value) for value in values]
+        args = (DaoValue * len(converted))(*converted)
         result, error = DaoValue(), DaoError()
-        status = lib.dao_vm_call(self._runtime._vm, self._handle, function, args, len(values), c.byref(result), c.byref(error))
+        status = lib.dao_vm_call(self._runtime._vm, self._handle, function, args, len(converted), c.byref(result), c.byref(error))
         if status != DAO_OK: raise DaoKernelError(error.message.decode("utf-8", "replace"))
         return result
     def close(self) -> None:
@@ -167,3 +208,4 @@ from .thought import Thought, fnv1a
 from .memory import MemorySystem, MemoryEntry, MemoryType
 from .task import Task, TaskPlanner, TaskPriority, TaskStatus
 from .agent import Agent, AgentState, AgentPhase, Toolbox
+from .code_memory import CodeMemory

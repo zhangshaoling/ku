@@ -70,6 +70,79 @@ retained reference; callers release it with `dao_module_release`.
 The registry is VM-local and externally synchronized. It contains no process address,
 filename, resolver callback, or global mutable registry.
 
+`dao::store::ModuleStore` is the optional host-side persistence layer for identified
+modules. It stores verified `.dao` bytes under an identity-hash/version path and may keep
+an adjacent `.ku` source file for provenance. Loading from the store validates the module
+through the normal loader and requires the embedded identity/version to match the lookup
+key. The store does not alter linking: callers still load, link, and execute through the
+VM APIs. `ModuleStore::save_source` is the minimal code-memory entry point: it compiles
+source through the self-hosted frontend with an explicit identity/version, then persists
+the verified result and source provenance in one store record. `save_derived_source`
+adds a parent identity/version to the manifest, allowing code memories to form an
+explicit, auditable version chain without changing the binary ABI.
+
+### Store manifest schema 1
+
+The UTF-8 JSON manifest is a flat object. Field order and JSON whitespace are insignificant,
+and strings use standard JSON escaping, including Unicode escapes.
+
+| Field | Contract |
+|---|---|
+| `schema_version` | Required integer `1` |
+| `identity` | Required embedded module identity |
+| `version` | Required exact `major.minor.patch` module version |
+| `fingerprint` | Required hexadecimal FNV-1a checksum using the existing store seed |
+| `source_fingerprint` | Optional hexadecimal checksum of the exact adjacent `.ku` bytes |
+| `parent_identity`, `parent_version` | Optional pair describing one parent record |
+
+Unknown fields, unsupported schema versions, incomplete parent pairs, malformed JSON,
+and duplicate fields are rejected. For compatibility with early schema-1 writers,
+identical repeated parent fields remain readable. Conflicting repeated parent fields are
+rejected. Legacy manifests without `source_fingerprint` remain readable with their original
+guarantees. Newly saved source provenance includes its checksum. Checksums establish
+file consistency. They do not authenticate the author or prove that caller-supplied source
+produces the supplied module bytes.
+
+### Store immutability and derivation
+
+At a committed identity/version, different module bytes, source provenance, or an explicitly
+different parent return `DAO_MODULE_CONFLICT`. Repeating the same derived save preserves
+the existing manifest bytes. An ordinary save of the same module preserves its recorded
+parent. A base record cannot acquire a parent after it has committed.
+
+`save_derived_source` verifies the exact parent in the same store before publishing a new
+child. A missing parent returns `DAO_IMPORT_NOT_FOUND`, and a self-parent returns
+`DAO_MODULE_CYCLE`. Parent records precede children and committed provenance is immutable.
+Reads validate the requested record without recursively loading its ancestors.
+
+### Store publication and recovery
+
+Module bytes and optional source are written through temporary files with checked stream
+completion. The complete manifest, including any parent, is published last by rename.
+`load` returns bytes only after module identity/version, manifest, and any declared source
+checksum pass validation. Every failed load clears the output vector.
+
+After an interrupted write, retrying with the same bytes, source, and parent completes a
+missing manifest. A committed record with missing source can be restored by retrying with
+source matching its recorded checksum. Corrupt manifests or existing mismatched files are
+rejected with `DAO_BAD_MODULE` or `DAO_MODULE_CONFLICT`. I/O failures return
+`DAO_RUNTIME_ERROR` and leave committed records intact. Temporary files may remain after
+failure and are reused by a subsequent write. This contract covers retry recovery after
+process interruption and reported I/O failure. Power-loss durability is not guaranteed.
+
+### Store concurrency
+
+Native saves use one nonblocking OS lock on `<store>/.write.lock`, covering all store objects,
+threads, and cooperating processes for that directory. An overlapping writer returns
+`DAO_RUNTIME_ERROR` with a busy diagnostic. Lock handles close on return or process exit,
+and the lock file remains in place. The supported environment is a local filesystem with
+OS locking and atomic rename semantics.
+
+Readers can access committed records during a write. A new record whose manifest has not
+yet published can return not-found or validation failure until the writer commits.
+Python CodeMemory creates a separate temporary source for each call, preserving input
+isolation before the native store lock is acquired.
+
 ## Call boundary
 
 `CALL_MODULE` executes the target export inside the same VM call generation. It shares the

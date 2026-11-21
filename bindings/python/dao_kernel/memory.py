@@ -63,8 +63,12 @@ class MemorySystem:
             <key>.json     — metadata (type, strength, timestamps, tags)
     """
 
-    def __init__(self, directory: str | Path):
-        self.directory = Path(directory)
+    def __init__(self, directory: str | Path | None = None):
+        # Legacy metadata memory remains available, but defaults to the unified
+        # agent code-memory root so callers do not silently create another store.
+        self.directory = Path(directory) if directory is not None else Path(
+            __import__("os").environ.get("KU_CODE_MEMORY_DIR", ".ku_agent_memory")
+        )
         self.directory.mkdir(parents=True, exist_ok=True)
         self._entries: dict[str, MemoryEntry] = {}
         self._load_all()

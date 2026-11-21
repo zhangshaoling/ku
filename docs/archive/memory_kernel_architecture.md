@@ -1,5 +1,7 @@
 # 可执行记忆核（Executable Memory Kernel）技术架构
 
+> 历史设计记录。当前模块存储契约见 [MODULE_ABI.md](../../kernel/MODULE_ABI.md)，实际进度见 [项目进度](../KU_PROJECT_PROGRESS.md)。
+
 ## 一、现状诊断
 
 | 维度 | 当前状态 | 问题 |
