@@ -32,7 +32,13 @@ def fnv1a(name: str) -> int:
 
 def _find_kernel_library() -> Path:
     """Locate the compiled kernel DLL/SO."""
+    root = Path(__file__).resolve().parents[3]
     candidates = [
+        root / "bin" / "libdao_kernel.dll",
+        root / "bin" / "dao_kernel.dll",
+        root / "lib" / "libdao_kernel.so",
+        root / "lib64" / "libdao_kernel.so",
+        root / "lib" / "libdao_kernel.dylib",
         Path(__file__).resolve().parent.parent.parent.parent
             / "kernel" / "out" / "cmake" / "bin" / "libdao_kernel.dll",
         Path(__file__).resolve().parent.parent.parent.parent
@@ -50,7 +56,10 @@ def _find_kernel_library() -> Path:
 
 def _find_dao_ku() -> Path:
     """Locate the dao-ku compiler executable."""
+    root = Path(__file__).resolve().parents[3]
     candidates = [
+        root / "bin" / "dao-ku.exe",
+        root / "bin" / "dao-ku",
         Path(__file__).resolve().parent.parent.parent.parent
             / "kernel" / "out" / "cmake" / "bin" / "dao-ku.exe",
         Path(__file__).resolve().parent.parent.parent.parent

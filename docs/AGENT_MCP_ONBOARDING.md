@@ -38,7 +38,8 @@ Python 可执行文件，`<KU_MEMORY_DIR>` 是可写的 MCP 记忆目录。
 `dao-ku --store` / `dao-module` 使用带 identity/version 的 ModuleStore 格式，
 两者应选择各自的存储目录。原生格式及保证见 [模块与存储契约](../kernel/MODULE_ABI.md)。
 
-## 历史 C VM 接入记录
+<details>
+<summary>历史 C VM 接入记录</summary>
 
 下文保留 `dao.mcp_server`、`DAO_DATA_DIR` 和旧工具的历史配置，适用于旧 C VM 迁移验证。
 
@@ -292,4 +293,6 @@ This is the practical meaning of:
 ```text
 data = code = memory = tool = knowledge = capability
 ```
+
+</details>
 

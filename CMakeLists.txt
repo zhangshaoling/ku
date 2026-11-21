@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(dao_kernel VERSION 0.2.0 LANGUAGES C CXX)
+project(dao_kernel VERSION 1.1.0 LANGUAGES C CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -20,6 +20,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+if(APPLE)
+    set(CMAKE_INSTALL_RPATH "@loader_path/../${CMAKE_INSTALL_LIBDIR}")
+elseif(UNIX)
+    set(CMAKE_INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+endif()
 
 function(dao_enable_strict_warnings target)
     if(MSVC)
@@ -533,6 +538,13 @@ install(TARGETS dao_kernel dao_module_builder dao_disassembly dao_assembly dao_k
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+if(WIN32 AND EXISTS "${DAO_COMPILER_DIR}/libc++.dll")
+    install(FILES "${DAO_COMPILER_DIR}/libc++.dll" "${DAO_COMPILER_DIR}/libunwind.dll"
+        DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES "${DAO_COMPILER_DIR}/../LICENSE.TXT"
+        DESTINATION ${CMAKE_INSTALL_DOCDIR}/licenses RENAME LLVM-LICENSE.txt)
+endif()
+install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(DIRECTORY kernel/include/dao DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES kernel/FORMAT.md kernel/FFI.md kernel/MODULE_ABI.md kernel/STDLIB_ABI.md
     kernel/README.md kernel/BENCHMARKS.md kernel/K5.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
@@ -562,7 +574,8 @@ install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/DaoKernelConfigVersion.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/DaoKernel)
 
-set(CPACK_PACKAGE_NAME "DaoKernel")
+set(CPACK_PACKAGE_NAME "Ku")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_FILE_NAME "Ku-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
 set(CPACK_GENERATOR "ZIP")
 include(CPack)

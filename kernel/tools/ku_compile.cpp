@@ -194,9 +194,9 @@ std::string format_source(std::string_view source) {
 
 bool read_compiler_source(const char* executable, std::string* source) {
     const std::filesystem::path candidates[] = {
-        std::filesystem::path(DAO_SELFHOST_COMPILER_SOURCE),
         std::filesystem::absolute(executable).parent_path() / ".." / "share" / "dao" /
             "selfhost" / "compiler.ku",
+        std::filesystem::path(DAO_SELFHOST_COMPILER_SOURCE),
     };
     for (const auto& candidate : candidates) {
         std::ifstream input(candidate, std::ios::binary);

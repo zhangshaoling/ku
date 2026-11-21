@@ -23,10 +23,19 @@ Ku 是语言系统和产品名称。现有 `dao_*`、Dao Binary Module、`dao/` 
 
 开发记录与发布：
 
-- [PR #30](https://github.com/zhangshaoling/ku/pull/30) 汇总代码记忆、工具命令和持久化契约的当前开发迭代。
-- [2026-11-21 同步审查](KU_SYNC_REVIEW_2026-11-21.md) 保留本地验证与后续契约收口记录。
+- [v1.1.0 版本说明](releases/v1.1.0.md) 汇总代码记忆、工具命令、安装包和修复。
+- [发布流程](RELEASING.md) 说明递增版本、标签和三平台安装包发布。
 - [Releases](https://github.com/zhangshaoling/ku/releases) 提供已发布版本，开发分支的最新状态见 [Actions](https://github.com/zhangshaoling/ku/actions)。
+
+<details>
+<summary>历史记录与迁移背景</summary>
+
+- [历史归档](archive/README.md)
+- [2026-11-21 同步审查](KU_SYNC_REVIEW_2026-11-21.md)
+- [PR #30](https://github.com/zhangshaoling/ku/pull/30)
 
 项目宪法和架构文档提供背景约束；旧阶段计划、C VM 接管说明和 Agent/Memory 路线是迁移证据，不得继续指导新内核实现。
 
 现有 `dao/`、`ku/`、旧 `.ku` 标准库和 Python 测试属于迁移输入。新生产内核位于 `kernel/`。
+
+</details>
