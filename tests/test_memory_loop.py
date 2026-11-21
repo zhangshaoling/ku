@@ -17,6 +17,8 @@ def test_memory_closed_loop():
     with tempfile.TemporaryDirectory() as tmp:
         double = Thought.from_source("翻倍", "思 main(x) { x * 2 }")
         answer = Thought.from_source("答案", "思 main() { 返 42 }")
+        assert double.params == ["x"]
+        assert answer.params == []
 
         mem = MemorySystem(tmp)
         mem.store("翻倍", double, MemoryType.LONG_TERM)
@@ -25,6 +27,7 @@ def test_memory_closed_loop():
 
         # 全新实例（等价换进程）召回并执行
         mem2 = MemorySystem(tmp)
+        assert mem2.recall("翻倍").params == ["x"]
         assert mem2.recall("翻倍").call_i64(args=[21]) == 42
         assert mem2.recall("答案").call_i64(args=[]) == 42
 

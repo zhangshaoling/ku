@@ -18,6 +18,7 @@ BINDINGS_DIR = Path(__file__).resolve().parent.parent / "bindings" / "python"
 sys.path.insert(0, str(BINDINGS_DIR))
 
 from dao_kernel import Thought, Runtime, DaoValue, DAO_VALUE_I64, fnv1a, MemorySystem, MemoryType
+from dao_kernel.memory_host import MemoryHost
 
 DAO_KU = Path(__file__).resolve().parent.parent / "kernel" / "out" / "cmake" / "bin" / "dao-ku.exe"
 KERNEL_DLL = Path(__file__).resolve().parent.parent / "kernel" / "out" / "cmake" / "bin" / "libdao_kernel.dll"
@@ -103,8 +104,16 @@ class KernelTool:
 
     def execute(self, runtime: Runtime, arguments: dict) -> dict:
         """Execute the thought with given arguments."""
+        memory_host = getattr(runtime, "_ku_memory_host", None)
+        if memory_host is None and any(fn_name.startswith("memory_") for fn_name, _ in self.imports):
+            memory_host = MemoryHost(runtime, MEMORY_DIR)
+            runtime._ku_memory_host = memory_host
         for fn_name, arity in self.imports:
-            runtime.register_host_function(fnv1a(fn_name), arity, make_host_function_stub(fn_name, arity))
+            if fn_name.startswith("memory_"):
+                continue
+            symbol = fnv1a(fn_name)
+            if symbol not in runtime._host_callbacks:
+                runtime.register_host_function(symbol, arity, make_host_function_stub(fn_name, arity))
 
         module = runtime.load(self.thought.module_bytes)
         try:

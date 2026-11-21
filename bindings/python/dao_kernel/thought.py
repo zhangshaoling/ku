@@ -149,7 +149,7 @@ class Thought:
     @staticmethod
     def _infer_params(source: str) -> list[str]:
         """Infer parameter names from .ku source."""
-        match = re.search(r"thought\s+main\s*\(([^)]*)\)", source)
+        match = re.search(r"\b(?:思|thought|func)\s+main\s*\(([^)]*)\)", source)
         if not match:
             return []
         return [p.strip() for p in match.group(1).split(",") if p.strip()]

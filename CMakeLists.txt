@@ -183,8 +183,23 @@ target_link_libraries(module_abi_tests PRIVATE dao_kernel dao_module_builder)
 dao_enable_strict_warnings(module_abi_tests)
 dao_enable_sanitizers(module_abi_tests)
 
+add_library(dao_module_store STATIC kernel/src/module_store.cpp)
+target_link_libraries(dao_module_store PUBLIC dao_kernel dao_ku_selfhost)
+dao_enable_strict_warnings(dao_module_store)
+dao_enable_sanitizers(dao_module_store)
+
+add_executable(module_store_tests kernel/tests/module_store_tests.cpp)
+target_link_libraries(module_store_tests PRIVATE dao_module_store)
+dao_enable_strict_warnings(module_store_tests)
+dao_enable_sanitizers(module_store_tests)
+
+add_executable(dao-module kernel/tools/module_cli.cpp)
+target_link_libraries(dao-module PRIVATE dao_module_store)
+dao_enable_strict_warnings(dao-module)
+dao_enable_sanitizers(dao-module)
+
 add_executable(dao-ku kernel/tools/ku_compile.cpp)
-target_link_libraries(dao-ku PRIVATE dao_kernel dao_module_builder dao_ku_selfhost)
+target_link_libraries(dao-ku PRIVATE dao_kernel dao_module_builder dao_ku_selfhost dao_module_store)
 target_compile_definitions(dao-ku PRIVATE DAO_SELFHOST_COMPILER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/kernel/selfhost/compiler.ku")
 dao_enable_strict_warnings(dao-ku)
 dao_enable_sanitizers(dao-ku)
@@ -253,6 +268,14 @@ add_test(NAME ku_migration COMMAND ku_migration_tests)
 add_test(NAME ku_selfhost_seed COMMAND selfhost_tests "${CMAKE_SOURCE_DIR}/kernel/selfhost/compiler.ku")
 add_test(NAME ku_selfhost_builder COMMAND selfhost_builder_tests)
 add_test(NAME module_abi COMMAND module_abi_tests)
+add_test(NAME module_store COMMAND module_store_tests)
+add_test(NAME module_cli_versions COMMAND ${CMAKE_COMMAND}
+    "-DDAO_KU=$<TARGET_FILE:dao-ku>"
+    "-DDAO_MODULE=$<TARGET_FILE:dao-module>"
+    "-DWORK=${CMAKE_BINARY_DIR}/module_cli_versions"
+    -P "${CMAKE_SOURCE_DIR}/kernel/tests/check_module_cli_versions.cmake")
+set_tests_properties(module_store PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${DAO_COMPILER_DIR}")
 add_test(NAME ku_compile_stdlib COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/stdlib/core.ku"
     "${CMAKE_BINARY_DIR}/stdlib_core.dao")
@@ -346,6 +369,20 @@ add_test(NAME ku_compile_acceptance COMMAND ${CMAKE_COMMAND}
     "-DDEFAULT_OUTPUT=${CMAKE_BINARY_DIR}/language_acceptance.dao"
     "-DRECOVERY_OUTPUT=${CMAKE_BINARY_DIR}/language_acceptance_recovery.dao"
     -P "${CMAKE_SOURCE_DIR}/kernel/tests/check_ku_canonical_identity.cmake")
+add_test(NAME ku_check_acceptance COMMAND ${CMAKE_COMMAND}
+    "-DDAO_KU=$<TARGET_FILE:dao-ku>"
+    "-DSOURCE=${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/language_acceptance.ku"
+    -P "${CMAKE_SOURCE_DIR}/kernel/tests/check_ku_check.cmake")
+add_test(NAME ku_fmt_acceptance COMMAND ${CMAKE_COMMAND}
+    "-DDAO_KU=$<TARGET_FILE:dao-ku>"
+    "-DSOURCE=${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/language_acceptance.ku"
+    "-DWORK=${CMAKE_BINARY_DIR}/ku_fmt_acceptance.ku"
+    -P "${CMAKE_SOURCE_DIR}/kernel/tests/check_ku_fmt.cmake")
+add_test(NAME ku_fmt_cli_errors COMMAND ${CMAKE_COMMAND}
+    "-DDAO_KU=$<TARGET_FILE:dao-ku>"
+    "-DSOURCE=${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/language_acceptance.ku"
+    "-DWORK=${CMAKE_BINARY_DIR}/ku_fmt_cli_errors"
+    -P "${CMAKE_SOURCE_DIR}/kernel/tests/check_ku_fmt_cli.cmake")
 add_test(NAME ku_compile_legacy_import COMMAND dao-ku
     "${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/legacy_import_main.ku"
     "${CMAKE_BINARY_DIR}/legacy_import.dao")
@@ -408,6 +445,7 @@ set_tests_properties(aot_performance_gate PROPERTIES DEPENDS aot_compile_native)
 # LLVM-MinGW links C++ targets against shared libc++/libunwind runtimes. Make
 # CTest self-contained instead of requiring callers to activate the toolchain.
 set(DAO_RUNTIME_TESTS
+    module_cli_versions
     kernel_conformance
     dynamic_cpp_abi
     pure_c_abi
@@ -440,6 +478,9 @@ set(DAO_RUNTIME_TESTS
     ku_compile_std_lexer
     ku_std_lexer
     ku_compile_acceptance
+    ku_check_acceptance
+    ku_fmt_acceptance
+    ku_fmt_cli_errors
     ku_compile_legacy_import
     ku_compile_recursive_import
     ku_compile_legacy_parser
@@ -465,6 +506,12 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_BINARY_DIR}/aot_numeric.dao")
     set_tests_properties(python_binding PROPERTIES DEPENDS aot_compile_module)
     set_tests_properties(python_binding PROPERTIES ENVIRONMENT "DAO_KERNEL_DLL_DIRS=${DAO_COMPILER_DIR}")
+    add_test(NAME python_memory_host COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_SOURCE_DIR}/bindings/python/test_memory_host.py"
+        "$<TARGET_FILE:dao_kernel>" "$<TARGET_FILE:dao-ku>")
+    set_tests_properties(python_memory_host PROPERTIES
+        ENVIRONMENT "DAO_KERNEL_DLL_DIRS=${DAO_COMPILER_DIR}"
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${DAO_COMPILER_DIR}")
 endif()
 find_program(DAO_CARGO_EXECUTABLE cargo)
 if(DAO_CARGO_EXECUTABLE)
@@ -472,7 +519,7 @@ if(DAO_CARGO_EXECUTABLE)
         --manifest-path "${CMAKE_SOURCE_DIR}/bindings/rust/dao-kernel-sys/Cargo.toml")
 endif()
 
-install(TARGETS dao_kernel dao_module_builder dao_disassembly dao_assembly dao_ku_migration dao_ku_selfhost dao-ku dao-aot
+install(TARGETS dao_kernel dao_module_builder dao_disassembly dao_assembly dao_ku_migration dao_ku_selfhost dao_module_store dao-ku dao-module dao-aot
     EXPORT DaoKernelTargets
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
