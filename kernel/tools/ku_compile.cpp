@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -207,6 +208,63 @@ bool read_compiler_source(const char* executable, std::string* source) {
     }
     return false;
 }
+
+int run_tests(std::string_view source, const std::vector<uint8_t>& bytes) {
+    std::vector<std::string> names;
+    dao_error error{};
+    if (!dao::km::declared_function_names(source, names, &error)) {
+        std::cerr << "test discovery failed: " << error.message << '\n';
+        return 2;
+    }
+    size_t passed = 0;
+    size_t failed = 0;
+    for (const std::string& name : names) {
+        if (!name.starts_with("测试_") && !name.starts_with("test_")) continue;
+        uint32_t symbol = 2166136261u;
+        for (const unsigned char byte : name) symbol = (symbol ^ byte) * 16777619u;
+
+        const dao_vm_config config = dao_vm_config_default();
+        std::unique_ptr<dao_vm, decltype(&dao_vm_destroy)> vm(dao_vm_create(&config), dao_vm_destroy);
+        if (!vm) {
+            std::cerr << "cannot create test VM\n";
+            return 2;
+        }
+        dao_module* raw_module = nullptr;
+        error = {};
+        dao_status status = dao_vm_load_module(
+            vm.get(), {bytes.data(), bytes.size()}, &raw_module, &error);
+        std::unique_ptr<dao_module, decltype(&dao_module_release)> module(raw_module, dao_module_release);
+        dao_function function = 0;
+        if (status == DAO_OK) status = dao_module_find_export(module.get(), symbol, &function);
+        dao_value result{};
+        if (status == DAO_OK)
+            status = dao_vm_call(vm.get(), module.get(), function, nullptr, 0, &result, &error);
+
+        if (status == DAO_OK && result.type == DAO_VALUE_TRIT && result.payload == 1) {
+            ++passed;
+            std::cout << "[PASS] " << name << '\n';
+            continue;
+        }
+        ++failed;
+        std::cout << "[FAIL] " << name << ": ";
+        if (status != DAO_OK) {
+            std::cout << dao_status_name(status);
+            if (error.message[0] != '\0') std::cout << ": " << error.message;
+        } else if (result.type != DAO_VALUE_TRIT) {
+            std::cout << "expected 真 (Trit +1), received a non-Trit result";
+        } else {
+            std::cout << "expected 真 (Trit +1), received Trit " << result.payload;
+        }
+        std::cout << '\n';
+    }
+    if (passed + failed == 0) {
+        std::cerr << "no tests found; use 测试_ or test_ function names\n";
+        return 2;
+    }
+    std::cout << "tests: " << passed << " passed, " << failed << " failed, "
+              << passed + failed << " total\n";
+    return failed == 0 ? 0 : 1;
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -214,6 +272,7 @@ int main(int argc, char** argv) {
     bool identified = false;
     bool check_mode = false;
     bool fmt_mode = false;
+    bool test_mode = false;
     bool store_mode = false;
     std::filesystem::path store_root;
     bool has_parent = false;
@@ -224,11 +283,15 @@ int main(int argc, char** argv) {
     int input_index = 1;
     while (input_index < argc && std::string_view(argv[input_index]).starts_with("--")) {
         const std::string_view option = argv[input_index++];
-        if (option == "--check" && !check_mode && !fmt_mode) {
+        if (option == "--test" && !test_mode && !check_mode && !fmt_mode) {
+            test_mode = true;
+            continue;
+        }
+        if (option == "--check" && !check_mode && !fmt_mode && !test_mode) {
             check_mode = true;
             continue;
         }
-        if (option == "--fmt" && !fmt_mode && !check_mode) {
+        if (option == "--fmt" && !fmt_mode && !check_mode && !test_mode) {
             fmt_mode = true;
             continue;
         }
@@ -254,15 +317,24 @@ int main(int argc, char** argv) {
                 continue;
         }
         std::cerr << "invalid dao-ku option\n";
+        if (test_mode || option == "--test") {
+            std::cerr << "usage: dao-ku --test [--recovery] <input.ku>\n";
+            return 2;
+        }
         if (fmt_mode || option == "--fmt")
             std::cerr << "usage: dao-ku --fmt [--recovery] <input.ku>\n";
         return EXIT_FAILURE;
     }
+    const int error_exit = test_mode ? 2 : EXIT_FAILURE;
+    std::string_view source_mode = "--check";
+    if (fmt_mode) source_mode = "--fmt";
+    if (test_mode) source_mode = "--test";
     const int output_index = input_index + 1;
-    if (check_mode || fmt_mode) {
+    if (check_mode || fmt_mode || test_mode) {
         if (input_index + 1 != argc) {
-            std::cerr << "usage: dao-ku " << (fmt_mode ? "--fmt" : "--check") << " [--recovery] <input.ku>\n";
-            return EXIT_FAILURE;
+            std::cerr << "usage: dao-ku " << source_mode
+                      << " [--recovery] <input.ku>\n";
+            return error_exit;
         }
     } else if (store_mode) {
         if (!identified || input_index + 1 != argc) {
@@ -274,17 +346,17 @@ int main(int argc, char** argv) {
                      "<input.ku> <output.dao>\n";
         return EXIT_FAILURE;
     }
-    if ((check_mode || fmt_mode) && (store_mode || identified || has_parent)) {
-        std::cerr << (fmt_mode ? "--fmt" : "--check")
+    if ((check_mode || fmt_mode || test_mode) && (store_mode || identified || has_parent)) {
+        std::cerr << source_mode
                   << " cannot be combined with --store, --parent, or --identity\n";
-        std::cerr << "usage: dao-ku " << (fmt_mode ? "--fmt" : "--check")
+        std::cerr << "usage: dao-ku " << source_mode
                   << " [--recovery] <input.ku>\n";
-        return EXIT_FAILURE;
+        return error_exit;
     }
     std::ifstream input(argv[input_index], std::ios::binary);
     if (!input) {
         std::cerr << "cannot open input: " << argv[input_index] << '\n';
-        return EXIT_FAILURE;
+        return error_exit;
     }
     const std::string source((std::istreambuf_iterator<char>(input)),
                              std::istreambuf_iterator<char>());
@@ -304,18 +376,18 @@ int main(int argc, char** argv) {
         options.import_user_data = &resolver;
         if (!dao::km::compile(source, builder, &error, options)) {
             std::cerr << "recovery compile failed: " << error.message << '\n';
-            return EXIT_FAILURE;
+            return error_exit;
         }
         try {
             bytes = builder.encode();
         } catch (const std::exception& exception) {
             std::cerr << "recovery encode failed: " << exception.what() << '\n';
-            return EXIT_FAILURE;
+            return error_exit;
         }
     } else {
         if (!read_compiler_source(argv[0], &compiler_source)) {
             std::cerr << "cannot locate self-hosted compiler.ku\n";
-            return EXIT_FAILURE;
+            return error_exit;
         }
         dao::selfhost::Options options{};
         options.module_resolver = resolve_import;
@@ -325,24 +397,25 @@ int main(int argc, char** argv) {
         options.identity_version = identity_version;
         if (!dao::selfhost::compile(compiler_source, source, &bytes, &error, options)) {
             std::cerr << "compile failed: " << error.message << '\n';
-            return EXIT_FAILURE;
+            return error_exit;
         }
     }
     dao_vm_config config = dao_vm_config_default();
     dao_vm* vm = dao_vm_create(&config);
     if (vm == nullptr) {
         std::cerr << "cannot create verifier VM\n";
-        return EXIT_FAILURE;
+        return error_exit;
     }
     dao_module* module = nullptr;
     const dao_status status = dao_vm_load_module(vm, {bytes.data(), bytes.size()}, &module, &error);
     if (status != DAO_OK) {
         std::cerr << "verification failed: " << error.message << '\n';
         dao_vm_destroy(vm);
-        return EXIT_FAILURE;
+        return error_exit;
     }
     dao_module_release(module);
     dao_vm_destroy(vm);
+    if (test_mode) return run_tests(source, bytes);
     if (check_mode) {
         std::cout << "checked " << argv[input_index] << "\n";
         return EXIT_SUCCESS;

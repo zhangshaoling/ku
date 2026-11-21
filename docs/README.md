@@ -6,6 +6,7 @@ Ku 是语言系统和产品名称。现有 `dao_*`、Dao Binary Module、`dao/` 
 
 - [快速开始](../README.md#快速开始)：平台构建、编译检查、格式化和原生代码记忆运行。
 - [内核使用说明](../kernel/README.md)：C ABI、默认自举前端、工具和 SDK。
+- [原生测试命令](KU_TESTING.md)：v1.2.0 开发中的函数发现、失败报告和 CI 退出码。
 - [`KU_NAMING_AND_AUTHORITY.md`](KU_NAMING_AND_AUTHORITY.md)：Ku 产品命名、实现分层和文档权威顺序。
 - [`KU_V1_SEMANTICS.md`](KU_V1_SEMANTICS.md)：Ku v1 源语言语义、兼容层、推迟项和一致性门禁。
 - [`KU_SUBPROJECT_WORKSHEETS.md`](KU_SUBPROJECT_WORKSHEETS.md)：Ku 小项目边界、依赖与验收工作表。

@@ -851,6 +851,25 @@ class Emitter {
 
 } // namespace
 
+bool declared_function_names(std::string_view source, std::vector<std::string>& names,
+                             dao_error* error) {
+    clear(error);
+    names.clear();
+    dao_value source_view{};
+    if (dao_value_make_string_view(
+            {reinterpret_cast<const uint8_t*>(source.data()), source.size()}, &source_view) != DAO_OK)
+        return fail(error, "source is not valid UTF-8");
+    try {
+        const Program program = Parser(lex(source)).parse();
+        for (const Function& function : program.functions)
+            names.push_back(function.name);
+        return true;
+    } catch (const std::exception& exception) {
+        names.clear();
+        return fail(error, exception.what());
+    }
+}
+
 bool compile(std::string_view source, ModuleBuilder& builder, dao_error* error, Options options) {
     clear(error);
     try {

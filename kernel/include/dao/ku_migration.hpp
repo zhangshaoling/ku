@@ -18,6 +18,10 @@ struct Options {
     void* import_user_data = nullptr;
 };
 
+// Inspect declarations in this source only, without resolving imported modules.
+bool declared_function_names(std::string_view source, std::vector<std::string>& names,
+                             dao_error* error);
+
 bool compile(std::string_view source, ModuleBuilder& builder, dao_error* error, Options options = {});
 
 } // namespace km

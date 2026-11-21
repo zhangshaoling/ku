@@ -43,6 +43,12 @@ def verify(prefix, work):
     run([module_cli, "verify", store, "ku:agent/release", "1.0.0"])
     assert run([module_cli, "run", store, "ku:agent/release", "1.0.0", "main"]) == "42"
 
+    tests = work / "native_tests.ku"
+    tests.write_text("思 测试_安装包() { 返 41 + 1 == 42 }\n", encoding="utf-8")
+    for options in [[], ["--recovery"]]:
+        output = run([compiler, "--test", *options, tests])
+        assert "1 passed, 0 failed, 1 total" in output
+
     # A corrupt installed compiler must be used, exposing any source-tree fallback.
     compiler_source = prefix / "share" / "dao" / "selfhost" / "compiler.ku"
     original = compiler_source.read_bytes()
@@ -75,7 +81,7 @@ assert memory.run('ku:agent/child') == 42
 print('installed Python binding and code memory passed')
 """
     print(run([sys.executable, "-c", child, prefix]))
-    print("installed native check/fmt/compile/store/verify/run passed")
+    print("installed native test/check/fmt/compile/store/verify/run passed")
 
 
 if __name__ == "__main__":

@@ -378,6 +378,8 @@ add_test(NAME ku_check_acceptance COMMAND ${CMAKE_COMMAND}
     "-DDAO_KU=$<TARGET_FILE:dao-ku>"
     "-DSOURCE=${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/language_acceptance.ku"
     -P "${CMAKE_SOURCE_DIR}/kernel/tests/check_ku_check.cmake")
+add_test(NAME ku_test_example COMMAND dao-ku --test
+    "${CMAKE_SOURCE_DIR}/demos/native_tests.ku")
 add_test(NAME ku_fmt_acceptance COMMAND ${CMAKE_COMMAND}
     "-DDAO_KU=$<TARGET_FILE:dao-ku>"
     "-DSOURCE=${CMAKE_SOURCE_DIR}/kernel/tests/fixtures/language_acceptance.ku"
@@ -450,6 +452,7 @@ set_tests_properties(aot_performance_gate PROPERTIES DEPENDS aot_compile_native)
 # LLVM-MinGW links C++ targets against shared libc++/libunwind runtimes. Make
 # CTest self-contained instead of requiring callers to activate the toolchain.
 set(DAO_RUNTIME_TESTS
+    ku_test_example
     module_cli_versions
     kernel_conformance
     dynamic_cpp_abi
@@ -505,6 +508,10 @@ set_tests_properties(${DAO_RUNTIME_TESTS} PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${DAO_COMPILER_DIR}")
 
 if(Python3_Interpreter_FOUND)
+    add_test(NAME ku_test_cli COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_SOURCE_DIR}/kernel/tests/test_ku_test_cli.py" "$<TARGET_FILE:dao-ku>")
+    set_tests_properties(ku_test_cli PROPERTIES
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${DAO_COMPILER_DIR}")
     add_test(NAME python_code_memory COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_SOURCE_DIR}/bindings/python/test_code_memory.py" "$<TARGET_FILE:dao-ku>")
     set_tests_properties(python_code_memory PROPERTIES

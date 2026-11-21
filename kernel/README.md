@@ -59,7 +59,19 @@ The formatter writes to stdout.
 .\kernel\out\cmake\bin\dao-ku.exe --fmt input.ku
 ```
 
-The native code-memory path does not require Python:
+### Native tests (v1.2.0 development)
+
+The v1.2.0 development line adds native tests. Functions named `测试_*` or `test_*`
+take no arguments and pass by returning `真`. Each runs in a fresh VM, with failures
+reported before execution continues. See [the testing guide](../docs/KU_TESTING.md).
+
+```powershell
+.\kernel\out\cmake\bin\dao-ku.exe --test demos/native_tests.ku
+```
+
+### Code memory
+
+Save and execute identified code memories with:
 
 ```powershell
 .\kernel\out\cmake\bin\dao-ku.exe --store .ku_agent_memory --identity ku:agent/example 1.0.0 input.ku
