@@ -1,6 +1,46 @@
-> **PROCESS NOTE** — This document records an onboarding guide. Verify against current project structure before relying on it.
+# Ku Agent MCP Onboarding
 
-# Dao Agent MCP Onboarding
+## 当前新内核接入
+
+2026-11-21 的 Python stdio 网关入口为 `python -m dao.mcp_server_kernel`。
+当前路径使用 Windows 的 `dao-ku.exe` 和 `libdao_kernel.dll`，先按
+[快速开始](../README.md#快速开始) 完成新内核构建，再用 Python 3.11 配置客户端。
+
+将下面的占位路径替换为本机绝对路径。`<KU_REPO>` 是仓库目录，`<KU_PYTHON>` 是
+Python 可执行文件，`<KU_MEMORY_DIR>` 是可写的 MCP 记忆目录。
+
+```json
+{
+  "mcpServers": {
+    "ku_kernel": {
+      "command": "<KU_PYTHON>",
+      "args": ["-m", "dao.mcp_server_kernel"],
+      "cwd": "<KU_REPO>",
+      "env": {
+        "PYTHONPATH": "<KU_REPO>",
+        "PYTHONIOENCODING": "utf-8",
+        "DAO_KERNEL_DLL_DIRS": "<KU_REPO>/.toolchain/llvm-mingw/bin",
+        "DAO_MEMORY_DIR": "<KU_MEMORY_DIR>"
+      }
+    }
+  }
+}
+```
+
+启动后通过 `tools/list` 检查 `ku_memory_store`、`ku_memory_recall`、
+`ku_memory_search` 和 `ku_memory_stats`。下面的工具调用可验证编译、保存和执行。
+
+1. 调用 `ku_memory_store`，参数为 `{"key":"answer","source":"思 main() { 返 42 }"}`。
+2. 调用 `ku_memory_recall`，参数为 `{"key":"answer","args":[]}`，结果中的 `result` 为 `42`。
+3. 调用 `ku_memory_search`，参数为 `{"query":"answer"}`，应返回该记忆。
+
+此网关通过 Python `MemorySystem` 保存键、元数据和模块文件。原生
+`dao-ku --store` / `dao-module` 使用带 identity/version 的 ModuleStore 格式，
+两者应选择各自的存储目录。原生格式及保证见 [模块与存储契约](../kernel/MODULE_ABI.md)。
+
+## 历史 C VM 接入记录
+
+下文保留 `dao.mcp_server`、`DAO_DATA_DIR` 和旧工具的历史配置，适用于旧 C VM 迁移验证。
 
 This guide is for another AI agent, MCP client, or local assistant that wants to
 connect to Dao/Tiandao executable memory without depending on one user's local

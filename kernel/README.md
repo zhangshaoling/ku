@@ -6,9 +6,13 @@ This directory contains the new high-performance Ku runtime. Existing `dao_*` AB
 
 ```text
 include/dao/dao.h       Stable C embedding ABI
-include/dao/format.hpp  Binary Module v1 and C++ builder API
+include/dao/format.hpp  Binary Module v2/ABI10 and C++ builder API
+include/dao/module_store.hpp  Identified module persistence API
 src/module_builder.cpp  Deterministic binary encoder
 src/runtime.cpp         Loader, verifier, and Register VM
+src/selfhost.cpp        Host bridge for the self-hosted compiler
+src/module_store.cpp    Immutable code-memory records and writer lock
+tools/ku_compile.cpp    Compile, check, format, and store CLI
 tests/kernel_tests.cpp  Native conformance tests
 fuzz/                   Sanitized module loader fuzz target and seed generator
 FFI.md                  Numeric host import and callback contract
@@ -19,8 +23,16 @@ out/                    Local build output
 ## Build
 
 ```powershell
-.\tools\build_kernel.ps1
+.\tools\bootstrap_toolchain.ps1
+$env:CMAKE_BUILD_PARALLEL_LEVEL = '2'
+.\tools\build_kernel.ps1 -SkipTests
+. .\tools\activate_toolchain.ps1
+ctest --test-dir kernel/out/cmake --output-on-failure -E aot_performance_gate
 ```
+
+The bootstrap command installs the managed Windows toolchain on first use. Linux/macOS
+build prerequisites and commands are in the [root quick start](../README.md#快速开始).
+The functional command above follows CI by excluding the independent AOT performance gate.
 
 The current ABI supports deterministic modules, numeric imports and exports, direct C host callbacks, zero-copy borrowed bytes and UTF-8 string views, `i64`, Trit, register arithmetic, three-way Trit branches, internal calls, and instruction budgets. Host calls do not use JSON, string opcode dispatch, or stored process addresses.
 
@@ -38,10 +50,13 @@ a numeric portable-C AOT backend with branch/loop/internal-call support, install
 .\tools\package_kernel.ps1
 ```
 
-Compile the supported scalar Ku subset to a verified Dao module with:
+Compile, check, or format supported Ku source with the default self-hosted frontend.
+The formatter writes to stdout.
 
 ```powershell
 .\kernel\out\cmake\bin\dao-ku.exe input.ku output.dao
+.\kernel\out\cmake\bin\dao-ku.exe --check input.ku
+.\kernel\out\cmake\bin\dao-ku.exe --fmt input.ku
 ```
 
 The native code-memory path does not require Python:
@@ -56,13 +71,19 @@ The native code-memory path does not require Python:
 compatibility tooling and tests only; they are not required to save, verify, or execute
 code memories.
 
+Code-memory records preserve module bytes, exact identity/version, optional source, and
+parent provenance. Saves use a nonblocking OS writer lock, with the manifest published
+last and same-input retries for interrupted writes. Schema, compatibility, and recovery
+guarantees are specified in [MODULE_ABI.md](MODULE_ABI.md#store-manifest-schema-1).
+
 `dao-ku` accepts legacy source imports such as `引 "std/math" 别 math` and
 `import "std/math" as math`. Imported functions are namespaced as `math_<name>`;
 resolution is recursive, cycle-checked, and restricted to the input module root.
 
-The frontend self-hosting path has started: `kernel/selfhost/compiler.ku` implements the
-SH0 seed and the SH1a expression parser, generating a verified executable module through
-the typed-builder Host ABI. See [`../docs/KU_SELFHOST.md`](../docs/KU_SELFHOST.md).
+`kernel/selfhost/compiler.ku` is the default frontend. The C++ recovery compiler bootstraps
+it, and typed-builder Host capabilities encode the resulting module. Self-rebuild tests
+check `B0 == B1 == B2` and recovery/selfhost byte identity for the acceptance corpus.
+`--recovery` explicitly selects the C++ frontend. See [KU_SELFHOST.md](../docs/KU_SELFHOST.md).
 
 The migration frontend supports functions (`thought`, `func`, or `思`), integer, Trit,
 and string literals, lists, string-keyed maps, indexing, variables, assignment,
@@ -76,8 +97,11 @@ valid until the next call on that VM; VM-owned containers cannot be passed back 
 arguments to a later top-level call. See [`OWNERSHIP.md`](OWNERSHIP.md) for the frozen
 C ABI value-lifetime and Host-container contract.
 
-The packaged migrated standard-library subset includes `stdlib/core.ku`, the
-integer/list-compatible `stdlib/math.ku`, and the list-read subset in `stdlib/list.ku`.
+The packaged standard-library modules are `core`, `math`, `list`, `type`, `fs`, `io`,
+`debug`, `string`, `error`, `http`, and `lexer`. Exact identities, dependencies, exported
+arities, and Host requirements are defined in [STDLIB_ABI.md](STDLIB_ABI.md).
+`lexer` currently uses `--recovery` for its legacy multiline-list syntax. File and HTTP
+operations require the corresponding Host capabilities to be registered by the embedder.
 
 Run the module loader and verifier under libFuzzer, ASan, and UBSan with:
 
