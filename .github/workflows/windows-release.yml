@@ -59,11 +59,11 @@ jobs:
         run: |
           . .\tools\activate_toolchain.ps1
           $env:DAO_KERNEL_DLL_DIRS = Join-Path $PWD '.toolchain\llvm-mingw\bin'
-          cmake -S . -B kernel/out/release -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B kernel/out/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --build kernel/out/release --parallel 2
+          cmake --build kernel/out/cmake --parallel 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ctest --test-dir kernel/out/release --output-on-failure --parallel 2 -E aot_performance_gate
+          ctest --test-dir kernel/out/cmake --output-on-failure --parallel 2 -E aot_performance_gate
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pytest -q tests/test_mcp_arithmetic.py tests/test_mcp_server_kernel.py tests/test_memory_kernel.py tests/test_task_kernel.py tests/test_agent_kernel.py tests/test_memory_loop.py
           exit $LASTEXITCODE
@@ -72,7 +72,7 @@ jobs:
         shell: pwsh
         run: |
           . .\tools\activate_toolchain.ps1
-          cpack --config kernel/out/release/CPackConfig.cmake -B kernel/out/packages
+          cpack --config kernel/out/cmake/CPackConfig.cmake -B kernel/out/packages
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $packages = @(Get-ChildItem "kernel/out/packages/Ku-$env:RELEASE_VERSION-Windows-*.zip")
           if ($packages.Count -ne 1) { throw 'Expected exactly one Windows SDK package' }
