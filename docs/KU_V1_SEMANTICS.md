@@ -106,6 +106,8 @@ Ku v1 采用新内核恢复编译器已经验证的语义作为规范目标，�
 
 `dao-ku --fmt input.ku` 将 Ku 源码格式化到 stdout，不修改输入文件、不生成 `.dao`、不写入 ModuleStore；默认走自举编译器，传入 `--recovery` 时走恢复编译器。v1 最小格式保证为 2 个空格缩进、规范块换行、逗号后的单空格、删除行尾空白和文件末尾单个换行。字符串、转义、注释和关键字表层保持不变；`--write`、输出路径、`--store`、`--parent`、`--identity` 暂不支持。格式化结果必须满足 `format(format(source)) == format(source)`，并可分别通过默认和 recovery 的 `--check`。缺少输入、额外输出路径或与 `--check`、`--store`、`--parent`、`--identity` 混用时返回非零并打印用法。
 
+`dao-ku --test [--recovery] input.ku` 是原生单文件测试入口，发现入口源码中以 `测试_` 或 `test_` 开头的顶层函数，按声明顺序在独立 VM 中以零参数调用。仅 Trit `+1` 通过，其他返回值或运行时错误记为失败并继续。退出码 `0` 为全部通过，`1` 为存在失败，`2` 为命令/读取/编译/验证/发现错误或无测试。它与其他输出模式互斥，不写出模块或存储记录。完整契约和示例见 [KU_TESTING.md](KU_TESTING.md)。
+
 ## 6. AI 机器语边界
 
 `thought/思` 在 Ku v1 中首先是可调用函数声明。Thought schema、canonical AST、trace、

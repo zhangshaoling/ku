@@ -12,6 +12,10 @@ inline constexpr uint16_t kLegacyFormatVersion = 1;
 inline constexpr uint16_t kLegacyVmAbiVersion = 9;
 inline constexpr uint16_t kFormatVersion = 2;
 inline constexpr uint16_t kVmAbiVersion = 10;
+inline constexpr uint16_t kRecordFormatVersion = 3;
+inline constexpr uint16_t kRecordVmAbiVersion = 11;
+inline constexpr uint32_t kRecordTypeSize = 16;
+inline constexpr uint32_t kRecordFieldSize = 12;
 inline constexpr uint32_t kHeaderSize = 16;
 inline constexpr uint32_t kSectionEntrySize = 16;
 inline constexpr uint32_t kFunctionRecordSize = 16;
@@ -30,6 +34,8 @@ enum class SectionType : uint32_t {
     Data = 5,
     Metadata = 6,
     ModuleImports = 7,
+    RecordTypes = 8,
+    RecordFields = 9,
 };
 
 enum class Opcode : uint8_t {
@@ -78,6 +84,9 @@ enum class Opcode : uint8_t {
     MakeClosure = 40,
     CallModule = 41,
     MapKeys = 42,
+    MakeRecord = 43,
+    RecordGet = 44,
+    FieldGet = 45,
 };
 
 struct SemanticVersion {
@@ -110,6 +119,8 @@ class ModuleBuilder {
                                uint32_t symbol_id, uint16_t parameter_count);
     uint32_t add_function(FunctionSpec function);
     void add_export(uint32_t symbol_id, uint32_t function_index);
+    uint32_t add_record_type(std::string_view name);
+    uint32_t add_record_field(uint32_t type_index, std::string_view name, uint32_t value_type);
     std::vector<uint8_t> encode() const;
 
   private:
@@ -138,6 +149,9 @@ class ModuleBuilder {
     std::string identity_name_;
     SemanticVersion identity_version_{};
     std::vector<ModuleImportSpec> module_imports_;
+    struct RecordFieldSpec { std::string name; uint32_t value_type; };
+    struct RecordTypeSpec { std::string name; std::vector<RecordFieldSpec> fields; };
+    std::vector<RecordTypeSpec> record_types_;
 };
 
 } // namespace dao

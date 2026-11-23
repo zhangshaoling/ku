@@ -8,7 +8,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import DaoKernelError
+from . import DaoKernelError, DAO_FEATURE_RECORDS, _feature_mask
 from .thought import _find_dao_ku
 
 
@@ -18,7 +18,9 @@ class CodeMemory:
     DEFAULT_DIRECTORY = Path(os.environ.get("KU_CODE_MEMORY_DIR", ".ku_agent_memory"))
     IDENTITY_PATTERN = re.compile(r"^ku:agent/[A-Za-z0-9._/-]+$")
 
-    def __init__(self, directory: str | Path | None = None, module_cli: str | Path | None = None):
+    def __init__(self, directory: str | Path | None = None, module_cli: str | Path | None = None,
+                 *, features: int = 0):
+        self._features = _feature_mask(features)
         self.directory = Path(directory) if directory is not None else self.DEFAULT_DIRECTORY
         self.compiler = Path(_find_dao_ku())
         if module_cli is None:
@@ -26,6 +28,9 @@ class CodeMemory:
         self.module_cli = Path(module_cli)
         if not self.module_cli.exists():
             raise DaoKernelError(f"dao-module not found: {self.module_cli}")
+
+    def _feature_options(self) -> list[str]:
+        return ["--enable-records"] if self._features & DAO_FEATURE_RECORDS else []
 
     @staticmethod
     def _version(version: tuple[int, int, int]) -> str:
@@ -53,7 +58,7 @@ class CodeMemory:
         if not self.IDENTITY_PATTERN.fullmatch(identity):
             raise ValueError("identity must match ku:agent/<name>")
         with self._source_file(source) as temp_source:
-            command = [str(self.compiler)]
+            command = [str(self.compiler), *self._feature_options()]
             if recovery:
                 command.append("--recovery")
             command += ["--store", str(self.directory), "--identity", identity,
@@ -69,7 +74,7 @@ class CodeMemory:
         if not self.IDENTITY_PATTERN.fullmatch(identity) or not self.IDENTITY_PATTERN.fullmatch(parent_identity):
             raise ValueError("identity and parent_identity must match ku:agent/<name>")
         with self._source_file(source) as temp_source:
-            command = [str(self.compiler)]
+            command = [str(self.compiler), *self._feature_options()]
             if recovery:
                 command.append("--recovery")
             command += ["--store", str(self.directory), "--identity", identity,
@@ -82,7 +87,7 @@ class CodeMemory:
 
     def verify(self, identity: str, version: tuple[int, int, int] = (1, 0, 0)) -> str:
         result = subprocess.run(
-            [str(self.module_cli), "verify", str(self.directory), identity, self._version(version)],
+            [str(self.module_cli), *self._feature_options(), "verify", str(self.directory), identity, self._version(version)],
             capture_output=True, text=True, check=False,
         )
         if result.returncode != 0:
@@ -92,7 +97,7 @@ class CodeMemory:
     def run(self, identity: str, export: str = "main",
             version: tuple[int, int, int] = (1, 0, 0)) -> int:
         result = subprocess.run(
-            [str(self.module_cli), "run", str(self.directory), identity,
+            [str(self.module_cli), *self._feature_options(), "run", str(self.directory), identity,
              self._version(version), export], capture_output=True, text=True, check=False,
         )
         if result.returncode != 0:

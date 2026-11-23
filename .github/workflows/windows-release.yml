@@ -1,0 +1,101 @@
+name: Windows Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Numeric version, for example 1.2.0'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  windows-release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      CTEST_PARALLEL_LEVEL: '2'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check release versions
+        shell: pwsh
+        run: |
+          @'
+          import os, pathlib, re, tomllib
+          version = os.environ['RELEASE_VERSION']
+          assert re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version), 'Invalid version'
+          assert re.search(r'project\(dao_kernel VERSION ' + re.escape(version) + r' ', pathlib.Path('CMakeLists.txt').read_text())
+          assert tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'] == version
+          assert tomllib.loads(pathlib.Path('uv.lock').read_text())['package'][0]['version'] == version
+          assert tomllib.loads(pathlib.Path('bindings/rust/dao-kernel-sys/Cargo.toml').read_text())['package']['version'] == version
+          assert pathlib.Path(f'docs/releases/v{version}.md').is_file()
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Bootstrap Windows toolchain
+        shell: pwsh
+        run: .\tools\bootstrap_toolchain.ps1
+
+      - name: Install Python integration tests
+        run: python -m pip install -e . pytest
+
+      - name: Build and test Windows
+        shell: pwsh
+        run: |
+          . .\tools\activate_toolchain.ps1
+          $env:DAO_KERNEL_DLL_DIRS = Join-Path $PWD '.toolchain\llvm-mingw\bin'
+          cmake -S . -B kernel/out/release -G Ninja -DCMAKE_BUILD_TYPE=Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build kernel/out/release --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir kernel/out/release --output-on-failure --parallel 2 -E aot_performance_gate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q tests/test_mcp_arithmetic.py tests/test_mcp_server_kernel.py tests/test_memory_kernel.py tests/test_task_kernel.py tests/test_agent_kernel.py tests/test_memory_loop.py
+          exit $LASTEXITCODE
+
+      - name: Package and verify Windows SDK
+        shell: pwsh
+        run: |
+          . .\tools\activate_toolchain.ps1
+          cpack --config kernel/out/release/CPackConfig.cmake -B kernel/out/packages
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $packages = @(Get-ChildItem "kernel/out/packages/Ku-$env:RELEASE_VERSION-Windows-*.zip")
+          if ($packages.Count -ne 1) { throw 'Expected exactly one Windows SDK package' }
+          python tools/verify_installed_sdk.py $packages[0].FullName
+          exit $LASTEXITCODE
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-sdk-${{ inputs.version }}
+          path: |
+            kernel/out/packages/Ku-*.zip
+            kernel/out/packages/Ku-*.zip.sha256
+          if-no-files-found: error
+
+      - name: Publish Windows release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v$env:RELEASE_VERSION"
+          gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw 'Release tag already exists; use a new version' }
+          $assets = @(Get-ChildItem kernel/out/packages/Ku-*.zip, kernel/out/packages/Ku-*.zip.sha256 | ForEach-Object FullName)
+          if ($assets.Count -ne 2) { throw 'Expected Windows ZIP and SHA-256 only' }
+          gh release create $tag @assets --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "Ku $tag — Windows x64 Alpha" --notes-file "docs/releases/$tag.md" --latest
+          exit $LASTEXITCODE

@@ -3,6 +3,7 @@
 
 #include "dao/dao.h"
 #include "dao/format.hpp"
+#include "dao/compiler_diagnostic.hpp"
 
 #include <cstdint>
 #include <string>
@@ -21,6 +22,8 @@ struct Options {
     bool has_identity = false;
     std::string identity_name;
     SemanticVersion identity_version{};
+    std::string source_name;
+    CompilerDiagnostic* diagnostic = nullptr;
 };
 
 bool compile(std::string_view compiler_source, std::string_view source,

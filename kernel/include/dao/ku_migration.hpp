@@ -3,6 +3,7 @@
 
 #include "dao/dao.h"
 #include "dao/format.hpp"
+#include "dao/compiler_diagnostic.hpp"
 
 #include <string>
 #include <string_view>
@@ -16,7 +17,13 @@ struct Options {
     bool trace = false;
     ImportResolver import_resolver = nullptr;
     void* import_user_data = nullptr;
+    std::string source_name;
+    CompilerDiagnostic* diagnostic = nullptr;
 };
+
+// Inspect declarations in this source only, without resolving imported modules.
+bool declared_function_names(std::string_view source, std::vector<std::string>& names,
+                             dao_error* error);
 
 bool compile(std::string_view source, ModuleBuilder& builder, dao_error* error, Options options = {});
 

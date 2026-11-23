@@ -88,6 +88,10 @@ Ku 可以独立编写命令行工具、配置解析器、文本处理器、数�
 
 ### 阶段 2：Record / Schema / Result
 
+最小契约提案见 [Record / Schema / Result RFC](KU_RECORD_SCHEMA_RESULT_RFC.md)。
+该 RFC 尚未采纳或实现，不改变当前 v1 语义。[R0 编码与能力协商候选附录](KU_RECORD_R0_ABI.md)
+已形成，下一张工作单是同模块标量 Record 的 R1 执行切片。
+
 目标：从 `Map + object.field` 发展为真正的结构化值模型。
 
 示意：

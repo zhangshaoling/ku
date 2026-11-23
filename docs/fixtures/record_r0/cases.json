@@ -1,0 +1,217 @@
+{
+  "status": "R1 kernel fixtures exercised through the production C ABI; source frontends not implemented",
+  "base_hex": "scalar_record_v3.hex",
+  "length": 252,
+  "sha256": "959a982cba81c34b221c8ff699a2062b752b08b689b57369c3335d3319a7f2e3",
+  "layout": [
+    {
+      "section": 1,
+      "offset": 128,
+      "size": 16,
+      "count": 1
+    },
+    {
+      "section": 2,
+      "offset": 144,
+      "size": 48,
+      "count": 3
+    },
+    {
+      "section": 3,
+      "offset": 192,
+      "size": 8,
+      "count": 1
+    },
+    {
+      "section": 4,
+      "offset": 200,
+      "size": 0,
+      "count": 0
+    },
+    {
+      "section": 5,
+      "offset": 200,
+      "size": 22,
+      "count": 2
+    },
+    {
+      "section": 8,
+      "offset": 224,
+      "size": 16,
+      "count": 1
+    },
+    {
+      "section": 9,
+      "offset": 240,
+      "size": 12,
+      "count": 1
+    }
+  ],
+  "cases": [
+    {
+      "id": "valid",
+      "features": 1,
+      "patches": [],
+      "load": "DAO_OK",
+      "call": "DAO_OK",
+      "record_type": "Point",
+      "field_x": 42
+    },
+    {
+      "id": "feature-disabled",
+      "features": 0,
+      "patches": [],
+      "load": "DAO_UNSUPPORTED_FEATURE"
+    },
+    {
+      "id": "cross-version-pair",
+      "features": 1,
+      "patches": [
+        {
+          "offset": 6,
+          "width": 2,
+          "value": 10
+        }
+      ],
+      "load": "DAO_BAD_MODULE"
+    },
+    {
+      "id": "nonzero-header-flags",
+      "features": 1,
+      "patches": [
+        {
+          "offset": 8,
+          "width": 4,
+          "value": 1
+        }
+      ],
+      "load": "DAO_BAD_MODULE"
+    },
+    {
+      "id": "unknown-section",
+      "features": 1,
+      "patches": [
+        {
+          "offset": 96,
+          "width": 4,
+          "value": 10
+        }
+      ],
+      "load": "DAO_BAD_MODULE"
+    },
+    {
+      "id": "truncated-type-table",
+      "features": 1,
+      "patches": [
+        {
+          "offset": 104,
+          "width": 4,
+          "value": 12
+        }
+      ],
+      "load": "DAO_BAD_MODULE"
+    },
+    {
+      "id": "type-name-outside-data",
+      "features": 1,
+      "patches": [
+        {
+          "offset": 224,
+          "width": 4,
+          "value": 2
+        }
+      ],
+      "load": "DAO_BAD_MODULE"
+    },
+    {
+      "id": "noncontiguous-field-range",
+      "features": 1,
+      "patches": [
+        {
+          "offset": 228,
+          "width": 4,
+          "value": 1
+        }
+      ],
+      "load": "DAO_BAD_MODULE"
+    },
+    {
+      "id": "non-scalar-field",
+      "features": 1,
+      "patches": [
+        {
+          "offset": 244,
+          "width": 4,
+          "value": 5
+        }
+      ],
+      "load": "DAO_BAD_MODULE"
+    },
+    {
+      "id": "nonzero-field-reserved",
+      "features": 1,
+      "patches": [
+        {
+          "offset": 248,
+          "width": 4,
+          "value": 1
+        }
+      ],
+      "load": "DAO_BAD_MODULE"
+    },
+    {
+      "id": "constructor-type-outside-table",
+      "features": 1,
+      "patches": [
+        {
+          "offset": 168,
+          "width": 8,
+          "value": 1
+        }
+      ],
+      "load": "DAO_VERIFY_ERROR"
+    },
+    {
+      "id": "constructor-count-mismatch",
+      "features": 1,
+      "patches": [
+        {
+          "offset": 166,
+          "width": 2,
+          "value": 0
+        }
+      ],
+      "load": "DAO_VERIFY_ERROR"
+    },
+    {
+      "id": "constructor-register-range",
+      "features": 1,
+      "patches": [
+        {
+          "offset": 164,
+          "width": 2,
+          "value": 2
+        }
+      ],
+      "load": "DAO_VERIFY_ERROR"
+    },
+    {
+      "id": "dynamic-field-type-error",
+      "features": 1,
+      "patches": [
+        {
+          "offset": 144,
+          "width": 1,
+          "value": 17
+        },
+        {
+          "offset": 152,
+          "width": 8,
+          "value": 1
+        }
+      ],
+      "load": "DAO_OK",
+      "call": "DAO_TYPE_ERROR"
+    }
+  ]
+}

@@ -22,6 +22,7 @@ const std::string imports =
     "import builder_new(0) import builder_begin(3) import builder_emit_raw(6) "
     "import builder_import(3) "
     "import builder_identity(5) import builder_module_import(7) "
+    "import builder_record_type(2) import builder_record_field(4) "
     "import builder_patch(3) import builder_patch_marked(5) import builder_finish(3) "
     "import builder_encode(1) ";
 
@@ -65,7 +66,7 @@ int main() {
              std::to_string(main_symbol) + ", 1); builder_encode(h)",
          DAO_INVALID_ARGUMENT},
         {"unknown opcode",
-         "h = builder_new(); builder_begin(h, 0, 4096); builder_emit_raw(h, 42, 0, 0, 0, 0); "
+         "h = builder_new(); builder_begin(h, 0, 4096); builder_emit_raw(h, 46, 0, 0, 0, 0); "
          "builder_finish(h, " + std::to_string(main_symbol) + ", 1); builder_encode(h)",
          DAO_INVALID_ARGUMENT},
         {"truncated register",
@@ -125,6 +126,13 @@ int main() {
          "builder_emit_raw(h, 15, 0, 0, 0, 0); builder_finish(h, " +
              std::to_string(main_symbol) + ", 1); builder_encode(h)",
          DAO_VERIFY_ERROR},
+        {"record type invalid handle", "builder_record_type(-1, \"Point\")", DAO_INVALID_ARGUMENT},
+        {"record type invalid name", "h = builder_new(); builder_record_type(h, 42)", DAO_INVALID_ARGUMENT},
+        {"record type during function", "h = builder_new(); builder_begin(h, 0, 1); builder_record_type(h, \"Point\")", DAO_INVALID_ARGUMENT},
+        {"record field unknown type", "h = builder_new(); builder_record_field(h, 0, \"x\", 1)", DAO_INVALID_ARGUMENT},
+        {"record field non-scalar", "h = builder_new(); t = builder_record_type(h, \"Point\"); builder_record_field(h, t, \"x\", 9)", DAO_INVALID_ARGUMENT},
+        {"record field duplicate", "h = builder_new(); t = builder_record_type(h, \"Point\"); builder_record_field(h, t, \"x\", 1); builder_record_field(h, t, \"x\", 1)", DAO_INVALID_ARGUMENT},
+        {"record type after encode", "h = builder_new(); bytes = " + valid_tail + "; builder_record_type(h, \"Point\")", DAO_INVALID_ARGUMENT},
     };
 
     for (const Rejected& test : rejected) {
@@ -173,6 +181,29 @@ int main() {
     dao_vm_destroy(vm);
     if (!valid) {
         std::cerr << "valid builder result mismatch\n";
+        return EXIT_FAILURE;
+    }
+    const std::string record_build =
+        "h = builder_new(); t = builder_record_type(h, \"Point\"); builder_record_field(h, t, \"x\", 1); "
+        "builder_begin(h, 0, 4096); builder_emit_raw(h, 1, 0, 0, 0, 42); "
+        "builder_emit_raw(h, 43, 1, 0, 1, t); builder_emit_raw(h, 44, 2, 1, 0, t); "
+        "builder_emit_raw(h, 15, 0, 2, 0, 0); builder_finish(h, " +
+        std::to_string(main_symbol) + ", 3); builder_encode(h)";
+    if (!dao::selfhost::compile(compiler(record_build), "probe", &output, &error)) {
+        std::cerr << "valid Record builder rejected: " << error.message << '\n';
+        return EXIT_FAILURE;
+    }
+    vm = dao_vm_create(&config);
+    module = nullptr;
+    const bool record_valid = vm && dao_vm_set_features(vm, DAO_FEATURE_RECORDS) == DAO_OK &&
+        dao_vm_load_module(vm, {output.data(), output.size()}, &module, &error) == DAO_OK &&
+        dao_module_find_export(module, main_symbol, &main_function) == DAO_OK &&
+        dao_vm_call(vm, module, main_function, nullptr, 0, &result, &error) == DAO_OK &&
+        result.type == DAO_VALUE_I64 && result.payload == 42;
+    if (module) dao_module_release(module);
+    dao_vm_destroy(vm);
+    if (!record_valid) {
+        std::cerr << "valid Record builder result mismatch: " << error.message << '\n';
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;

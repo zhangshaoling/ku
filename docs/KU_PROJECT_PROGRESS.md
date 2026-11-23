@@ -1,6 +1,6 @@
 # Ku 语言系统项目进度
 
-> 更新时间：2026-11-21
+> 更新时间：2026-11-23
 > 状态依据：当前工作区代码、现有设计文档和本轮实测。  
 > 说明：本看板保留开发过程中的分阶段证据，正式版本与附件以 GitHub Releases 为准。
 
@@ -24,6 +24,91 @@ Ku 已经拥有一套可工作的高性能新内核和一套功能较丰富的�
 项目当前处于：**内核与代码记忆具备发布基础，完整语言与 AI 上层继续迁移和集成。**
 
 ## 2. 实测基线
+
+### keys(Map) 双前端兼容修复（2026-11-23）
+
+- 自举前端使用完整四字节 `keys` 识别，修复长度误写为 5 导致内建调用无法识别、`keysx/keys_` 被误识别的双重问题。恢复前端和 VM 无需修改。
+- 新增 5 组专项测试：空 Map/中文排序/参数只求值一次、相似名称、含 Record 的 Map、错误参数数目与未定义前缀名称、非 Map 类型错误。合法源码同时逐字节比较两个前端产物。
+- 自举初始与重建编译器同时覆盖 keys 正例和拒绝例，生产 acceptance 与 SDK 包内测试也覆盖准确名称识别。
+- Windows 功能回归 76/76 通过（71.14 秒，排除独立性能门禁），B0=B1=B2 通过；解压 SDK 隔离 PATH 后，两套包内编译器的 keys/相似名称和全部既有安装检查通过。
+
+### R1 核对与配置错误迁移（2026-11-23）
+
+- 已将 REC-01 至 REC-13、REG-01 映射到真实测试，形成 [R1 验收记录](KU_RECORD_R1_ACCEPTANCE.md)。Schema/Result 项单独列为未实现，不用清单长度推算总体完成率。
+- 配置校验器内部错误列表使用四标量 `校验错误` Record，返回前显式导出独立 Map。公开 `{ok,errors}`、四个错误字段、CLI 完整文本、退出码与顺序保持；原生配置用例由 9 个增至 12 个。
+- 自举前端修复两项验收复现：兄弟导入共享可变祖先列表导致误报循环；字段与类型/函数同名时被命名空间错误改写。18 组前端用例验证双前端字节、两个别名类型身份、共享依赖和定位；自举重建也执行对应例子。
+- 最终 Windows 功能回归 75/75 通过（71.24 秒，排除独立性能门禁）；B0=B1=B2 通过，独立 ASan/UBSan 的 Record 内核/工具/存储和配置 CLI 测试 4/4 通过。解压 SDK 隔离 PATH 后的配置 v3 模块、两个前端各 12 个配置测试、别名字段场景及既有绑定/Store 验证通过。
+- 初次验收发现的自举 `keys(Map)` 名称长度差异已由上节兼容修复解决；配置测试保留 Map 遍历字段数的既有实现。跨平台和独立性能门禁仍未执行。
+
+### R1 Python / Rust Record 绑定切片（2026-11-23）
+
+- Python `Runtime(..., features=0)` 默认不启用 Record，提供能力查询/设置、模块 Record 描述、`record_type` 和 `record_get` 只读访问；owner 按 retained 模块引用显式释放。视图继续借用，不自动转 Map 或延长 generation。
+- `CodeMemory(..., features=0)` 将显式开启策略传递到原生保存、派生保存、验证与执行。旧整数入口拒绝 Record 结果；普通调用拒绝复用句柄，Host 边界继续递归拒绝 Record。
+- Rust sys crate 保持原始 C ABI 形态，增加 no_std、能力/值/状态常量和只读查询声明。新增实际原生调用探针，覆盖四种标量、输出清零、失效/外来句柄、owner 保活及策略锁定；不只依赖 cargo check。
+- Windows 功能 CTest 75/75 通过（71.58 秒，排除独立性能门禁）；Python 7 组 Record 用例与 Rust 原生调用探针均通过。解压 SDK 隔离 PATH 后，包内 Python 查询/CodeMemory 和 Rust 系统绑定实际调用验证通过；本轮未验证 Linux/macOS。
+- 下一步是 R1 总体验收核对与配置示例迁移，之后再开展 Schema/Result；完整静态类型与跨模块 Record 值签名仍不在本切片。用法见 [KU_RECORD_BINDINGS.md](KU_RECORD_BINDINGS.md)。
+
+### R1 ModuleStore 能力策略切片（2026-11-23）
+
+- `ModuleStore(root, features=0)` 默认拒绝 v3；显式传入 `DAO_FEATURE_RECORDS` 后允许校验、保存与读取具备身份的 Record 模块。未知能力位在构造时拒绝，没有全局开关或 manifest 新字段。
+- `save/load/verify/save_source/save_derived_source` 使用同一策略，包含派生版本父记录的校验。完整性、来源与不可变规则保持；开启能力不绕过验证器，也不授权其他 Store 或执行 VM。
+- `dao-ku --enable-records --store ...` 与 `dao-module --enable-records verify/run/recall ...` 接通原生闭环。CLI 拒绝输出 Record/容器句柄整数；实际执行 VM 仍单独显式启用能力。
+- 存储不新增缓存、自动依赖链接、运行值序列化或递归父链加载。旧模块可继续默认保存/读取；跨模块仍仅允许既有安全值，不开放 Record 传递。
+- Windows 功能 CTest 73/73 通过（排除独立性能门禁），存储 ASan/UBSan 测试 2/2 通过。解压 SDK 隔离 PATH 后，通过默认拒绝、双前端相同存储字节、显式 verify/run 和派生版本来源校验；外部 C/C++ consumer 的 Record Store API 验证通过。
+- 下一步是 Python/Rust 的能力与只读查询绑定；完整 R1、Schema 与 Result/Option 尚未完成。使用规则见 [Store feature policy](../kernel/MODULE_ABI.md#store-feature-policy)。
+
+### R1 ABI11 汇编工具切片（2026-11-23）
+
+- 汇编/反汇编结构保留 format/ABI 版本、Record 类型和字段表；v3 文本使用 `format: 3 abi=11`、`record_types:` 描述和三条 Record 指令。支持空类型、可选模块身份/导入及共享 DATA 名称；旧 v1/v2 文本保持原样。
+- v3 二进制反汇编与文本汇编结果均经临时启用 Record 的内核验证器检查，不链接依赖或执行程序。规范 ModuleBuilder 产物保持字节一致往返；不承诺保留任意非规范二进制布局。
+- 数值 AOT 在打开输出前拒绝全部 v3 模块，包括只声明 Record、没有相关指令的模块；已有输出文件不被截断。
+- 汇编、反汇编和新工具往返测试已通过独立 ASan/UBSan 检查；安装 SDK 的外部 C/C++ consumer 验证通过，C++ 示例只链接导出的汇编/反汇编目标即可完成 Record 字节往返。
+- Windows 完整功能 CTest 71/71 通过（92.09 秒，排除独立 AOT 性能阈值）；独立 ASan/UBSan 的汇编、反汇编与 Record 工具测试 3/3 通过。解压 SDK 后隔离 PATH 验证通过，包括数值 AOT 拒绝与已有输出保护。
+- 下一步是 ModuleStore 显式能力策略，再接高层绑定；当前不修改存储 manifest 或 Record 跨模块/Host 边界规则。格式见 [FORMAT.md](../kernel/FORMAT.md#abi11-assembly-text)。
+
+### R1 Record 源码前端切片（2026-11-23）
+
+- 两套前端已支持顶层 `型`、标量字段、前向声明、具名构造、只读字段读取和源码导入命名空间。具名初始化按源码顺序求值，按声明顺序存放；无 Record 程序沿用旧编码。
+- 字段缺失/多余/重复、明显类型错误、已知 Record 的未知字段/索引/写入和类型名遮蔽在编译期拒绝；动态字段仍由 VM 严格检查。没有新增 Schema、Result/Option 或完整 Typed IR。
+- Windows 功能 CTest 69/69 通过（排除独立 AOT 性能阈值）；前端专项 13 组测试检查字节一致、导入、求值顺序、重赋值/绑定、格式化与诊断。自举门禁维持 B0=B1=B2，并验证重建编译器生成的 Record 程序。
+- `demos/record_tests.ku` 演示配置错误 Record 和显式导出 Map，包内双前端编译/执行和字节一致性已通过隔离 PATH 的 SDK 验证。源码编译器重建测试的指令预算由 100M 调至 200M；生产编译预算不变。
+- 下一步是 ABI11 的汇编/反汇编、ModuleStore 能力策略与绑定接入；本切片不代表整个 R1 已完成。使用与限制见 [RECORDS.md](../kernel/RECORDS.md)。
+
+### R1 Record 内核切片（2026-11-22）
+
+- 已实现 opt-in v3/ABI11、Record 类型/字段表、严格标量构造、静态/动态字段读取、只读 C 查询和 capability 锁定。旧 v1/v2 编码与默认 VM 策略保持，源码 `型` 尚未接入；范围见 [RECORDS.md](../kernel/RECORDS.md)。
+- 14 个 R0 字节样本已接生产 C ABI；原生测试覆盖跨 VM/下一代拒绝、module release/cache 清空后的描述保活、嵌套 Host/模块/异常边界、循环容器、边界预算和旧 ABI 回归。
+- Windows 完整功能 CTest 66/66 通过（34.58 秒，排除独立性能阈值），新增图边界反例随后定向复测通过；独立 RelWithDebInfo + ASan/UBSan 的 Record 原生测试通过。本轮未运行 Linux/macOS。
+- 候选 Windows SDK 解压后，使用包内动态库、移除开发 PATH 的环境再次通过全部 14 个 wire 样本；既有配置工具、编译诊断、代码记忆及 Python 绑定安装验证通过。未发布新版本。
+- 下一步是两套源码前端与 ABI11 工具/存储/绑定接入。当前不能把内核切片视为整个 R1、Schema 或 Result/Option 已完成。
+
+### Record / Schema / Result 设计提案（2026-11-22）
+
+- 已形成 [最小契约 RFC](KU_RECORD_SCHEMA_RESULT_RFC.md)，建议独立名义 Record、固定只读字段、显式 Schema 转换与带标签的 Result/Option，并列出替代方案、兼容条件和配置校验器的迁移顺序。
+- [R0 编码与能力协商候选附录](KU_RECORD_R0_ABI.md) 已形成，明确 v3/ABI11、类型/字段表、Record 三条指令、值标签、C API、owner 保活、能力检查顺序和边界拒绝规则，并附 252 字节基准及 14 个提案样本。
+- R0 核对通过样本长度、section 表偏移、SHA-256、变异描述范围和文档链接；当前 `dao-aot` 拒绝该 v3/ABI11 样本且不创建输出文件。本轮未修改运行时或重跑完整 CTest；新协议的加载/执行预期仍待 R1 验证。
+- R1 内核与源码切片实现见上节；跨模块类型签名、Schema 转换与 Result/Option 尚未实现。设计文档本身不作为新内核执行成功的证据。
+
+### v1.2.0 开发中的真实工具示例（2026-11-22）
+
+- 新增原生 `ku-config` 与 `demos/config_validator.ku`。C++ 负责文件输入、VM 调用和错误输出，Ku 负责 key=value 解析、必填项、重复键、未知键与数值范围；使用说明见 [KU_CONFIG_EXAMPLE.md](KU_CONFIG_EXAMPLE.md)。
+- 原生测试与自举编译器共用三个只读文本 Host；没有增加文件或网络权限。九个 Ku 测试在默认与恢复前端通过，校验器产物逐字节一致，真实文件 CLI 回归通过。
+- Windows 本地完整功能 CTest 64/64 通过（28.21 秒，排除独立性能阈值）。候选 SDK 在独立解压目录通过配置示例、双前端九个 Ku 测试、错误输入及包内模块损坏拒绝验证；既有诊断、代码记忆和 Python 绑定验证继续通过。本轮未执行 Linux/macOS 验证，未发布新版本。
+- 示例使用显式中间变量读取调用结果和嵌套容器，避开当前前端对部分链式字段/索引访问的限制；本轮未扩展该语法。
+
+### v1.2.0 开发中的编译诊断（2026-11-22）
+
+- 两套前端的 CLI 编译错误支持文件、Unicode 行列、源码行与指示符；嵌套导入、函数名前缀和自动记忆声明保留原文件位置。使用契约见 [KU_DIAGNOSTICS.md](KU_DIAGNOSTICS.md)。
+- 新增诊断 CLI 回归，覆盖中文/CRLF/Tab、语法、文件末尾、根文件与嵌套导入、导入失败、重复声明、循环外跳出、函数名重写、各源码命令与非法 UTF-8。
+- Windows 本地完整功能 CTest 60/60 通过（30.11 秒，排除独立性能阈值）；其中诊断 CLI 的 14 组回归通过，双代自举与双前端字节一致性门禁通过。
+- 候选 Windows SDK ZIP 在独立解压目录通过双前端诊断、原生测试、check/fmt/编译、代码记忆与 Python 绑定验证；运行时 PATH 不含源码工具链。本轮未运行 Linux/macOS 验证，也未发布新版本。
+- 范围外发现并保留：自举前端使用较长源码导入别名时，`identifier_has_specific_alias` 可能在短标识符上调用越界的 `source_byte`，报 `host callback returned an error`。例如别名 `long_alias`，依赖源码为 `思 value() { 返 42 }`；本轮未修改该别名判断逻辑。
+
+### v1.2.0 开发中的原生测试命令
+
+- `dao-ku --test [--recovery] input.ku` 已实现单文件函数发现、独立 VM 执行、失败后继续和 0/1/2 退出码，使用 `测试_` / `test_` 前缀及严格 Trit 成功规则。
+- 本地功能 CTest 59/59 通过（29.12 秒，排除独立性能阈值），包括 CLI 回归和中文示例。候选 SDK 解压后的双前端 `--test`、编译和代码记忆路径通过。
+- 使用契约见 [KU_TESTING.md](KU_TESTING.md)。编译诊断与真实工具示例进展见上节，已发布版本仍以 Releases 为准。
 
 ### 2026-11-21 当前本地验收
 

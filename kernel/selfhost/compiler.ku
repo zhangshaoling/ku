@@ -3,6 +3,8 @@ import source_byte(2)
 import source_slice(3)
 import source_hash(3)
 import module_source(1)
+import source_context(2)
+import source_append(4)
 import string_new(0)
 import string_append(2)
 import string_finish(1)
@@ -18,6 +20,8 @@ import builder_finish(3)
 import builder_encode(1)
 import builder_identity(5)
 import builder_module_import(7)
+import builder_record_type(2)
+import builder_record_field(4)
 
 thought pack(index, next_reg, result_reg) {
   index * 10000000000 + next_reg * 100000 + result_reg
@@ -96,6 +100,7 @@ thought token_integer(source, token) {
 }
 
 thought tokenize(source, size) {
+  source_context(source, 0)
   if size >= 1000000 { fail_at("source is too large", 0) }
   index = 0
   tokens = []
@@ -238,19 +243,22 @@ thought prepend_imports(prefix, source, source_size) {
 }
 
 thought append_source(output, source, start, length) {
-  index = start
-  end = start + length
-  while index < end {
-    string_append(output, source_byte(source, index))
-    index = index + 1
-  }
-  output
+  source_append(output, source, start, length)
 }
 
 thought join_module_prefix(prefix, alias) {
   output = string_new()
-  append_source(output, prefix, 0, source_len(prefix))
-  append_source(output, alias, 0, source_len(alias))
+  // Generated namespaces have no source span; the following identifier owns the location.
+  index = 0
+  while index < source_len(prefix) {
+    string_append(output, source_byte(prefix, index))
+    index = index + 1
+  }
+  index = 0
+  while index < source_len(alias) {
+    string_append(output, source_byte(alias, index))
+    index = index + 1
+  }
   string_append(output, 95)
   string_finish(output)
 }
@@ -401,6 +409,288 @@ thought identifier_has_alias(source, token, aliases) {
   1 != 1
 }
 
+thought token_text(source, token) {
+  source_slice(source, token_start(token), token_length(token))
+}
+
+thought is_record_decl(source, tokens, token_index) {
+  token_type(tokens[token_index]) == 3 and is_zh_kw(source, tokens[token_index], 229, 158, 139)
+}
+
+thought record_lookup(records, name) {
+  index = 0
+  for record in records {
+    if record[1] == name { return index + 1 }
+    index = index + 1
+  }
+  0
+}
+
+thought field_lookup(fields, name) {
+  index = 0
+  for field in fields {
+    if field == name { return index + 1 }
+    index = index + 1
+  }
+  0
+}
+
+thought record_declaration(source, tokens, token_index) {
+  offset = token_start(tokens[token_index])
+  token_index = token_index + 1
+  if token_type(tokens[token_index]) != 3 { fail_token("expected record type name", tokens, token_index) }
+  name = token_text(source, tokens[token_index])
+  token_index = token_index + 1
+  if token_type(tokens[token_index]) != 6 { fail_token("expected { after record type name", tokens, token_index) }
+  token_index = skip_lines(tokens, token_index + 1)
+  fields = []
+  tags = []
+  while token_type(tokens[token_index]) != 7 {
+    if token_type(tokens[token_index]) != 3 { fail_token("expected record field name", tokens, token_index) }
+    field = token_text(source, tokens[token_index])
+    if string_in(fields, field) { fail_token("duplicate record field", tokens, token_index) }
+    if len(fields) >= 256 { fail_token("record field limit exceeded", tokens, token_index) }
+    fields = fields + [field]
+    token_index = token_index + 1
+    if token_type(tokens[token_index]) != 12 { fail_token("expected : after record field", tokens, token_index) }
+    token_index = token_index + 1
+    tag_name = token_text(source, tokens[token_index])
+    tag = 0
+    if tag_name == "整数" or tag_name == "i64" { tag = 1 }
+    if tag_name == "三值" or tag_name == "Trit" { tag = 2 }
+    if tag_name == "字节" or tag_name == "Bytes" { tag = 3 }
+    if tag_name == "文本" or tag_name == "String" { tag = 4 }
+    if tag == 0 { fail_token("expected scalar record field type", tokens, token_index) }
+    tags = tags + [tag]
+    token_index = token_index + 1
+    next_type = token_type(tokens[token_index])
+    if next_type == 10 or next_type == 11 { token_index = skip_lines(tokens, token_index + 1) }
+    else if next_type != 7 { fail_token("expected record field separator", tokens, token_index) }
+  }
+  [token_index + 1, name, fields, tags, offset]
+}
+
+thought collect_records(source, tokens, handle) {
+  records = []
+  token_index = 0
+  while token_type(tokens[token_index]) != 26 {
+    if is_record_decl(source, tokens, token_index) {
+      record = record_declaration(source, tokens, token_index)
+      if record_lookup(records, record[1]) > 0 { fail_at("duplicate record type", record[4]) }
+      type_index = builder_record_type(handle, record[1])
+      field_index = 0
+      for field in record[2] {
+        builder_record_field(handle, type_index, field, record[3][field_index])
+        field_index = field_index + 1
+      }
+      records = records + [record]
+      token_index = record[0]
+      continue
+    }
+    if token_type(tokens[token_index]) == 6 { token_index = block_end(tokens, token_index) }
+    else { token_index = token_index + 1 }
+  }
+  records
+}
+
+thought is_binding_keyword(source, token) {
+  is_kw(source, token, 3, 102, 111, 114, 0, 0, 0, 0, 0) or is_kw(source, token, 5, 99, 97, 116, 99, 104, 0, 0, 0) or is_zh_kw(source, token, 233, 129, 141) or is_zh_kw(source, token, 230, 141, 149)
+}
+
+thought constructor_record(source, tokens, position, records) {
+  if token_type(tokens[position]) == 4 {
+    inner = constructor_record(source, tokens, position + 1, records)
+    if inner[1] > 0 {
+      if token_type(tokens[inner[0]]) == 5 { return [inner[0] + 1, inner[1]] }
+    }
+    return [position, 0]
+  }
+  if token_type(tokens[position]) == 3 {
+    slot = record_lookup(records, token_text(source, tokens[position]))
+    if slot > 0 {
+      if token_type(tokens[position + 1]) == 6 { return [block_end(tokens, position + 1), slot] }
+    }
+  }
+  [position, 0]
+}
+
+// Infer only a single direct constructor assignment in the enclosing function.
+// Parameters and loop/catch bindings always retain dynamic field checks.
+thought local_record(source, tokens, position, records) {
+  if len(records) == 0 { return 0 }
+  target = token_text(source, tokens[position])
+  start = 0
+  while start < position {
+    if is_record_decl(source, tokens, start) { declaration = record_declaration(source, tokens, start); start = declaration[0]; continue }
+    if token_type(tokens[start]) != 6 { start = start + 1; continue }
+    end = block_end(tokens, start)
+    if end <= position { start = end; continue }
+    // The opening brace belongs to this function; walk its parameter list backwards.
+    scan = start - 1
+    while token_type(tokens[scan]) != 4 {
+      if token_type(tokens[scan]) == 3 { if token_text(source, tokens[scan]) == target { return 0 } }
+      scan = scan - 1
+    }
+    count = 0
+    result = 0
+    scan = start + 1
+    while scan < end {
+      token = tokens[scan]
+      if is_binding_keyword(source, token) {
+        if token_text(source, tokens[scan + 1]) == target { return 0 }
+        if token_type(tokens[scan + 2]) == 10 {
+          if token_text(source, tokens[scan + 3]) == target { return 0 }
+        }
+      }
+      if token_type(token) == 3 and token_type(tokens[scan + 1]) == 18 {
+        if token_text(source, token) == target {
+          count = count + 1
+          constructor = constructor_record(source, tokens, scan + 2, records)
+          candidate = constructor[1]
+          if candidate > 0 {
+            after = constructor[0]
+            next_type = token_type(tokens[after])
+            direct = next_type == 7 or next_type == 11 or next_type == 26
+            // Same-line statements may follow without a separator.
+            if next_type == 3 {
+              next_text = token_text(source, tokens[after])
+              if next_text != "and" and next_text != "or" { direct = 1 == 1 }
+            }
+            if direct and scan < position { result = candidate }
+          }
+        }
+      }
+      scan = scan + 1
+    }
+    if count == 1 { return result }
+    return 0
+  }
+  0
+}
+
+thought record_literal_type(source, tokens, start, end, records) {
+  if token_type(tokens[start]) == 4 {
+    depth = 1
+    scan = start + 1
+    while scan < end and depth > 0 {
+      if token_type(tokens[scan]) == 4 { depth = depth + 1 }
+      if token_type(tokens[scan]) == 5 { depth = depth - 1 }
+      scan = scan + 1
+    }
+    if scan == end and depth == 0 { return record_literal_type(source, tokens, start + 1, end - 1, records) }
+  }
+  type = token_type(tokens[start])
+  if end == start + 1 {
+    if type == 1 { return 1 }
+    if type == 2 { return 4 }
+    text = token_text(source, tokens[start])
+    if text == "真" or text == "假" or text == "true" or text == "false" { return 2 }
+    if text == "空" or text == "null" { return 0 }
+  }
+  if type == 14 {
+    number_start = start + 1
+    number_end = end
+    while token_type(tokens[number_start]) == 4 {
+      if token_type(tokens[number_end - 1]) != 5 { return -1 }
+      number_start = number_start + 1
+      number_end = number_end - 1
+    }
+    if number_end == number_start + 1 { if token_type(tokens[number_start]) == 1 { return 1 } }
+  }
+  if type == 3 {
+    if record_lookup(records, token_text(source, tokens[start])) > 0 {
+      if token_type(tokens[start + 1]) == 6 { if block_end(tokens, start + 1) == end { return 9 } }
+    }
+  }
+  -1
+}
+
+thought primary_record(source, tokens, start, end, records) {
+  if token_type(tokens[start]) == 4 {
+    if token_type(tokens[end - 1]) == 5 { return primary_record(source, tokens, start + 1, end - 1, records) }
+  }
+  constructor = constructor_record(source, tokens, start, records)
+  if constructor[0] == end and constructor[1] > 0 { return constructor[1] }
+  if end == start + 1 { if token_type(tokens[start]) == 3 { return local_record(source, tokens, start, records) } }
+  0
+}
+
+thought parse_record(source, tokens, token_index, handle, next_reg, names, regs, size, records, type_slot) {
+  record = records[type_slot - 1]
+  values = []
+  for field in record[2] { values = values + [-1] }
+  origin = token_index
+  token_index = skip_lines(tokens, token_index + 2)
+  while token_type(tokens[token_index]) != 7 {
+    if token_type(tokens[token_index]) != 3 { fail_token("expected constructor field name", tokens, token_index) }
+    slot = field_lookup(record[2], token_text(source, tokens[token_index]))
+    if slot == 0 { fail_token("unknown constructor field", tokens, token_index) }
+    slot = slot - 1
+    if values[slot] >= 0 { fail_token("duplicate constructor field", tokens, token_index) }
+    token_index = token_index + 1
+    if token_type(tokens[token_index]) != 12 { fail_token("expected : after constructor field", tokens, token_index) }
+    start = token_index + 1
+    parsed = parse_expression(source, tokens, start, handle, next_reg, names, regs, size, records)
+    token_index = packed_index(parsed)
+    next_reg = packed_next(parsed)
+    values[slot] = packed_result(parsed)
+    known = record_literal_type(source, tokens, start, token_index, records)
+    if known >= 0 { if known != record[3][slot] { fail_token("record field type mismatch", tokens, start) } }
+    next_type = token_type(tokens[token_index])
+    if next_type == 10 or next_type == 11 { token_index = skip_lines(tokens, token_index + 1) }
+    else if next_type != 7 { fail_token("expected constructor field separator", tokens, token_index) }
+  }
+  base = 0
+  if len(values) > 0 { base = next_reg }
+  for value in values {
+    if value < 0 { fail_token("missing constructor field", tokens, origin) }
+    builder_emit(handle, 2, next_reg, value, 0, 0)
+    next_reg = next_reg + 1
+  }
+  builder_emit(handle, 43, next_reg, base, len(values), type_slot - 1)
+  pack(token_index + 1, next_reg + 1, next_reg)
+}
+
+thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs, size, records) {
+  origin = token_index
+  parsed = parse_atom(source, tokens, token_index, handle, next_reg, names, regs, size, records)
+  if len(records) == 0 { return parsed }
+  token_index = packed_index(parsed)
+  if token_type(tokens[token_index]) != 8 and token_type(tokens[token_index]) != 27 { return parsed }
+  next_reg = packed_next(parsed)
+  result_reg = packed_result(parsed)
+  known = primary_record(source, tokens, origin, token_index, records)
+  while token_type(tokens[token_index]) == 8 or token_type(tokens[token_index]) == 27 {
+    if token_type(tokens[token_index]) == 8 {
+      if known > 0 { fail_token("record indexing is not supported", tokens, token_index) }
+      parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
+      token_index = packed_index(parsed)
+      next_reg = packed_next(parsed)
+      if token_type(tokens[token_index]) != 9 { fail_token("expected ] in index", tokens, token_index) }
+      builder_emit(handle, 30, next_reg, result_reg, packed_result(parsed), 0)
+      token_index = token_index + 1
+    } else {
+      token_index = token_index + 1
+      if token_type(tokens[token_index]) != 3 { fail_token("expected field name after .", tokens, token_index) }
+      field = token_text(source, tokens[token_index])
+      if known > 0 {
+        record = records[known - 1]
+        slot = field_lookup(record[2], field)
+        if slot == 0 { fail_token("record field does not exist", tokens, token_index) }
+        builder_emit(handle, 44, next_reg, result_reg, slot - 1, known - 1)
+      } else {
+        data_index = builder_add_string(handle, field)
+        builder_emit(handle, 45, next_reg, result_reg, 0, data_index)
+      }
+      token_index = token_index + 1
+    }
+    result_reg = next_reg
+    next_reg = next_reg + 1
+    known = 0
+  }
+  pack(token_index, next_reg, result_reg)
+}
+
 thought expand_module(source, prefix, active_paths) {
   size = source_len(source)
   tokens = tokenize(source, size)
@@ -414,6 +704,7 @@ thought expand_module(source, prefix, active_paths) {
   declaration_types = []
   declaration_names = []
   local_functions = []
+  local_records = []
   token_index = 0
   while token_type(tokens[token_index]) != 26 {
     if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
@@ -429,6 +720,17 @@ thought expand_module(source, prefix, active_paths) {
       module_offsets = module_offsets + [token_start(keyword)]
       module_starts = module_starts + [start_index]
       module_runtime = module_runtime + [module[3]]
+      continue
+    }
+    if is_record_decl(source, tokens, token_index) {
+      declaration = record_declaration(source, tokens, token_index)
+      local_functions = local_functions + [declaration[1]]
+      local_records = local_records + [declaration[1]]
+      token_index = declaration[0]
+      declaration_starts = declaration_starts + [start_index]
+      declaration_ends = declaration_ends + [token_index]
+      declaration_types = declaration_types + [3]
+      declaration_names = declaration_names + [start_index + 1]
       continue
     }
     if is_import {
@@ -488,9 +790,14 @@ thought expand_module(source, prefix, active_paths) {
       append_source(output, prefix, 0, source_len(prefix))
       append_source(output, module_aliases[import_index], 0, source_len(module_aliases[import_index]))
     } else {
+      source_context(source, module_offsets[import_index])
       if string_in(active_paths, path) { fail_at("cyclic module import", module_offsets[import_index]) }
       imported = module_source(path)
-      expanded = expand_module(imported, join_module_prefix(prefix, module_aliases[import_index]), active_paths + [path])
+      // List append mutates its input; keep each sibling's ancestry independent.
+      next_paths = []
+      for active_path in active_paths { next_paths = next_paths + [active_path] }
+      next_paths = next_paths + [path]
+      expanded = expand_module(imported, join_module_prefix(prefix, module_aliases[import_index]), next_paths)
       append_source(output, expanded, 0, source_len(expanded))
     }
     string_append(output, 10)
@@ -506,6 +813,16 @@ thought expand_module(source, prefix, active_paths) {
     end_byte = token_start(last_token) + token_length(last_token)
     if declaration_types[declaration_index] == 1 {
       append_source(output, source, start_byte, end_byte - start_byte)
+      string_append(output, 10)
+      declaration_index = declaration_index + 1
+      continue
+    }
+
+    if declaration_types[declaration_index] == 3 {
+      name_token = tokens[declaration_names[declaration_index]]
+      append_source(output, source, start_byte, token_start(name_token) - start_byte)
+      append_source(output, prefix, 0, source_len(prefix))
+      append_source(output, source, token_start(name_token), end_byte - token_start(name_token))
       string_append(output, 10)
       declaration_index = declaration_index + 1
       continue
@@ -532,6 +849,10 @@ thought expand_module(source, prefix, active_paths) {
       scan_index = scan_index + 1
     }
 
+    for bound in bound_names {
+      if string_in(local_records, bound) { fail_at("local binding shadows record type", start_byte) }
+    }
+
     cursor = start_byte
     rewrite_index = start_index
     while rewrite_index < end_index {
@@ -539,7 +860,11 @@ thought expand_module(source, prefix, active_paths) {
       rewrite = rewrite_index == declaration_names[declaration_index]
       if token_type(rewrite_token) == 3 and not rewrite {
         identifier = source_slice(source, token_start(rewrite_token), token_length(rewrite_token))
-        if not string_in(bound_names, identifier) and (string_in(local_functions, identifier) or identifier_has_alias(source, rewrite_token, module_aliases)) { rewrite = 1 == 1 }
+        field_name = token_type(tokens[rewrite_index + 1]) == 12
+        if rewrite_index > start_index {
+          if token_type(tokens[rewrite_index - 1]) == 27 { field_name = 1 == 1 }
+        }
+        if not field_name and not string_in(bound_names, identifier) and (string_in(local_functions, identifier) or identifier_has_alias(source, rewrite_token, module_aliases)) { rewrite = 1 == 1 }
       }
       if rewrite {
         append_source(output, source, cursor, token_start(rewrite_token) - cursor)
@@ -566,7 +891,7 @@ thought has_module_import(source, tokens) {
   1 != 1
 }
 
-thought validate_declarations(source, tokens) {
+thought validate_declarations(source, tokens, records) {
   token_index = 0
   symbols = []
   runtime_aliases = []
@@ -575,6 +900,11 @@ thought validate_declarations(source, tokens) {
   while token_type(tokens[token_index]) != 26 {
     if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
     keyword = tokens[token_index]
+    if is_record_decl(source, tokens, token_index) {
+      declaration = record_declaration(source, tokens, token_index)
+      token_index = declaration[0]
+      continue
+    }
     if is_module_import_decl(source, tokens, token_index) {
       module = parse_module_import_decl(source, tokens, token_index)
       if not module[3] { fail_at("runtime module import must be ku:IDENTITY@MAJOR.MINOR.PATCH", token_start(keyword)) }
@@ -603,6 +933,7 @@ thought validate_declarations(source, tokens) {
     if not is_import_decl and not is_function_decl { fail_at("expected declaration", token_start(keyword)) }
     name_token = tokens[token_index + 1]
     if token_type(name_token) != 3 { fail_token("expected declaration name", tokens, token_index + 1) }
+    if record_lookup(records, token_text(source, name_token)) > 0 { fail_token("declaration conflicts with record type", tokens, token_index + 1) }
     name_hash = source_hash(source, token_start(name_token), token_length(name_token))
     if lookup_slot(symbols, name_hash) != 0 { fail_token("duplicate declaration", tokens, token_index + 1) }
     symbols = symbols + [name_hash]
@@ -621,6 +952,7 @@ thought validate_declarations(source, tokens) {
     while token_type(tokens[token_index]) != 5 {
       parameter = tokens[token_index]
       if token_type(parameter) != 3 { fail_token("expected parameter name", tokens, token_index) }
+      if record_lookup(records, token_text(source, parameter)) > 0 { fail_token("parameter shadows record type", tokens, token_index) }
       parameter_hash = source_hash(source, token_start(parameter), token_length(parameter))
       if lookup_slot(parameters, parameter_hash) != 0 { fail_token("duplicate parameter", tokens, token_index) }
       parameters = parameters + [parameter_hash]
@@ -635,6 +967,20 @@ thought validate_declarations(source, tokens) {
     }
     depth = 0
     while token_type(tokens[token_index]) != 26 {
+      if len(records) > 0 {
+        binding = token_type(tokens[token_index + 1]) == 18
+        if is_binding_keyword(source, tokens[token_index]) {
+          if token_type(tokens[token_index + 1]) != 3 { fail_token("expected binding name", tokens, token_index + 1) }
+          if record_lookup(records, token_text(source, tokens[token_index + 1])) > 0 { fail_token("binding shadows record type", tokens, token_index + 1) }
+          if token_type(tokens[token_index + 2]) == 10 {
+            if token_type(tokens[token_index + 3]) != 3 { fail_token("expected binding name", tokens, token_index + 3) }
+            if record_lookup(records, token_text(source, tokens[token_index + 3])) > 0 { fail_token("binding shadows record type", tokens, token_index + 3) }
+          }
+        }
+        if binding and token_type(tokens[token_index]) == 3 {
+          if record_lookup(records, token_text(source, tokens[token_index])) > 0 { fail_token("binding shadows record type", tokens, token_index) }
+        }
+      }
       if token_type(tokens[token_index]) == 6 { depth = depth + 1 }
       if token_type(tokens[token_index]) == 7 {
         depth = depth - 1
@@ -647,7 +993,7 @@ thought validate_declarations(source, tokens) {
   0
 }
 
-thought parse_number(source, tokens, token_index, handle, next_reg) {
+thought parse_number(source, tokens, token_index, handle, next_reg, records) {
   token = tokens[token_index]
   start = token_start(token)
   length = token_length(token)
@@ -662,7 +1008,7 @@ thought parse_number(source, tokens, token_index, handle, next_reg) {
   pack(token_index + 1, next_reg + 1, result_reg)
 }
 
-thought parse_string(source, tokens, token_index, handle, next_reg) {
+thought parse_string(source, tokens, token_index, handle, next_reg, records) {
   token = tokens[token_index]
   start = token_start(token) + 1
   length = token_length(token) - 2
@@ -689,12 +1035,12 @@ thought parse_string(source, tokens, token_index, handle, next_reg) {
   pack(token_index + 1, next_reg + 1, result_reg)
 }
 
-thought parse_list(source, tokens, token_index, handle, next_reg, names, regs, size) {
+thought parse_list(source, tokens, token_index, handle, next_reg, names, regs, size, records) {
   token_index = token_index + 1
   values = []
   while token_type(tokens[token_index]) != 9 {
     if token_type(tokens[token_index]) == 26 { fail_token("unterminated list literal", tokens, token_index) }
-    parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
+    parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size, records)
     value_reg = packed_result(parsed)
     next_reg = packed_next(parsed)
     values = values + [value_reg]
@@ -716,19 +1062,19 @@ thought parse_list(source, tokens, token_index, handle, next_reg, names, regs, s
   pack(token_index, next_reg + 1, result_reg)
 }
 
-thought parse_map(source, tokens, token_index, handle, next_reg, names, regs, size) {
+thought parse_map(source, tokens, token_index, handle, next_reg, names, regs, size, records) {
   token_index = token_index + 1
   values = []
   while token_type(tokens[token_index]) != 7 {
     if token_type(tokens[token_index]) == 26 { fail_token("unterminated map literal", tokens, token_index) }
-    parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
+    parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size, records)
     key_reg = packed_result(parsed)
     next_reg = packed_next(parsed)
     values = values + [key_reg]
     token_index = packed_index(parsed)
     if token_type(tokens[token_index]) != 12 { fail_token("expected : in map literal", tokens, token_index) }
     token_index = token_index + 1
-    parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
+    parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size, records)
     value_reg = packed_result(parsed)
     next_reg = packed_next(parsed)
     values = values + [value_reg]
@@ -765,6 +1111,11 @@ thought function_info(source, tokens, target_hash) {
   while token_type(tokens[token_index]) != 26 {
     if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
     token = tokens[token_index]
+    if is_record_decl(source, tokens, token_index) {
+      declaration = record_declaration(source, tokens, token_index)
+      token_index = declaration[0]
+      continue
+    }
     if is_module_import_decl(source, tokens, token_index) {
       module = parse_module_import_decl(source, tokens, token_index)
       token_index = module[0]
@@ -807,6 +1158,11 @@ thought import_info(source, tokens, target_hash) {
   while token_type(tokens[token_index]) != 26 {
     if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
     token = tokens[token_index]
+    if is_record_decl(source, tokens, token_index) {
+      declaration = record_declaration(source, tokens, token_index)
+      token_index = declaration[0]
+      continue
+    }
     if is_module_import_decl(source, tokens, token_index) {
       module = parse_module_import_decl(source, tokens, token_index)
       token_index = module[0]
@@ -833,6 +1189,11 @@ thought runtime_import_info(source, tokens, name_token) {
   while token_type(tokens[token_index]) != 26 {
     if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
     token = tokens[token_index]
+    if is_record_decl(source, tokens, token_index) {
+      declaration = record_declaration(source, tokens, token_index)
+      token_index = declaration[0]
+      continue
+    }
     if is_module_import_decl(source, tokens, token_index) {
       module = parse_module_import_decl(source, tokens, token_index)
       alias_size = source_len(module[2])
@@ -875,15 +1236,15 @@ thought runtime_import_info(source, tokens, name_token) {
 thought info_arity(info) { info / 1000000 }
 thought info_index(info) { info % 1000000 - 1 }
 
-thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs, size) {
+thought parse_atom(source, tokens, token_index, handle, next_reg, names, regs, size, records) {
   token = tokens[token_index]
   type = token_type(token)
-  if type == 1 { return parse_number(source, tokens, token_index, handle, next_reg) }
-  if type == 2 { return parse_string(source, tokens, token_index, handle, next_reg) }
-  if type == 8 { return parse_list(source, tokens, token_index, handle, next_reg, names, regs, size) }
-  if type == 6 { return parse_map(source, tokens, token_index, handle, next_reg, names, regs, size) }
+  if type == 1 { return parse_number(source, tokens, token_index, handle, next_reg, records) }
+  if type == 2 { return parse_string(source, tokens, token_index, handle, next_reg, records) }
+  if type == 8 { return parse_list(source, tokens, token_index, handle, next_reg, names, regs, size, records) }
+  if type == 6 { return parse_map(source, tokens, token_index, handle, next_reg, names, regs, size, records) }
   if type == 25 {
-    parsed = parse_primary(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+    parsed = parse_primary(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
     token_index = packed_index(parsed)
     next_reg = packed_next(parsed)
     result_reg = next_reg
@@ -904,7 +1265,7 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
       builder_emit(handle, 1, result_reg, 0, 0, 0 - value)
       return pack(token_index + 2, next_reg + 1, result_reg)
     }
-    parsed = parse_primary(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+    parsed = parse_primary(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
     token_index = packed_index(parsed)
     next_reg = packed_next(parsed)
     value_reg = packed_result(parsed)
@@ -917,15 +1278,19 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
     return pack(token_index, next_reg, result_reg)
   }
   if type == 4 {
-    parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+    parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
     token_index = packed_index(parsed)
     if token_type(tokens[token_index]) != 5 { fail_token("expected ) after expression", tokens, token_index) }
     token_index = token_index + 1
     return pack(token_index, packed_next(parsed), packed_result(parsed))
   }
   if type == 3 {
+    if token_type(tokens[token_index + 1]) == 6 {
+      record_slot = record_lookup(records, token_text(source, token))
+      if record_slot > 0 { return parse_record(source, tokens, token_index, handle, next_reg, names, regs, size, records, record_slot) }
+    }
     if is_kw(source, token, 3, 110, 111, 116, 0, 0, 0, 0, 0) {
-      parsed = parse_primary(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+      parsed = parse_primary(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
       token_index = packed_index(parsed)
       next_reg = packed_next(parsed)
       result_reg = next_reg
@@ -948,11 +1313,11 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
       return pack(token_index + 1, next_reg + 1, result_reg)
     }
     if is_zh_kw(source, token, 229, 173, 152) {
-      key_parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+      key_parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
       token_index = packed_index(key_parsed)
       next_reg = packed_next(key_parsed)
       key_reg = packed_result(key_parsed)
-      value_parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
+      value_parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size, records)
       token_index = packed_index(value_parsed)
       next_reg = packed_next(value_parsed)
       value_reg = packed_result(value_parsed)
@@ -966,7 +1331,7 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
       return pack(token_index, next_reg + 1, result_reg)
     }
     if is_zh_kw(source, token, 229, 143, 150) {
-      key_parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+      key_parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
       token_index = packed_index(key_parsed)
       next_reg = packed_next(key_parsed)
       key_reg = packed_result(key_parsed)
@@ -978,7 +1343,7 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
       return pack(token_index, next_reg + 1, result_reg)
     }
     if is_zh_kw(source, token, 229, 191, 152) {
-      key_parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+      key_parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
       token_index = packed_index(key_parsed)
       next_reg = packed_next(key_parsed)
       key_reg = packed_result(key_parsed)
@@ -992,8 +1357,8 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
     name_hash = source_hash(source, token_start(token), token_length(token))
     token_index = token_index + 1
     if token_type(tokens[token_index]) == 4 {
-      if token_length(token) == 5 and source_byte(source, token_start(token)) == 107 and source_byte(source, token_start(token) + 1) == 101 and source_byte(source, token_start(token) + 2) == 121 and source_byte(source, token_start(token) + 3) == 115 {
-        parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+      if is_kw(source, token, 4, 107, 101, 121, 115, 0, 0, 0, 0) {
+        parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
         value_reg = packed_result(parsed)
         next_reg = packed_next(parsed)
         token_index = packed_index(parsed)
@@ -1004,7 +1369,7 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
         return pack(token_index, next_reg + 1, result_reg)
       }
       if token_length(token) == 3 and source_byte(source, token_start(token)) == 108 and source_byte(source, token_start(token) + 1) == 101 and source_byte(source, token_start(token) + 2) == 110 {
-        parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+        parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
         value_reg = packed_result(parsed)
         next_reg = packed_next(parsed)
         token_index = packed_index(parsed)
@@ -1028,7 +1393,7 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
           token_index = token_index + 1
           if token_type(tokens[token_index]) == 5 { fail_token("expected bind capture", tokens, token_index) }
           while token_type(tokens[token_index]) != 5 {
-            parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
+            parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size, records)
             captures = captures + [packed_result(parsed)]
             next_reg = packed_next(parsed)
             token_index = packed_index(parsed)
@@ -1054,7 +1419,7 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
       arguments = []
       while token_type(tokens[token_index]) != 5 {
         if token_type(tokens[token_index]) == 26 { fail_token("unterminated argument list", tokens, token_index) }
-        parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
+        parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size, records)
         argument_reg = packed_result(parsed)
         next_reg = packed_next(parsed)
         arguments = arguments + [argument_reg]
@@ -1111,8 +1476,9 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
       builder_emit(handle, 38, result_reg, 0, 0, info_index(call_info))
       next_reg = next_reg + 1
     }
+    if len(records) > 0 { return pack(token_index, next_reg, result_reg) }
     while token_type(tokens[token_index]) == 8 {
-      parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+      parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
       token_index = packed_index(parsed)
       next_reg = packed_next(parsed)
       index_reg = packed_result(parsed)
@@ -1143,8 +1509,8 @@ thought parse_primary(source, tokens, token_index, handle, next_reg, names, regs
   fail_at("expected expression", token_start(token))
 }
 
-thought parse_multiplicative(source, tokens, token_index, handle, next_reg, names, regs, size) {
-  parsed = parse_primary(source, tokens, token_index, handle, next_reg, names, regs, size)
+thought parse_multiplicative(source, tokens, token_index, handle, next_reg, names, regs, size, records) {
+  parsed = parse_primary(source, tokens, token_index, handle, next_reg, names, regs, size, records)
   token_index = packed_index(parsed)
   next_reg = packed_next(parsed)
   result_reg = packed_result(parsed)
@@ -1152,7 +1518,7 @@ thought parse_multiplicative(source, tokens, token_index, handle, next_reg, name
     opcode = 5
     if token_type(tokens[token_index]) == 16 { opcode = 6 }
     if token_type(tokens[token_index]) == 17 { opcode = 18 }
-    parsed = parse_primary(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+    parsed = parse_primary(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
     token_index = packed_index(parsed)
     next_reg = packed_next(parsed)
     value_reg = packed_result(parsed)
@@ -1164,8 +1530,8 @@ thought parse_multiplicative(source, tokens, token_index, handle, next_reg, name
   pack(token_index, next_reg, result_reg)
 }
 
-thought parse_additive(source, tokens, token_index, handle, next_reg, names, regs, size) {
-  parsed = parse_multiplicative(source, tokens, token_index, handle, next_reg, names, regs, size)
+thought parse_additive(source, tokens, token_index, handle, next_reg, names, regs, size, records) {
+  parsed = parse_multiplicative(source, tokens, token_index, handle, next_reg, names, regs, size, records)
   token_index = packed_index(parsed)
   next_reg = packed_next(parsed)
   result_reg = packed_result(parsed)
@@ -1173,7 +1539,7 @@ thought parse_additive(source, tokens, token_index, handle, next_reg, names, reg
     opcode = 3
     if token_type(tokens[token_index]) == 14 { opcode = 4 }
     if opcode == 3 and token_type(tokens[token_index + 1]) == 8 {
-      parsed = parse_expression(source, tokens, token_index + 2, handle, next_reg, names, regs, size)
+      parsed = parse_expression(source, tokens, token_index + 2, handle, next_reg, names, regs, size, records)
       token_index = packed_index(parsed)
       next_reg = packed_next(parsed)
       if token_type(tokens[token_index]) == 9 {
@@ -1183,7 +1549,7 @@ thought parse_additive(source, tokens, token_index, handle, next_reg, names, reg
       }
       fail_token("list append expects one value", tokens, token_index)
     }
-    parsed = parse_multiplicative(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+    parsed = parse_multiplicative(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
     token_index = packed_index(parsed)
     next_reg = packed_next(parsed)
     value_reg = packed_result(parsed)
@@ -1195,15 +1561,15 @@ thought parse_additive(source, tokens, token_index, handle, next_reg, names, reg
   pack(token_index, next_reg, result_reg)
 }
 
-thought parse_comparison(source, tokens, token_index, handle, next_reg, names, regs, size) {
-  parsed = parse_additive(source, tokens, token_index, handle, next_reg, names, regs, size)
+thought parse_comparison(source, tokens, token_index, handle, next_reg, names, regs, size, records) {
+  parsed = parse_additive(source, tokens, token_index, handle, next_reg, names, regs, size, records)
   token_index = packed_index(parsed)
   next_reg = packed_next(parsed)
   result_reg = packed_result(parsed)
   type = token_type(tokens[token_index])
   if type < 19 or type > 24 { return pack(token_index, next_reg, result_reg) }
   opcode = type
-  parsed = parse_additive(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+  parsed = parse_additive(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
   token_index = packed_index(parsed)
   next_reg = packed_next(parsed)
   value_reg = packed_result(parsed)
@@ -1212,13 +1578,13 @@ thought parse_comparison(source, tokens, token_index, handle, next_reg, names, r
   pack(token_index, next_reg + 1, combined_reg)
 }
 
-thought parse_and(source, tokens, token_index, handle, next_reg, names, regs, size) {
-  parsed = parse_comparison(source, tokens, token_index, handle, next_reg, names, regs, size)
+thought parse_and(source, tokens, token_index, handle, next_reg, names, regs, size, records) {
+  parsed = parse_comparison(source, tokens, token_index, handle, next_reg, names, regs, size, records)
   token_index = packed_index(parsed)
   next_reg = packed_next(parsed)
   result_reg = packed_result(parsed)
   while token_type(tokens[token_index]) == 3 and is_kw(source, tokens[token_index], 3, 97, 110, 100, 0, 0, 0, 0, 0) {
-    parsed = parse_comparison(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+    parsed = parse_comparison(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
     token_index = packed_index(parsed)
     next_reg = packed_next(parsed)
     value_reg = packed_result(parsed)
@@ -1230,13 +1596,13 @@ thought parse_and(source, tokens, token_index, handle, next_reg, names, regs, si
   pack(token_index, next_reg, result_reg)
 }
 
-thought parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size) {
-  parsed = parse_and(source, tokens, token_index, handle, next_reg, names, regs, size)
+thought parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size, records) {
+  parsed = parse_and(source, tokens, token_index, handle, next_reg, names, regs, size, records)
   token_index = packed_index(parsed)
   next_reg = packed_next(parsed)
   result_reg = packed_result(parsed)
   while token_type(tokens[token_index]) == 3 and is_kw(source, tokens[token_index], 2, 111, 114, 0, 0, 0, 0, 0, 0) {
-    parsed = parse_and(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+    parsed = parse_and(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
     token_index = packed_index(parsed)
     next_reg = packed_next(parsed)
     value_reg = packed_result(parsed)
@@ -1295,8 +1661,8 @@ thought if_tail_end(source, tokens, body_index) {
   token_index
 }
 
-thought parse_if_statement(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size, implicit_return) {
-  parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+thought parse_if_statement(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size, implicit_return, records) {
+  parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
   token_index = packed_index(parsed)
   next_reg = packed_next(parsed)
   condition_reg = packed_result(parsed)
@@ -1310,7 +1676,7 @@ thought parse_if_statement(source, tokens, token_index, handle, next_reg, names,
   builder_emit(handle, 10, 0, condition_reg, 0, 0)
   zero_branch = builder_position(handle)
   builder_emit(handle, 11, 0, condition_reg, 0, 0)
-  parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size, branch_implicit_return)
+  parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size, branch_implicit_return, records)
   token_index = packed_index(parsed)
   next_reg = packed_next(parsed)
   if token_type(tokens[token_index]) != 7 { fail_token("expected } after if body", tokens, token_index) }
@@ -1323,13 +1689,13 @@ thought parse_if_statement(source, tokens, token_index, handle, next_reg, names,
     builder_patch(handle, zero_branch, alternate_start)
     token_index = skip_lines(tokens, token_index + 1)
     if token_type(tokens[token_index]) == 3 and (is_kw(source, tokens[token_index], 2, 105, 102, 0, 0, 0, 0, 0, 0) or is_zh_kw(source, tokens[token_index], 232, 139, 165)) {
-      parsed = parse_if_statement(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size, branch_implicit_return)
+      parsed = parse_if_statement(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size, branch_implicit_return, records)
       token_index = packed_index(parsed)
       next_reg = packed_next(parsed)
     } else {
       if token_type(tokens[token_index]) != 6 { fail_token("expected { after else", tokens, token_index) }
       token_index = token_index + 1
-      parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size, branch_implicit_return)
+      parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size, branch_implicit_return, records)
       token_index = packed_index(parsed)
       next_reg = packed_next(parsed)
       if token_type(tokens[token_index]) != 7 { fail_token("expected } after else body", tokens, token_index) }
@@ -1344,7 +1710,7 @@ thought parse_if_statement(source, tokens, token_index, handle, next_reg, names,
   pack(token_index, next_reg, 0)
 }
 
-thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size, implicit_return) {
+thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size, implicit_return, records) {
   result_reg = 0
   while token_type(tokens[token_index]) != 7 and token_type(tokens[token_index]) != 26 {
     token = tokens[token_index]
@@ -1366,7 +1732,7 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
         continue
       }
       if is_kw(source, token, 5, 116, 104, 114, 111, 119, 0, 0, 0) or is_zh_kw(source, token, 230, 138, 155) {
-        parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+        parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
         token_index = packed_index(parsed)
         next_reg = packed_next(parsed)
         result_reg = packed_result(parsed)
@@ -1380,7 +1746,7 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
         token_index = token_index + 1
         try_begin = builder_position(handle)
         builder_emit(handle, 31, 0, 0, 0, 0)
-        parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size, 1 != 1)
+        parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size, 1 != 1, records)
         token_index = packed_index(parsed)
         next_reg = packed_next(parsed)
         builder_emit(handle, 32, 0, 0, 0, 0)
@@ -1406,7 +1772,7 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
           catch_start = builder_position(handle)
           builder_patch(handle, try_begin, catch_start)
           builder_emit(handle, 34, catch_reg, 0, 0, 0)
-          parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size, 1 != 1)
+          parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size, 1 != 1, records)
           token_index = packed_index(parsed)
           next_reg = packed_next(parsed)
           if token_type(tokens[token_index]) != 7 { fail_token("expected } after catch body", tokens, token_index) }
@@ -1419,13 +1785,13 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
         continue
       }
       if is_kw(source, token, 2, 105, 102, 0, 0, 0, 0, 0, 0) or is_zh_kw(source, token, 232, 139, 165) {
-        parsed = parse_if_statement(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size, implicit_return)
+        parsed = parse_if_statement(source, tokens, token_index, handle, next_reg, names, regs, loop_depth, size, implicit_return, records)
         token_index = packed_index(parsed)
         next_reg = packed_next(parsed)
         continue
       }
       if is_kw(source, token, 6, 114, 101, 116, 117, 114, 110, 0, 0) or is_zh_kw(source, token, 232, 191, 148) {
-        parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+        parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
         token_index = packed_index(parsed)
         next_reg = packed_next(parsed)
         result_reg = packed_result(parsed)
@@ -1449,7 +1815,7 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
         }
         if token_type(tokens[token_index]) != 3 or not (is_kw(source, tokens[token_index], 2, 105, 110, 0, 0, 0, 0, 0, 0) or is_zh_kw(source, tokens[token_index], 228, 186, 142)) { fail_token("expected in after for variable", tokens, token_index) }
         token_index = token_index + 1
-        parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
+        parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size, records)
         token_index = packed_index(parsed)
         next_reg = packed_next(parsed)
         list_reg = packed_result(parsed)
@@ -1494,7 +1860,7 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
           builder_emit(handle, 30, value_reg, map_reg, item_reg, 0)
         }
         body_start = builder_position(handle)
-        parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth + 1, size, 1 != 1)
+        parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth + 1, size, 1 != 1, records)
         token_index = packed_index(parsed)
         next_reg = packed_next(parsed)
         increment_start = builder_position(handle)
@@ -1514,7 +1880,7 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
       }
       if is_kw(source, token, 5, 119, 104, 105, 108, 101, 0, 0, 0) or is_zh_kw(source, token, 229, 189, 147) {
         loop_start = builder_position(handle)
-        parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+        parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
         token_index = packed_index(parsed)
         next_reg = packed_next(parsed)
         condition_reg = packed_result(parsed)
@@ -1525,7 +1891,7 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
         zero_branch = builder_position(handle)
         builder_emit(handle, 11, 0, condition_reg, 0, 0)
         body_start = builder_position(handle)
-        parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth + 1, size, 1 != 1)
+        parsed = parse_body(source, tokens, token_index, handle, next_reg, names, regs, loop_depth + 1, size, 1 != 1, records)
         token_index = packed_index(parsed)
         next_reg = packed_next(parsed)
         body_end = builder_position(handle)
@@ -1553,12 +1919,13 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
           }
         }
         if token_type(tokens[scan]) == 18 {
+          if local_record(source, tokens, token_index, records) > 0 { fail_token("record fields are immutable", tokens, token_index) }
           object_slot = lookup_slot(names, name_hash)
           if object_slot == 0 { fail_token("undefined identifier", tokens, token_index) }
           object_reg = regs[object_slot - 1]
           token_index = token_index + 1
           while token_type(tokens[token_index]) == 8 {
-            parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+            parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
             token_index = packed_index(parsed)
             next_reg = packed_next(parsed)
             key_reg = packed_result(parsed)
@@ -1574,7 +1941,7 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
             break
           }
           if token_type(tokens[token_index]) != 18 { fail_token("expected = in index assignment", tokens, token_index) }
-          parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size)
+          parsed = parse_expression(source, tokens, token_index + 1, handle, next_reg, names, regs, size, records)
           token_index = packed_index(parsed)
           next_reg = packed_next(parsed)
           value_reg = packed_result(parsed)
@@ -1584,8 +1951,27 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
           continue
         }
       }
+      if len(records) > 0 and token_type(tokens[token_index + 1]) == 27 {
+        if token_type(tokens[token_index + 2]) != 3 { fail_token("expected field name", tokens, token_index + 2) }
+        if token_type(tokens[token_index + 3]) == 18 {
+          if local_record(source, tokens, token_index, records) > 0 { fail_token("record fields are immutable", tokens, token_index) }
+          slot = lookup_slot(names, name_hash)
+          if slot == 0 { fail_token("undefined identifier", tokens, token_index) }
+          field = tokens[token_index + 2]
+          if token_type(field) != 3 { fail_token("expected field name", tokens, token_index + 2) }
+          data_index = builder_add_string(handle, token_text(source, field))
+          key_reg = next_reg
+          builder_emit(handle, 25, key_reg, 0, 0, data_index)
+          parsed = parse_expression(source, tokens, token_index + 4, handle, next_reg + 1, names, regs, size, records)
+          token_index = packed_index(parsed)
+          next_reg = packed_next(parsed)
+          result_reg = packed_result(parsed)
+          builder_emit(handle, 36, regs[slot - 1], key_reg, result_reg, 0)
+          continue
+        }
+      }
       if token_type(tokens[token_index + 1]) == 18 {
-        parsed = parse_expression(source, tokens, token_index + 2, handle, next_reg, names, regs, size)
+        parsed = parse_expression(source, tokens, token_index + 2, handle, next_reg, names, regs, size, records)
         token_index = packed_index(parsed)
         next_reg = packed_next(parsed)
         result_reg = packed_result(parsed)
@@ -1607,7 +1993,7 @@ thought parse_body(source, tokens, token_index, handle, next_reg, names, regs, l
         continue
       }
     }
-    parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size)
+    parsed = parse_expression(source, tokens, token_index, handle, next_reg, names, regs, size, records)
     token_index = packed_index(parsed)
     next_reg = packed_next(parsed)
     result_reg = packed_result(parsed)
@@ -1637,11 +2023,17 @@ thought compile_module(source, identified, identity, major, minor, patch) {
     size = source_len(source)
     tokens = tokenize(source, size)
   }
-  validate_declarations(source, tokens)
+  records = collect_records(source, tokens, handle)
+  validate_declarations(source, tokens, records)
   token_index = 0
   while token_type(tokens[token_index]) != 26 {
     if token_type(tokens[token_index]) == 11 { token_index = token_index + 1 continue }
     token = tokens[token_index]
+    if is_record_decl(source, tokens, token_index) {
+      declaration = record_declaration(source, tokens, token_index)
+      token_index = declaration[0]
+      continue
+    }
     if is_module_import_decl(source, tokens, token_index) {
       module = parse_module_import_decl(source, tokens, token_index)
       token_index = module[0]
@@ -1689,7 +2081,7 @@ thought compile_module(source, identified, identity, major, minor, patch) {
     if token_type(tokens[token_index]) != 6 { fail_token("expected function body", tokens, token_index) }
     token_index = token_index + 1
     builder_begin(handle, param_count, 4096)
-    parsed = parse_body(source, tokens, token_index, handle, param_count, names, regs, 0, size, 1 == 1)
+    parsed = parse_body(source, tokens, token_index, handle, param_count, names, regs, 0, size, 1 == 1, records)
     token_index = packed_index(parsed)
     next_reg = packed_next(parsed)
     builder_emit(handle, 0, 0, 0, 0, 0)

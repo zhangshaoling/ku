@@ -21,6 +21,20 @@ git push origin v1.1.0
 
 本地可提前验证安装包。
 
+## 先发布 Windows
+
+需要先提供 Windows 附件时，使用独立的 `Windows Release` 工作流，不先手工推送标签：
+
+```sh
+gh workflow run windows-release.yml --ref main -f version=1.2.0
+```
+
+先按上述版本准备步骤通过 PR 合入主干。该工作流固定检出触发时的主干提交，核对共享
+版本，重新构建 Windows、执行功能 CTest 和 Python 集成测试、打包并验证解压 SDK。
+通过后用工作流 token 在该提交创建版本标签和 Release，仅上传 Windows ZIP 与 SHA-256。
+由工作流 token 创建标签不触发另一轮标签发布工作流；原三平台 CI 与发布入口仍保留。
+发布说明必须明确本次只包含 Windows，其他平台不得以旧包冒充新版本。
+
 ```powershell
 . .\tools\activate_toolchain.ps1
 cmake --build kernel/out/cmake --parallel 2

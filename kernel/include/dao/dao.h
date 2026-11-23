@@ -39,7 +39,8 @@ typedef enum dao_status {
     DAO_MODULE_IDENTITY_MISSING = 13,
     DAO_MODULE_CONFLICT = 14,
     DAO_MODULE_CYCLE = 15,
-    DAO_MODULE_VERSION_MISMATCH = 16
+    DAO_MODULE_VERSION_MISMATCH = 16,
+    DAO_UNSUPPORTED_FEATURE = 17
 } dao_status;
 
 typedef enum dao_value_type {
@@ -51,7 +52,8 @@ typedef enum dao_value_type {
     DAO_VALUE_LIST = 5,
     DAO_VALUE_MAP = 6,
     DAO_VALUE_FUNCTION = 7,
-    DAO_VALUE_CLOSURE = 8
+    DAO_VALUE_CLOSURE = 8,
+    DAO_VALUE_RECORD = 9
 } dao_value_type;
 
 typedef struct dao_value {
@@ -67,6 +69,8 @@ typedef struct dao_bytes {
     const uint8_t* data;
     size_t size;
 } dao_bytes;
+
+#define DAO_FEATURE_RECORDS UINT64_C(1)
 
 typedef struct dao_vm_config {
     uint32_t struct_size;
@@ -132,6 +136,20 @@ DAO_API dao_status dao_value_map_set(dao_vm* vm, dao_value* map, dao_bytes utf8_
 DAO_API dao_vm_config dao_vm_config_default(void);
 DAO_API dao_vm* dao_vm_create(const dao_vm_config* config);
 DAO_API void dao_vm_destroy(dao_vm* vm);
+DAO_API dao_status dao_vm_set_features(dao_vm* vm, uint64_t features);
+DAO_API dao_status dao_vm_get_features(const dao_vm* vm, uint64_t* out_features);
+DAO_API dao_status dao_module_required_features(const dao_module* module, uint64_t* out_features);
+DAO_API dao_status dao_module_record_count(const dao_module* module, uint32_t* out_count);
+DAO_API dao_status dao_module_record_name(const dao_module* module, uint32_t type_index, dao_bytes* out_name);
+DAO_API dao_status dao_module_record_field_count(const dao_module* module, uint32_t type_index, uint32_t* out_count);
+DAO_API dao_status dao_module_record_field_info(const dao_module* module, uint32_t type_index,
+                                               uint32_t slot, dao_bytes* out_name, uint32_t* out_value_type);
+/* Returned owner is retained; release it with dao_module_release. Record values
+   remain VM-generation values and cannot be reused as top-level arguments. */
+DAO_API dao_status dao_value_record_type(const dao_vm* vm, const dao_value* record,
+                                         dao_module** out_owner, uint32_t* out_type_index);
+DAO_API dao_status dao_value_record_get(const dao_vm* vm, const dao_value* record,
+                                        uint32_t slot, dao_value* out_value);
 DAO_API dao_status dao_vm_get_cache_stats(const dao_vm* vm, dao_cache_stats* out_stats);
 DAO_API dao_status dao_vm_clear_module_cache(dao_vm* vm);
 DAO_API dao_status dao_vm_set_module_cache_capacity(dao_vm* vm, uint32_t capacity);

@@ -18,7 +18,9 @@ namespace dao::store {
 // provenance are immutable; the manifest publishes last. See MODULE_ABI.md.
 class ModuleStore {
   public:
-    explicit ModuleStore(std::filesystem::path root);
+    // Applied to every validation VM; runtime linking/execution need their own policy.
+    // Unknown feature bits throw std::invalid_argument. Manifests remain schema 1.
+    explicit ModuleStore(std::filesystem::path root, uint64_t features = 0);
 
     dao_status save(const std::vector<uint8_t>& bytes, std::string_view source = {},
                     dao_error* error = nullptr) const;
@@ -41,6 +43,7 @@ class ModuleStore {
                            std::string_view parent_identity, SemanticVersion parent_version,
                            dao_error* error) const;
     std::filesystem::path root_;
+    uint64_t features_;
 };
 
 } // namespace dao::store

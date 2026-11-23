@@ -3,6 +3,7 @@
 #include <charconv>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -26,20 +27,32 @@ bool version(std::string_view text, dao::SemanticVersion* out) {
 }
 }
 int main(int argc, char** argv) {
-    if (argc < 5) { std::cerr << "usage: dao-module <verify|recall|run> STORE ID VERSION [EXPORT]\n"; return EXIT_FAILURE; }
-    const std::string command = argv[1];
+    int first = 1;
+    const bool enable_records = argc > first && std::string_view(argv[first]) == "--enable-records";
+    if (enable_records) ++first;
+    if (argc < first + 4) { std::cerr << "usage: dao-module [--enable-records] <verify|recall|run> STORE ID VERSION [EXPORT]\n"; return EXIT_FAILURE; }
+    const std::string command = argv[first];
     dao::SemanticVersion v{};
-    if (!version(argv[4], &v)) { std::cerr << "invalid version\n"; return EXIT_FAILURE; }
-    dao::store::ModuleStore store(argv[2]);
+    if (!version(argv[first + 3], &v)) { std::cerr << "invalid version\n"; return EXIT_FAILURE; }
+    const uint64_t features = enable_records ? DAO_FEATURE_RECORDS : 0;
+    dao::store::ModuleStore store(argv[first + 1], features);
     dao_error error{};
     std::vector<uint8_t> bytes;
-    if (store.load(argv[3], v, &bytes, &error) != DAO_OK) { std::cerr << error.message << '\n'; return EXIT_FAILURE; }
+    if (store.load(argv[first + 2], v, &bytes, &error) != DAO_OK) { std::cerr << error.message << '\n'; return EXIT_FAILURE; }
     if (command == "verify") { std::cout << "verified " << bytes.size() << " bytes\n"; return EXIT_SUCCESS; }
-    if (argc < 6) { std::cerr << "export name required\n"; return EXIT_FAILURE; }
-    dao_vm_config config = dao_vm_config_default(); dao_vm* vm = dao_vm_create(&config); if (!vm) return EXIT_FAILURE;
+    if (argc < first + 5) { std::cerr << "export name required\n"; return EXIT_FAILURE; }
+    dao_vm_config config = dao_vm_config_default();
+    std::unique_ptr<dao_vm, decltype(&dao_vm_destroy)> vm(dao_vm_create(&config), dao_vm_destroy);
+    if (!vm || dao_vm_set_features(vm.get(), features) != DAO_OK) return EXIT_FAILURE;
     dao_module* module = nullptr;
-    if (dao_vm_load_module(vm, {bytes.data(), bytes.size()}, &module, &error) != DAO_OK) return EXIT_FAILURE;
-    dao_function fn{}; if (dao_module_find_export(module, symbol(argv[5]), &fn) != DAO_OK) return EXIT_FAILURE;
-    dao_value result{}; if (dao_vm_call(vm, module, fn, nullptr, 0, &result, &error) != DAO_OK) { std::cerr << error.message << '\n'; return EXIT_FAILURE; }
-    std::cout << result.payload << '\n'; dao_module_release(module); dao_vm_destroy(vm); return EXIT_SUCCESS;
+    if (dao_vm_load_module(vm.get(), {bytes.data(), bytes.size()}, &module, &error) != DAO_OK) return EXIT_FAILURE;
+    std::unique_ptr<dao_module, decltype(&dao_module_release)> owner(module, dao_module_release);
+    dao_function fn{}; if (dao_module_find_export(module, symbol(argv[first + 4]), &fn) != DAO_OK) return EXIT_FAILURE;
+    dao_value result{}; if (dao_vm_call(vm.get(), module, fn, nullptr, 0, &result, &error) != DAO_OK) { std::cerr << error.message << '\n'; return EXIT_FAILURE; }
+    if (result.type == DAO_VALUE_RECORD || (enable_records &&
+        (result.type == DAO_VALUE_LIST || result.type == DAO_VALUE_MAP))) {
+        std::cerr << "Record and container results require the C ABI query interface\n";
+        return EXIT_FAILURE;
+    }
+    std::cout << result.payload << '\n'; return EXIT_SUCCESS;
 }
