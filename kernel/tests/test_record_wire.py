@@ -1,12 +1,19 @@
 """Run the reviewed R0 byte fixtures against the production C ABI."""
 import ctypes as c
 import json
+import os
 from pathlib import Path
 import sys
 import unittest
 
 
-LIBRARY = c.CDLL(str(Path(sys.argv[1]).resolve()))
+library_path = Path(sys.argv[1]).resolve()
+DLL_DIRECTORIES = []
+if os.name == "nt":
+    for directory in [library_path.parent, *(Path(path) for path in
+                      os.environ.get("DAO_KERNEL_DLL_DIRS", "").split(os.pathsep) if path)]:
+        DLL_DIRECTORIES.append(os.add_dll_directory(str(directory)))
+LIBRARY = c.CDLL(str(library_path))
 FIXTURES = Path(sys.argv[2])
 
 

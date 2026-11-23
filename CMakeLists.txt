@@ -588,6 +588,7 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_SOURCE_DIR}/kernel/tests/test_record_wire.py" "$<TARGET_FILE:dao_kernel>"
         "${CMAKE_SOURCE_DIR}/docs/fixtures/record_r0")
     set_tests_properties(record_wire_contract PROPERTIES
+        ENVIRONMENT "DAO_KERNEL_DLL_DIRS=${DAO_COMPILER_DIR}"
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${DAO_COMPILER_DIR}")
     add_test(NAME ku_config_cli COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_SOURCE_DIR}/kernel/tests/test_config_cli.py" "$<TARGET_FILE:ku-config>")

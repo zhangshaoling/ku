@@ -13,7 +13,7 @@ class CompilerDiagnostics(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="ku-diagnostics-")
         self.addCleanup(self.temporary.cleanup)
-        self.directory = Path(self.temporary.name)
+        self.directory = Path(self.temporary.name).resolve()
 
     def write(self, name, source):
         path = self.directory / name
