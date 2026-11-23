@@ -7,12 +7,28 @@ import os
 from pathlib import Path
 
 DAO_OK = 0
+DAO_UNSUPPORTED_FEATURE = 17
+DAO_FEATURE_RECORDS = 1
 DAO_VALUE_NULL = 0
 DAO_VALUE_I64 = 1
+DAO_VALUE_TRIT = 2
 DAO_VALUE_BYTES = 3
 DAO_VALUE_STRING = 4
 DAO_VALUE_LIST = 5
 DAO_VALUE_MAP = 6
+DAO_VALUE_RECORD = 9
+
+
+def _feature_mask(features: int) -> int:
+    if not isinstance(features, int) or features < 0 or features & ~DAO_FEATURE_RECORDS:
+        raise ValueError("unknown kernel feature mask")
+    return features
+
+
+def _record_index(index: int) -> int:
+    if not isinstance(index, int) or not 0 <= index <= 0xFFFFFFFF:
+        raise ValueError("Record index must fit uint32")
+    return index
 
 
 class DaoBytes(c.Structure):
@@ -45,7 +61,8 @@ class DaoKernelError(RuntimeError):
 
 
 class Runtime:
-    def __init__(self, library: str | Path):
+    def __init__(self, library: str | Path, *, features: int = 0):
+        features = _feature_mask(features)
         library = Path(library).resolve()
         self._dll_dirs = []
         self._host_callbacks = {}
@@ -58,14 +75,31 @@ class Runtime:
         self._vm = self._lib.dao_vm_create(c.byref(config))
         if not self._vm:
             raise DaoKernelError("dao_vm_create failed")
+        try:
+            self.set_features(features)
+        except Exception:
+            self.close()
+            raise
 
     def _bind(self) -> None:
         lib = self._lib
         lib.dao_vm_config_default.restype = DaoConfig
         lib.dao_vm_create.argtypes = [c.POINTER(DaoConfig)]; lib.dao_vm_create.restype = c.c_void_p
         lib.dao_vm_destroy.argtypes = [c.c_void_p]
+        lib.dao_vm_destroy.restype = None
+        lib.dao_vm_set_features.argtypes = [c.c_void_p, c.c_uint64]
+        lib.dao_vm_get_features.argtypes = [c.c_void_p, c.POINTER(c.c_uint64)]
+        lib.dao_module_required_features.argtypes = [c.c_void_p, c.POINTER(c.c_uint64)]
+        lib.dao_module_record_count.argtypes = [c.c_void_p, c.POINTER(c.c_uint32)]
+        lib.dao_module_record_name.argtypes = [c.c_void_p, c.c_uint32, c.POINTER(DaoBytes)]
+        lib.dao_module_record_field_count.argtypes = [c.c_void_p, c.c_uint32, c.POINTER(c.c_uint32)]
+        lib.dao_module_record_field_info.argtypes = [c.c_void_p, c.c_uint32, c.c_uint32, c.POINTER(DaoBytes), c.POINTER(c.c_uint32)]
+        lib.dao_value_record_type.argtypes = [c.c_void_p, c.POINTER(DaoValue), c.POINTER(c.c_void_p), c.POINTER(c.c_uint32)]
+        lib.dao_value_record_get.argtypes = [c.c_void_p, c.POINTER(DaoValue), c.c_uint32, c.POINTER(DaoValue)]
+        lib.dao_vm_clear_module_cache.argtypes = [c.c_void_p]
         lib.dao_vm_load_module.argtypes = [c.c_void_p, DaoBytes, c.POINTER(c.c_void_p), c.POINTER(DaoError)]
         lib.dao_module_release.argtypes = [c.c_void_p]
+        lib.dao_module_release.restype = None
         lib.dao_module_find_export.argtypes = [c.c_void_p, c.c_uint32, c.POINTER(c.c_uint32)]
         lib.dao_vm_call.argtypes = [c.c_void_p, c.c_void_p, c.c_uint32, c.POINTER(DaoValue), c.c_size_t, c.POINTER(DaoValue), c.POINTER(DaoError)]
         lib.dao_value_list_size.argtypes = [c.c_void_p, c.POINTER(DaoValue), c.POINTER(c.c_size_t)]
@@ -83,6 +117,35 @@ class Runtime:
         lib.dao_vm_register_host_function.restype = c.c_int
         lib.dao_vm_unregister_host_function.argtypes = [c.c_void_p, c.c_uint32]
         lib.dao_vm_unregister_host_function.restype = c.c_int
+
+    def set_features(self, features: int) -> None:
+        """Set policy before the first accepted load/link/call; the C ABI locks it."""
+        status = self._lib.dao_vm_set_features(self._vm, _feature_mask(features))
+        if status != DAO_OK:
+            raise DaoKernelError(f"set_features failed with status {status}")
+
+    @property
+    def features(self) -> int:
+        mask = c.c_uint64()
+        if self._lib.dao_vm_get_features(self._vm, c.byref(mask)) != DAO_OK:
+            raise DaoKernelError("invalid or closed runtime")
+        return mask.value
+
+    def record_type(self, value: DaoValue) -> tuple["Module", int]:
+        """Return a retained owner and local type index. Close the owner explicitly."""
+        owner, index = c.c_void_p(), c.c_uint32()
+        status = self._lib.dao_value_record_type(self._vm, c.byref(value), c.byref(owner), c.byref(index))
+        if status != DAO_OK:
+            raise DaoKernelError(f"invalid, foreign or stale Record type: {status}")
+        return Module(self, owner), index.value
+
+    def record_get(self, value: DaoValue, slot: int) -> DaoValue:
+        """Read a scalar field. Returned String/Bytes views retain C ABI borrowing rules."""
+        result = DaoValue()
+        status = self._lib.dao_value_record_get(self._vm, c.byref(value), _record_index(slot), c.byref(result))
+        if status != DAO_OK:
+            raise DaoKernelError(f"invalid, foreign or stale Record field: {status}")
+        return result
 
     def register_host_function(self, symbol_id, parameter_count, callback, user_data=None):
         """Register a callback receiving ``(args, count, user_data)``.
@@ -136,11 +199,15 @@ class Runtime:
         return result
 
     def value_text(self, value: DaoValue) -> str:
+        return self.value_bytes(value).decode("utf-8")
+
+    def value_bytes(self, value: DaoValue) -> bytes:
+        """Copy a live borrowed String/Bytes view into Python-owned bytes."""
         view = DaoBytes()
         status = self._lib.dao_value_get_view(c.byref(value), c.byref(view))
         if status != DAO_OK:
             raise DaoKernelError(f"value is not a valid bytes/string view: {status}")
-        return bytes(view.data[:view.size]).decode("utf-8") if view.size else ""
+        return bytes(view.data[:view.size]) if view.size else b""
 
     def load(self, payload: bytes) -> "Module":
         storage = (c.c_uint8 * len(payload)).from_buffer_copy(payload)
@@ -184,11 +251,50 @@ class Runtime:
 
 class Module:
     def __init__(self, runtime: Runtime, handle: c.c_void_p): self._runtime, self._handle = runtime, handle
+
+    @property
+    def required_features(self) -> int:
+        mask = c.c_uint64()
+        if self._runtime._lib.dao_module_required_features(self._handle, c.byref(mask)) != DAO_OK:
+            raise DaoKernelError("invalid or closed module")
+        return mask.value
+
+    @property
+    def record_count(self) -> int:
+        count = c.c_uint32()
+        if self._runtime._lib.dao_module_record_count(self._handle, c.byref(count)) != DAO_OK:
+            raise DaoKernelError("invalid or closed module")
+        return count.value
+
+    def record_name(self, type_index: int) -> str:
+        name = DaoBytes()
+        status = self._runtime._lib.dao_module_record_name(self._handle, _record_index(type_index), c.byref(name))
+        if status != DAO_OK:
+            raise DaoKernelError(f"invalid Record type: {status}")
+        return bytes(name.data[:name.size]).decode("utf-8")
+
+    def record_field_count(self, type_index: int) -> int:
+        count = c.c_uint32()
+        status = self._runtime._lib.dao_module_record_field_count(self._handle, _record_index(type_index), c.byref(count))
+        if status != DAO_OK:
+            raise DaoKernelError(f"invalid Record type: {status}")
+        return count.value
+
+    def record_field_info(self, type_index: int, slot: int) -> tuple[str, int]:
+        name, value_type = DaoBytes(), c.c_uint32()
+        status = self._runtime._lib.dao_module_record_field_info(
+            self._handle, _record_index(type_index), _record_index(slot), c.byref(name), c.byref(value_type))
+        if status != DAO_OK:
+            raise DaoKernelError(f"invalid Record field: {status}")
+        return bytes(name.data[:name.size]).decode("utf-8"), value_type.value
+
     def call_i64(self, symbol: int, *values: int) -> int:
         result = self.call(symbol, *values)
         if result.type != DAO_VALUE_I64: raise DaoKernelError("result is not i64")
         return result.payload
     def call(self, symbol: int, *values) -> DaoValue:
+        if any(not isinstance(value, (int, str)) for value in values):
+            raise DaoKernelError("call accepts only int/str arguments; Record and container handles cannot be reused")
         function = c.c_uint32(); lib = self._runtime._lib
         if lib.dao_module_find_export(self._handle, symbol, c.byref(function)) != DAO_OK:
             raise DaoKernelError(f"export {symbol} not found")

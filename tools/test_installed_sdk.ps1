@@ -9,4 +9,6 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $env:PATH = "$(Join-Path $Sdk 'bin');$env:PATH"
 & (Join-Path $Build "bin\dao_sdk_consumer.exe")
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& (Join-Path $Build "bin\dao_sdk_record_roundtrip.exe")
 exit $LASTEXITCODE

@@ -1,4 +1,5 @@
 #include "dao/format.hpp"
+#include "dao/dao.h"
 
 #include <algorithm>
 #include <limits>
@@ -122,6 +123,34 @@ void ModuleBuilder::add_export(uint32_t symbol_id, uint32_t function_index) {
     exports_.push_back({symbol_id, function_index});
 }
 
+uint32_t ModuleBuilder::add_record_type(std::string_view name) {
+    dao_value view{};
+    if (name.empty() || name.size() > 1024 || name.find('\0') != std::string_view::npos ||
+        dao_value_make_string_view({reinterpret_cast<const uint8_t*>(name.data()), name.size()}, &view) != DAO_OK)
+        throw std::invalid_argument("invalid record type name");
+    if (record_types_.size() >= 1024) throw std::length_error("too many record types");
+    for (const auto& type : record_types_)
+        if (type.name == name) throw std::invalid_argument("duplicate record type");
+    record_types_.push_back({std::string(name), {}});
+    return static_cast<uint32_t>(record_types_.size() - 1);
+}
+
+uint32_t ModuleBuilder::add_record_field(uint32_t type_index, std::string_view name, uint32_t value_type) {
+    dao_value view{};
+    if (type_index >= record_types_.size() || name.empty() || name.size() > 1024 ||
+        name.find('\0') != std::string_view::npos || value_type < DAO_VALUE_I64 || value_type > DAO_VALUE_STRING ||
+        dao_value_make_string_view({reinterpret_cast<const uint8_t*>(name.data()), name.size()}, &view) != DAO_OK)
+        throw std::invalid_argument("invalid record field");
+    auto& fields = record_types_[type_index].fields;
+    size_t total = 0;
+    for (const auto& type : record_types_) total += type.fields.size();
+    if (fields.size() >= 256 || total >= 65536) throw std::length_error("too many record fields");
+    for (const auto& field : fields)
+        if (field.name == name) throw std::invalid_argument("duplicate record field");
+    fields.push_back({std::string(name), value_type});
+    return static_cast<uint32_t>(fields.size() - 1);
+}
+
 std::vector<uint8_t> ModuleBuilder::encode() const {
     if (!has_identity_ && !module_imports_.empty())
         throw std::invalid_argument("module imports require a module identity");
@@ -163,6 +192,20 @@ std::vector<uint8_t> ModuleBuilder::encode() const {
         append_u16(module_imports.bytes, 0);
     }
 
+    SectionBytes record_types{SectionType::RecordTypes, static_cast<uint32_t>(record_types_.size()), {}, 0};
+    SectionBytes record_fields{SectionType::RecordFields, 0, {}, 0};
+    for (const auto& type : record_types_) {
+        append_u32(record_types.bytes, intern_string(type.name));
+        append_u32(record_types.bytes, record_fields.count);
+        append_u32(record_types.bytes, static_cast<uint32_t>(type.fields.size()));
+        append_u32(record_types.bytes, 0);
+        for (const auto& field : type.fields) {
+            append_u32(record_fields.bytes, intern_string(field.name));
+            append_u32(record_fields.bytes, field.value_type);
+            append_u32(record_fields.bytes, 0);
+            ++record_fields.count;
+        }
+    }
     SectionBytes data{SectionType::Data, static_cast<uint32_t>(encoded_strings.size()), {}, 0};
 
     const size_t records_size = encoded_strings.size() * kDataRecordSize;
@@ -196,6 +239,8 @@ std::vector<uint8_t> ModuleBuilder::encode() const {
         append_u32(functions.bytes, 0);
 
         for (const auto& instruction : function.code) {
+            if (record_types_.empty() && instruction.opcode >= Opcode::MakeRecord && instruction.opcode <= Opcode::FieldGet)
+                throw std::invalid_argument("record instructions require record types");
             append_u8(code.bytes, static_cast<uint8_t>(instruction.opcode));
             append_u8(code.bytes, instruction.flags);
             append_u16(code.bytes, instruction.dst);
@@ -227,11 +272,15 @@ std::vector<uint8_t> ModuleBuilder::encode() const {
         sections.push_back(std::move(metadata));
         sections.push_back(std::move(module_imports));
     }
+    if (!record_types_.empty()) {
+        sections.push_back(std::move(record_types));
+        sections.push_back(std::move(record_fields));
+    }
 
     std::vector<uint8_t> out;
     out.insert(out.end(), {'D', 'A', 'O', 0});
-    append_u16(out, has_identity_ ? kFormatVersion : kLegacyFormatVersion);
-    append_u16(out, has_identity_ ? kVmAbiVersion : kLegacyVmAbiVersion);
+    append_u16(out, !record_types_.empty() ? kRecordFormatVersion : has_identity_ ? kFormatVersion : kLegacyFormatVersion);
+    append_u16(out, !record_types_.empty() ? kRecordVmAbiVersion : has_identity_ ? kVmAbiVersion : kLegacyVmAbiVersion);
     append_u32(out, 0);
     append_u32(out, static_cast<uint32_t>(sections.size()));
 

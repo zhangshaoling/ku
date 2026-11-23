@@ -33,6 +33,8 @@ struct ParsedModuleImport {
 };
 
 struct ParsedModule {
+    uint16_t format_version = kLegacyFormatVersion;
+    uint16_t vm_abi_version = kLegacyVmAbiVersion;
     bool has_identity = false;
     std::string identity_name;
     SemanticVersion identity_version{};
@@ -41,6 +43,7 @@ struct ParsedModule {
     std::vector<ParsedFunction> functions;
     std::vector<ParsedExport> exports;
     std::vector<ParsedModuleImport> module_imports;
+    std::vector<RecordTypeDescriptor> record_types;
 };
 
 bool parse_module_text(const std::string& text, ParsedModule* out_module, dao_error* error);

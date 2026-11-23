@@ -16,10 +16,15 @@ enum class Section {
     Imports,
     Exports,
     Strings,
+    RecordTypes,
     Functions,
 };
 
 struct ParsedContext {
+    bool explicit_format = false;
+    bool record_module = false;
+    uint32_t declared_record_count = 0;
+    uint32_t declared_field_count = 0;
     Section section = Section::None;
     uint32_t declared_import_count = 0;
     uint32_t parsed_import_count = 0;
@@ -187,6 +192,7 @@ Opcode parse_opcode(std::string_view token) {
             if (token == "MAKE_LIST" || token == "make_list") return Opcode::MakeList;
             if (token == "MAKE_CLOSURE" || token == "make_closure") return Opcode::MakeClosure;
             if (token == "MAKE_MAP" || token == "make_map") return Opcode::MakeMap;
+            if (token == "MAKE_RECORD" || token == "make_record") return Opcode::MakeRecord;
             if (token == "MAP_KEYS" || token == "map_keys") return Opcode::MapKeys;
             break;
         case 'A':
@@ -236,6 +242,10 @@ Opcode parse_opcode(std::string_view token) {
         case 'r':
             if (token == "RETURN" || token == "return") return Opcode::Return;
             if (token == "REM_I64" || token == "rem_i64") return Opcode::RemI64;
+            if (token == "RECORD_GET" || token == "record_get") return Opcode::RecordGet;
+            break;
+        case 'F': case 'f':
+            if (token == "FIELD_GET" || token == "field_get") return Opcode::FieldGet;
             break;
         case 'E': case 'e': if (token == "EQ_I64" || token == "eq_i64") return Opcode::CompareEqI64; break;
         case 'G': case 'g':
@@ -249,6 +259,38 @@ Opcode parse_opcode(std::string_view token) {
 
 bool is_valid_opcode(std::string_view token) {
     return parse_opcode(token) != Opcode::Nop || token == "NOP" || token == "nop";
+}
+
+bool parse_record_line(std::string_view line, ParsedModule& module, ParsedContext& ctx,
+                       dao_error* error) {
+    const auto fields = split_fields(line);
+    if (fields.empty()) return fail(error, "record: empty declaration");
+    if (fields[0] == "[record") {
+        if (!module.record_types.empty() && module.record_types.back().fields.size() != ctx.declared_field_count)
+            return fail(error, "record field count mismatch");
+        if (fields.size() != 4 || fields[1].back() != ']')
+            return fail(error, "record: expected [record N] name=N fields=N");
+        auto index_text = fields[1]; index_text.remove_suffix(1);
+        auto name_text = fields[2], count_text = fields[3];
+        uint32_t index = 0, name = 0, count = 0;
+        if (!parse_uint32_strict(index_text, index) || index != module.record_types.size() ||
+            !strip_prefix(name_text, "name=") || !parse_uint32_strict(name_text, name) || name >= module.strings.size() ||
+            !strip_prefix(count_text, "fields=") || !parse_uint32_strict(count_text, count) || count > 256)
+            return fail(error, "record: invalid index, name or field count");
+        module.record_types.push_back({name, {}});
+        ctx.declared_field_count = count;
+        return true;
+    }
+    if (fields.size() != 3 || fields[0] != "field" || module.record_types.empty())
+        return fail(error, "record field: expected field name=N type=N");
+    auto name_text = fields[1], type_text = fields[2];
+    uint32_t name = 0, type = 0;
+    if (!strip_prefix(name_text, "name=") || !parse_uint32_strict(name_text, name) || name >= module.strings.size() ||
+        !strip_prefix(type_text, "type=") || !parse_uint32_strict(type_text, type) || type < 1 || type > 4 ||
+        module.record_types.back().fields.size() >= ctx.declared_field_count)
+        return fail(error, "record field: invalid name, scalar type or count");
+    module.record_types.back().fields.push_back({name, type});
+    return true;
 }
 
 bool parse_module_import_line(const std::string& line, ParsedModule& module,
@@ -426,6 +468,20 @@ bool parse_instruction_line(const std::string& line, ParsedContext& ctx, dao_err
     size_t operand_start = opcode_index + 1;
 
     switch (opcode) {
+    case Opcode::MakeRecord:
+    case Opcode::RecordGet:
+    case Opcode::FieldGet: {
+        if (!ctx.record_module) return fail(error, "Record instructions require format: 3 abi=11");
+        uint32_t index = 0;
+        if (fields.size() - operand_start != 4 ||
+            !parse_register(fields[operand_start], instruction.dst) ||
+            !parse_register(fields[operand_start + 1], instruction.a) ||
+            !parse_uint16_strict(fields[operand_start + 2], instruction.b) ||
+            !parse_uint32_strict(fields[operand_start + 3], index))
+            return fail(error, "Record instruction: expected dst, object/base, slot/count, type/name index");
+        instruction.immediate = index;
+        break;
+    }
     case Opcode::Nop:
     case Opcode::TryEnd:
         break;
@@ -728,6 +784,25 @@ bool asm_parse_module(const std::string& text, ParsedModule* out_module, dao_err
             break;
         }
 
+        if (starts_with(trimmed_view, "format:")) {
+            if (ctx.section != Section::None || ctx.explicit_format || out_module->has_identity)
+                return fail(error, "format must appear once before module identity and sections");
+            const auto body = trim(trimmed_view.substr(strlen("format:")));
+            const auto fields = split_fields(body);
+            if (fields.size() != 2) return fail(error, "format: expected VERSION abi=N");
+            auto abi = fields[1];
+            if (!parse_uint16_strict(fields[0], out_module->format_version) ||
+                !strip_prefix(abi, "abi=") || !parse_uint16_strict(abi, out_module->vm_abi_version))
+                return fail(error, "format: invalid version or ABI");
+            const auto version = out_module->format_version, vm_abi = out_module->vm_abi_version;
+            ctx.record_module = version == kRecordFormatVersion && vm_abi == kRecordVmAbiVersion;
+            if (!ctx.record_module && !(version == kLegacyFormatVersion && vm_abi == kLegacyVmAbiVersion) &&
+                !(version == kFormatVersion && vm_abi == kVmAbiVersion))
+                return fail(error, "unsupported format or VM ABI version");
+            ctx.explicit_format = true;
+            continue;
+        }
+
         if (starts_with(trimmed_view, "module:")) {
             if (ctx.section != Section::None || out_module->has_identity)
                 return fail(error, "module identity must appear once before sections");
@@ -783,7 +858,7 @@ bool asm_parse_module(const std::string& text, ParsedModule* out_module, dao_err
         }
 
         if (starts_with(trimmed_view, "functions:")) {
-            if (ctx.section != Section::Strings && ctx.section != Section::Exports) {
+            if (ctx.section != Section::Strings && ctx.section != Section::Exports && ctx.section != Section::RecordTypes) {
                 return fail(error, "unexpected section order");
             }
             std::string_view body = trimmed_view;
@@ -793,6 +868,16 @@ bool asm_parse_module(const std::string& text, ParsedModule* out_module, dao_err
                 return fail(error, "functions: invalid count");
             }
             ctx.section = Section::Functions;
+            continue;
+        }
+
+        if (starts_with(trimmed_view, "record_types:")) {
+            if (!ctx.record_module || ctx.section != Section::Strings)
+                return fail(error, "record_types requires ABI11 and a preceding strings section");
+            if (!parse_uint32_strict(trim(trimmed_view.substr(strlen("record_types:"))), ctx.declared_record_count) ||
+                ctx.declared_record_count == 0 || ctx.declared_record_count > 1024)
+                return fail(error, "record_types: invalid count");
+            ctx.section = Section::RecordTypes;
             continue;
         }
 
@@ -825,6 +910,9 @@ bool asm_parse_module(const std::string& text, ParsedModule* out_module, dao_err
             for (size_t i = 0; i < hex.size(); i += 2) { const int hi = digit(hex[i]); const int lo = digit(hex[i + 1]); if (hi < 0 || lo < 0) return fail(error, "string constant: invalid hex"); value.push_back(static_cast<char>((hi << 4) | lo)); }
             out_module->strings.push_back(std::move(value)); ++ctx.parsed_string_count; break;
         }
+        case Section::RecordTypes:
+            if (!parse_record_line(trimmed_view, *out_module, ctx, error)) return false;
+            break;
         case Section::Functions: {
             std::string t = std::string(trimmed_view);
             if (starts_with(t, "[function") || starts_with(t, "[FUNCTION")) {
@@ -863,6 +951,15 @@ bool asm_parse_module(const std::string& text, ParsedModule* out_module, dao_err
         return fail(error, "function count mismatch");
     }
     if (ctx.parsed_string_count != ctx.declared_string_count) return fail(error, "string count mismatch");
+    if (ctx.record_module && (out_module->record_types.empty() || out_module->record_types.size() != ctx.declared_record_count ||
+        out_module->record_types.back().fields.size() != ctx.declared_field_count))
+        return fail(error, "record type or field count mismatch");
+    if (!ctx.explicit_format && out_module->has_identity) {
+        out_module->format_version = kFormatVersion;
+        out_module->vm_abi_version = kVmAbiVersion;
+    }
+    if (!ctx.record_module && ((out_module->format_version == kFormatVersion) != out_module->has_identity))
+        return fail(error, "module identity does not match format version");
     return true;
 }
 
@@ -884,6 +981,13 @@ bool asm_assemble_to_builder(const std::string& text, ModuleBuilder* builder, da
     }
     for (const auto& value : module.strings) {
         try { builder->add_string(value); } catch (const std::exception& e) { return fail(error, e.what()); }
+    }
+    for (const auto& type : module.record_types) {
+        try {
+            const auto index = builder->add_record_type(module.strings[type.name_index]);
+            for (const auto& field : type.fields)
+                builder->add_record_field(index, module.strings[field.name_index], field.value_type);
+        } catch (const std::exception& e) { return fail(error, e.what()); }
     }
     for (const auto& import : module.imports) {
         try {
@@ -927,6 +1031,17 @@ bool asm_assemble(const std::string& text, std::vector<uint8_t>* out_bytes, dao_
         *out_bytes = builder.encode();
     } catch (const std::exception& e) {
         return fail(error, e.what());
+    }
+    if (out_bytes->size() >= 8 && (*out_bytes)[4] == kRecordFormatVersion) {
+        const dao_vm_config config = dao_vm_config_default();
+        dao_vm* vm = dao_vm_create(&config);
+        if (!vm) return fail(error, "cannot create Record verifier");
+        dao_module* module = nullptr;
+        dao_status status = dao_vm_set_features(vm, DAO_FEATURE_RECORDS);
+        if (status == DAO_OK) status = dao_vm_load_module(vm, {out_bytes->data(), out_bytes->size()}, &module, error);
+        if (module) dao_module_release(module);
+        dao_vm_destroy(vm);
+        if (status != DAO_OK) { out_bytes->clear(); return false; }
     }
     return true;
 }

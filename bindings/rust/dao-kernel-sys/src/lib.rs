@@ -1,4 +1,5 @@
 #![allow(non_camel_case_types)]
+#![no_std]
 use core::ffi::{c_char, c_void};
 
 pub enum dao_vm {}
@@ -19,16 +20,38 @@ pub type dao_function = u32;
 }
 
 pub const DAO_OK: i32 = 0;
+pub const DAO_INVALID_ARGUMENT: i32 = 1;
+pub const DAO_RUNTIME_ERROR: i32 = 11;
+pub const DAO_UNSUPPORTED_FEATURE: i32 = 17;
+pub const DAO_FEATURE_RECORDS: u64 = 1;
+pub const DAO_VALUE_NULL: u32 = 0;
 pub const DAO_VALUE_I64: u32 = 1;
+pub const DAO_VALUE_TRIT: u32 = 2;
 pub const DAO_VALUE_BYTES: u32 = 3;
 pub const DAO_VALUE_STRING: u32 = 4;
 pub const DAO_VALUE_LIST: u32 = 5;
 pub const DAO_VALUE_MAP: u32 = 6;
+pub const DAO_VALUE_RECORD: u32 = 9;
 
 extern "C" {
     pub fn dao_vm_config_default() -> dao_vm_config;
     pub fn dao_vm_create(config: *const dao_vm_config) -> *mut dao_vm;
     pub fn dao_vm_destroy(vm: *mut dao_vm);
+    pub fn dao_vm_set_features(vm: *mut dao_vm, features: u64) -> i32;
+    pub fn dao_vm_get_features(vm: *const dao_vm, out: *mut u64) -> i32;
+    pub fn dao_module_required_features(module: *const dao_module, out: *mut u64) -> i32;
+    pub fn dao_module_record_count(module: *const dao_module, out: *mut u32) -> i32;
+    pub fn dao_module_record_name(module: *const dao_module, type_index: u32, out: *mut dao_bytes) -> i32;
+    pub fn dao_module_record_field_count(module: *const dao_module, type_index: u32, out: *mut u32) -> i32;
+    pub fn dao_module_record_field_info(module: *const dao_module, type_index: u32, slot: u32,
+                                      out_name: *mut dao_bytes, out_type: *mut u32) -> i32;
+    // The returned owner is retained and must be released with dao_module_release.
+    pub fn dao_value_record_type(vm: *const dao_vm, value: *const dao_value,
+                                 out_owner: *mut *mut dao_module, out_type: *mut u32) -> i32;
+    pub fn dao_value_record_get(vm: *const dao_vm, value: *const dao_value, slot: u32, out: *mut dao_value) -> i32;
+    pub fn dao_value_get_view(value: *const dao_value, out: *mut dao_bytes) -> i32;
+    pub fn dao_value_make_bytes_view(bytes: dao_bytes, out: *mut dao_value) -> i32;
+    pub fn dao_vm_clear_module_cache(vm: *mut dao_vm) -> i32;
     pub fn dao_vm_load_module(vm: *mut dao_vm, bytes: dao_bytes, out: *mut *mut dao_module, error: *mut dao_error) -> i32;
     pub fn dao_module_release(module: *mut dao_module);
     pub fn dao_module_find_export(module: *const dao_module, symbol: u32, out: *mut dao_function) -> i32;

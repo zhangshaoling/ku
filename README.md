@@ -10,7 +10,7 @@
 [![Release](https://img.shields.io/github/v/release/zhangshaoling/ku)](https://github.com/zhangshaoling/ku/releases/latest)
 [![License](https://img.shields.io/github/license/zhangshaoling/ku)](LICENSE)
 
-[下载](https://github.com/zhangshaoling/ku/releases/latest) · [快速开始](#快速开始) · [文档](docs/README.md) · [版本变化](docs/releases/v1.1.0.md) · [路线图](docs/KU_LONG_TERM_ROADMAP.md)
+[下载](https://github.com/zhangshaoling/ku/releases/latest) · [快速开始](#快速开始) · [文档](docs/README.md) · [版本变化](docs/releases/v1.2.0.md) · [路线图](docs/KU_LONG_TERM_ROADMAP.md)
 
 </div>
 
@@ -24,23 +24,24 @@ Ku 使用中文描述程序，通过自举编译器生成可验证的二进制�
 }
 ```
 
-## v1.1.0
+## v1.2.0
 
-Alpha · 2026-11-21。此次更新加入原生代码记忆、检查与格式化命令，完善保存恢复和派生来源契约，
-提供三平台 SDK 安装包。[查看版本说明](docs/releases/v1.1.0.md)
+Alpha · 2026-11-23。本版本先发布 Windows x64 SDK，加入原生测试、源码诊断、
+同模块标量 Record 全链路和配置校验工具。Linux/macOS 附件待对应验证后提供。[查看版本说明](docs/releases/v1.2.0.md)
 
 | 部分 | 当前能力 |
 |---|---|
 | 语言与编译 | 中文核心语法、默认自举前端、恢复编译器、双前端一致性门禁 |
-| 执行与模块 | 严格字节码验证、Register VM、v2/ABI10、精确版本模块链接、C ABI |
-| 开发工具 | `dao-ku --check`、最小 `--fmt`、汇编/反汇编、数值 AOT |
+| 执行与模块 | 严格字节码验证、Register VM、v1/v2 兼容与显式 v3/ABI11 Record、精确版本链接、C ABI |
+| 开发工具 | `dao-ku --test/--check/--fmt`、`ku-config`、汇编/反汇编、数值 AOT |
 | 代码记忆 | 原生 ModuleStore、源码来源校验、父版本记录、单写入者锁、失败后重试恢复 |
 | 智能体接入 | Python 绑定、MCP、可执行记忆示例和基础任务/工具循环 |
 
 CI 在 Windows、Linux、macOS 上执行内核功能测试和解压后的 SDK 验证，Windows 另执行 Python 集成测试。
 [查看运行结果](https://github.com/zhangshaoling/ku/actions)
 
-Record / Schema / Result、Typed IR、统一 Model Capability ABI、流式并发和可恢复任务仍在规划中。
+同模块标量 Record 已接通双前端、VM、存储和只读绑定；Schema / Result、嵌套 Record、Typed IR、
+统一 Model Capability ABI、流式并发和可恢复任务继续开发。
 完整 Thought 语义、记忆生命周期、原生长期运行网关和安装发行验证继续推进。
 
 <details>

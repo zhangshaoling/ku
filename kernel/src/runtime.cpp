@@ -8,9 +8,11 @@
 #include <new>
 #include <memory>
 #include <atomic>
+#include <bit>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -72,6 +74,9 @@ struct HostFunction {
     dao_host_callback callback;
     void* user_data;
 };
+
+struct RecordField { uint32_t name; uint32_t value_type; };
+struct RecordType { uint32_t name; std::vector<RecordField> fields; };
 
 uint16_t read_u16(const uint8_t* data) {
     return static_cast<uint16_t>(data[0]) |
@@ -236,6 +241,8 @@ bool is_valid_value(const dao_value& value) {
         return value.reserved == 0 && value.payload >= 0;
     if (value.type == DAO_VALUE_CLOSURE)
         return value.reserved == 0 && value.payload != 0;
+    if (value.type == DAO_VALUE_RECORD)
+        return value.reserved == 0 && value.payload != 0;
     if (value.type != DAO_VALUE_BYTES && value.type != DAO_VALUE_STRING)
         return false;
 
@@ -266,11 +273,16 @@ struct dao_vm {
     struct List { std::vector<dao_value> values; };
     struct Map { std::unordered_map<std::string, dao_value> values; };
     struct Closure { uint32_t function_index; std::vector<dao_value> captured; };
+    struct Record { const dao_module* owner; uint32_t type; std::vector<dao_value> fields; };
     dao_vm_config config;
     std::unordered_map<uint32_t, HostFunction> host_functions;
     std::vector<std::unique_ptr<List>> lists;
     std::vector<std::unique_ptr<Map>> maps;
     std::vector<std::unique_ptr<Closure>> closures;
+    std::unordered_map<uint64_t, Record> records;
+    std::unordered_set<dao_module*> record_owners;
+    uint64_t features = 0;
+    bool features_locked = false;
     mutable std::mutex cache_mutex;
     std::unordered_map<uint64_t, std::vector<dao_module*>> module_cache;
     std::unordered_map<ModuleKey, dao_module*, ModuleKeyHash> linked_modules;
@@ -293,9 +305,32 @@ struct dao_module {
     std::vector<uint8_t> source_bytes;
     bool has_identity = false;
     ModuleKey identity{};
+    uint64_t required_features = 0;
+    std::vector<RecordType> record_types;
 };
 
 namespace {
+
+std::atomic<uint64_t> next_record_id{1};
+
+uint64_t allocate_record_id() {
+    uint64_t id = next_record_id.load(std::memory_order_relaxed);
+    while (id != 0) {
+        if (next_record_id.compare_exchange_weak(id, id + 1, std::memory_order_relaxed)) return id;
+    }
+    return 0;
+}
+
+void clear_record_arena(dao_vm* vm) {
+    vm->records.clear();
+    for (dao_module* owner : vm->record_owners) dao_module_release(owner);
+    vm->record_owners.clear();
+}
+
+const dao_vm::Record* resolve_record(const dao_vm* vm, const dao_value& value) {
+    const auto found = vm->records.find(static_cast<uint64_t>(value.payload));
+    return found == vm->records.end() ? nullptr : &found->second;
+}
 
 int64_t container_handle(uint32_t generation, size_t index) {
     return static_cast<int64_t>((static_cast<uint64_t>(generation) << 32) |
@@ -330,17 +365,52 @@ bool is_valid_vm_value(const dao_vm* vm, const dao_value& value) {
         return resolve_container(vm->maps, vm->container_generation, value) != nullptr;
     if (value.type == DAO_VALUE_CLOSURE)
         return resolve_container(vm->closures, vm->container_generation, value) != nullptr;
+    if (value.type == DAO_VALUE_RECORD)
+        return resolve_record(vm, value) != nullptr;
     return true;
+}
+
+// A graph walk is needed: an ordinary List/Map can conceal new value tags or cycles.
+dao_status record_boundary(const dao_vm* vm, const dao_value& value, uint64_t* budget = nullptr) {
+    if (!(vm->features & DAO_FEATURE_RECORDS))
+        return value.type == DAO_VALUE_RECORD ? DAO_TYPE_ERROR : DAO_OK;
+    try {
+        std::vector<dao_value> pending{value};
+        std::unordered_set<const void*> visited;
+        while (!pending.empty()) {
+            const dao_value item = pending.back();
+            pending.pop_back();
+            if (!is_valid_vm_value(vm, item)) return DAO_TYPE_ERROR;
+            const auto* list = item.type == DAO_VALUE_LIST
+                                   ? resolve_container(vm->lists, vm->container_generation, item) : nullptr;
+            const auto* map = item.type == DAO_VALUE_MAP
+                                  ? resolve_container(vm->maps, vm->container_generation, item) : nullptr;
+            const void* container = list ? static_cast<const void*>(list) : static_cast<const void*>(map);
+            if (container && !visited.insert(container).second) continue;
+            if (budget && vm->features) {
+                if (*budget == 0) return DAO_INSTRUCTION_LIMIT_EXCEEDED;
+                --*budget;
+            }
+            if (item.type == DAO_VALUE_RECORD || item.type == DAO_VALUE_FUNCTION || item.type == DAO_VALUE_CLOSURE)
+                return DAO_TYPE_ERROR;
+            if (list) pending.insert(pending.end(), list->values.begin(), list->values.end());
+            if (map) for (const auto& entry : map->values) pending.push_back(entry.second);
+        }
+        return DAO_OK;
+    } catch (const std::bad_alloc&) {
+        return DAO_OUT_OF_MEMORY;
+    }
 }
 
 bool is_host_storable_value(const dao_vm* vm, const dao_value& value) {
     if (!is_valid_vm_value(vm, value)) return false;
-    return value.type != DAO_VALUE_FUNCTION && value.type != DAO_VALUE_CLOSURE;
+    return value.type != DAO_VALUE_FUNCTION && value.type != DAO_VALUE_CLOSURE &&
+           record_boundary(vm, value) == DAO_OK;
 }
 
 bool is_module_boundary_value(const dao_vm* vm, const dao_value& value, uint32_t depth = 0) {
     if (!is_valid_vm_value(vm, value) || value.type == DAO_VALUE_FUNCTION ||
-        value.type == DAO_VALUE_CLOSURE || depth > 64)
+        value.type == DAO_VALUE_CLOSURE || value.type == DAO_VALUE_RECORD || depth > 64)
         return false;
     if (value.type == DAO_VALUE_LIST) {
         const auto* list = resolve_container(vm->lists, vm->container_generation, value);
@@ -384,7 +454,29 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
     };
 
     using dao::Opcode;
+    if (instruction.opcode >= Opcode::MakeRecord && instruction.opcode <= Opcode::FieldGet &&
+        !(module.required_features & DAO_FEATURE_RECORDS))
+        return fail(error, DAO_VERIFY_ERROR, "record opcode requires ABI11", function_index, pc);
     switch (instruction.opcode) {
+    case Opcode::MakeRecord:
+        if (valid_register(instruction.dst) && instruction.immediate >= 0 &&
+            static_cast<uint64_t>(instruction.immediate) < module.record_types.size() &&
+            instruction.b == module.record_types[static_cast<size_t>(instruction.immediate)].fields.size() &&
+            static_cast<uint64_t>(instruction.a) + instruction.b <= function.register_count &&
+            (instruction.b != 0 || instruction.a == 0)) return DAO_OK;
+        break;
+    case Opcode::RecordGet:
+        if (valid_register(instruction.dst) && valid_register(instruction.a) && instruction.immediate >= 0 &&
+            static_cast<uint64_t>(instruction.immediate) < module.record_types.size() &&
+            instruction.b < module.record_types[static_cast<size_t>(instruction.immediate)].fields.size()) return DAO_OK;
+        break;
+    case Opcode::FieldGet:
+        if (valid_register(instruction.dst) && valid_register(instruction.a) && instruction.b == 0 &&
+            instruction.immediate >= 0 && static_cast<uint64_t>(instruction.immediate) < module.strings.size()) {
+            const auto& name = module.strings[static_cast<size_t>(instruction.immediate)];
+            if (!name.empty() && name.size() <= 1024 && name.find('\0') == std::string::npos) return DAO_OK;
+        }
+        break;
     case Opcode::Nop:
         return DAO_OK;
     case Opcode::LoadI64:
@@ -535,6 +627,8 @@ dao_status verify_instruction(const dao_module& module, const FunctionRecord& fu
 dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t function_index,
                             const dao_value* args, size_t arg_count, uint32_t depth,
                             uint64_t& budget, dao_value* out, dao_value* thrown, dao_error* error) {
+    if ((module->required_features & ~vm->features) != 0)
+        return fail(error, DAO_UNSUPPORTED_FEATURE, "module requires Record capability");
     if (depth >= vm->config.max_call_depth) {
         return fail(error, DAO_CALL_DEPTH_EXCEEDED, "maximum call depth exceeded", function_index);
     }
@@ -602,6 +696,56 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
         }
         case Opcode::LoadNull:
             registers[instruction.dst] = null_value(); ++pc; break;
+        case Opcode::MakeRecord: {
+            const uint32_t type_index = static_cast<uint32_t>(instruction.immediate);
+            const auto& type = module->record_types[type_index];
+            std::vector<dao_value> fields;
+            fields.reserve(type.fields.size());
+            for (size_t index = 0; index < type.fields.size(); ++index) {
+                const dao_value value = registers[instruction.a + index];
+                if (value.type != type.fields[index].value_type || !is_valid_value(value))
+                    return fail(error, DAO_TYPE_ERROR, "record field type mismatch", function_index, pc);
+                fields.push_back(value);
+            }
+            const uint64_t id = allocate_record_id();
+            if (id == 0) return fail(error, DAO_OUT_OF_MEMORY, "record handle space exhausted", function_index, pc);
+            auto* owner = const_cast<dao_module*>(module);
+            if (vm->record_owners.insert(owner).second) dao_module_retain(owner);
+            vm->records.emplace(id, dao_vm::Record{module, type_index, std::move(fields)});
+            registers[instruction.dst] = {DAO_VALUE_RECORD, 0, std::bit_cast<int64_t>(id)};
+            ++pc; break;
+        }
+        case Opcode::RecordGet:
+        case Opcode::FieldGet: {
+            const dao_value value = registers[instruction.a];
+            if (instruction.opcode == Opcode::FieldGet && value.type == DAO_VALUE_MAP) {
+                const auto* map = resolve_container(vm->maps, vm->container_generation, value);
+                if (!map) return fail(error, DAO_RUNTIME_ERROR, "stale map handle", function_index, pc);
+                const auto found = map->values.find(module->strings[static_cast<size_t>(instruction.immediate)]);
+                registers[instruction.dst] = found == map->values.end() ? null_value() : found->second;
+            } else {
+                if (value.type != DAO_VALUE_RECORD)
+                    return fail(error, DAO_TYPE_ERROR, "field access requires a record", function_index, pc);
+                const auto* record = resolve_record(vm, value);
+                if (!record) return fail(error, DAO_RUNTIME_ERROR, "stale or foreign record", function_index, pc);
+                if (record->owner != module)
+                    return fail(error, DAO_TYPE_ERROR, "record belongs to another module", function_index, pc);
+                size_t slot = instruction.b;
+                if (instruction.opcode == Opcode::RecordGet) {
+                    if (record->type != static_cast<uint64_t>(instruction.immediate))
+                        return fail(error, DAO_TYPE_ERROR, "record declaration mismatch", function_index, pc);
+                } else {
+                    const auto& type = module->record_types[record->type];
+                    const auto& name = module->strings[static_cast<size_t>(instruction.immediate)];
+                    slot = 0;
+                    while (slot < type.fields.size() && module->strings[type.fields[slot].name] != name) ++slot;
+                    if (slot == type.fields.size())
+                        return fail(error, DAO_TYPE_ERROR, "record field does not exist", function_index, pc);
+                }
+                registers[instruction.dst] = record->fields[slot];
+            }
+            ++pc; break;
+        }
         case Opcode::MakeList: {
             auto list = std::make_unique<dao_vm::List>();
             list->values.assign(registers.begin() + instruction.a, registers.begin() + instruction.a + instruction.b);
@@ -886,6 +1030,8 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
             const dao_value* arguments =
                 instruction.b == 0 ? nullptr : registers.data() + instruction.a;
             for (uint16_t index = 0; index < instruction.b; ++index) {
+                const dao_status boundary = record_boundary(vm, arguments[index], &budget);
+                if (boundary != DAO_OK) return fail(error, boundary, "module argument boundary rejected", function_index, pc);
                 if (!is_module_boundary_value(vm, arguments[index]))
                     return fail(error, DAO_TYPE_ERROR,
                                 "module arguments contain module-local values", function_index,
@@ -895,6 +1041,13 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
             const dao_status status = execute_function(
                 vm, target_module, target_export->second, arguments, instruction.b, depth + 1,
                 budget, &result, thrown, error);
+            if (status == DAO_RUNTIME_ERROR && thrown->type != DAO_VALUE_NULL) {
+                const dao_status boundary = record_boundary(vm, *thrown, &budget);
+                if (boundary != DAO_OK) {
+                    *thrown = null_value();
+                    return fail(error, boundary, "module exception boundary rejected", function_index, pc);
+                }
+            }
             if (status == DAO_RUNTIME_ERROR && thrown->type != DAO_VALUE_NULL &&
                 !handlers.empty()) {
                 pc = handlers.back();
@@ -903,6 +1056,8 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
             }
             if (status != DAO_OK)
                 return status;
+            const dao_status boundary = record_boundary(vm, result, &budget);
+            if (boundary != DAO_OK) return fail(error, boundary, "module result boundary rejected", function_index, pc);
             if (!is_module_boundary_value(vm, result))
                 return fail(error, DAO_TYPE_ERROR,
                             "module result contains a module-local value", function_index, pc);
@@ -953,6 +1108,10 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
                             function_index, pc);
             }
 
+            for (uint16_t index = 0; index < instruction.b; ++index) {
+                const dao_status boundary = record_boundary(vm, registers[instruction.a + index], &budget);
+                if (boundary != DAO_OK) return fail(error, boundary, "Host argument boundary rejected", function_index, pc);
+            }
             dao_value result = null_value();
             dao_status status = DAO_RUNTIME_ERROR;
             ++vm->host_callback_depth;
@@ -971,6 +1130,8 @@ dao_status execute_function(dao_vm* vm, const dao_module* module, uint32_t funct
                     status = DAO_RUNTIME_ERROR;
                 return fail(error, status, "host callback returned an error", function_index, pc);
             }
+            status = record_boundary(vm, result, &budget);
+            if (status != DAO_OK) return fail(error, status, "Host result boundary rejected", function_index, pc);
             if (!is_valid_value(result)) {
                 return fail(error, DAO_TYPE_ERROR, "host callback returned an invalid value",
                             function_index, pc);
@@ -1195,9 +1356,100 @@ void release_module(dao_module* module) {
 
 void dao_vm_destroy(dao_vm* vm) {
     if (vm == nullptr) return;
+    vm->lists.clear(); vm->maps.clear(); vm->closures.clear();
+    clear_record_arena(vm);
     for (auto& bucket : vm->module_cache) for (dao_module* module : bucket.second) release_module(module);
     for (auto& linked : vm->linked_modules) release_module(linked.second);
     delete vm;
+}
+
+dao_status dao_vm_set_features(dao_vm* vm, uint64_t features) {
+    if (!vm || (features & ~DAO_FEATURE_RECORDS) != 0 || vm->host_callback_depth != 0 ||
+        (vm->features_locked && features != vm->features)) return DAO_INVALID_ARGUMENT;
+    vm->features = features;
+    return DAO_OK;
+}
+
+dao_status dao_vm_get_features(const dao_vm* vm, uint64_t* out_features) {
+    if (out_features) *out_features = 0;
+    if (!vm || !out_features) return DAO_INVALID_ARGUMENT;
+    *out_features = vm->features;
+    return DAO_OK;
+}
+
+dao_status dao_module_required_features(const dao_module* module, uint64_t* out_features) {
+    if (out_features) *out_features = 0;
+    if (!module || !out_features) return DAO_INVALID_ARGUMENT;
+    *out_features = module->required_features;
+    return DAO_OK;
+}
+
+dao_status dao_module_record_count(const dao_module* module, uint32_t* out_count) {
+    if (out_count) *out_count = 0;
+    if (!module || !out_count) return DAO_INVALID_ARGUMENT;
+    *out_count = static_cast<uint32_t>(module->record_types.size());
+    return DAO_OK;
+}
+
+dao_status dao_module_record_name(const dao_module* module, uint32_t type_index, dao_bytes* out_name) {
+    if (out_name) *out_name = {};
+    if (!module || !out_name || type_index >= module->record_types.size()) return DAO_INVALID_ARGUMENT;
+    const auto& name = module->strings[module->record_types[type_index].name];
+    *out_name = {reinterpret_cast<const uint8_t*>(name.data()), name.size()};
+    return DAO_OK;
+}
+
+dao_status dao_module_record_field_count(const dao_module* module, uint32_t type_index, uint32_t* out_count) {
+    if (out_count) *out_count = 0;
+    if (!module || !out_count || type_index >= module->record_types.size()) return DAO_INVALID_ARGUMENT;
+    *out_count = static_cast<uint32_t>(module->record_types[type_index].fields.size());
+    return DAO_OK;
+}
+
+dao_status dao_module_record_field_info(const dao_module* module, uint32_t type_index, uint32_t slot,
+                                       dao_bytes* out_name, uint32_t* out_value_type) {
+    if (out_name) *out_name = {};
+    if (out_value_type) *out_value_type = 0;
+    if (!module || !out_name || !out_value_type || type_index >= module->record_types.size() ||
+        slot >= module->record_types[type_index].fields.size()) return DAO_INVALID_ARGUMENT;
+    const auto& field = module->record_types[type_index].fields[slot];
+    const auto& name = module->strings[field.name];
+    *out_name = {reinterpret_cast<const uint8_t*>(name.data()), name.size()};
+    *out_value_type = field.value_type;
+    return DAO_OK;
+}
+
+static dao_status record_access(const dao_vm* vm, const dao_value* value, const dao_vm::Record** out) {
+    if (!vm || !value || value->type != DAO_VALUE_RECORD || !is_valid_value(*value)) return DAO_INVALID_ARGUMENT;
+    if (!(vm->features & DAO_FEATURE_RECORDS)) return DAO_UNSUPPORTED_FEATURE;
+    *out = resolve_record(vm, *value);
+    return *out ? DAO_OK : DAO_RUNTIME_ERROR;
+}
+
+dao_status dao_value_record_type(const dao_vm* vm, const dao_value* value,
+                                dao_module** out_owner, uint32_t* out_type_index) {
+    if (out_owner) *out_owner = nullptr;
+    if (out_type_index) *out_type_index = 0;
+    if (!out_owner || !out_type_index) return DAO_INVALID_ARGUMENT;
+    const dao_vm::Record* record = nullptr;
+    const dao_status status = record_access(vm, value, &record);
+    if (status != DAO_OK) return status;
+    *out_owner = const_cast<dao_module*>(record->owner);
+    dao_module_retain(*out_owner);
+    *out_type_index = record->type;
+    return DAO_OK;
+}
+
+dao_status dao_value_record_get(const dao_vm* vm, const dao_value* value, uint32_t slot, dao_value* out_value) {
+    const dao_value saved = value ? *value : dao_value{};
+    if (!out_value) return DAO_INVALID_ARGUMENT;
+    *out_value = {};
+    const dao_vm::Record* record = nullptr;
+    const dao_status status = record_access(vm, value ? &saved : nullptr, &record);
+    if (status != DAO_OK) return status;
+    if (slot >= record->fields.size()) return DAO_INVALID_ARGUMENT;
+    *out_value = record->fields[slot];
+    return DAO_OK;
 }
 
 dao_status dao_vm_get_cache_stats(const dao_vm* vm, dao_cache_stats* out_stats) {
@@ -1256,19 +1508,6 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
     if (bytes.size < dao::kHeaderSize || bytes.size > vm->config.max_module_bytes) {
         return fail(error, DAO_BAD_MODULE, "module size is invalid");
     }
-    const uint64_t requested_fingerprint = fingerprint64(bytes.data, bytes.size);
-    if (vm->max_cached_modules != 0) {
-        std::lock_guard<std::mutex> lock(vm->cache_mutex);
-        const auto bucket = vm->module_cache.find(requested_fingerprint);
-        if (bucket != vm->module_cache.end()) {
-            for (dao_module* cached : bucket->second) {
-                if (cached->source_bytes.size() == bytes.size && std::memcmp(cached->source_bytes.data(), bytes.data, bytes.size) == 0) {
-                    cached->references.fetch_add(1, std::memory_order_relaxed); ++vm->cache_hits; *out_module = cached; return DAO_OK;
-                }
-            }
-        }
-        ++vm->cache_misses;
-    }
     if (std::memcmp(bytes.data, "DAO\0", 4) != 0) {
         return fail(error, DAO_BAD_MODULE, "invalid module magic");
     }
@@ -1276,9 +1515,11 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
     const uint16_t vm_abi_version = read_u16(bytes.data + 6);
     const bool legacy_module = format_version == dao::kLegacyFormatVersion &&
                                vm_abi_version == dao::kLegacyVmAbiVersion;
-    const bool identified_module = format_version == dao::kFormatVersion &&
+    bool identified_module = format_version == dao::kFormatVersion &&
                                    vm_abi_version == dao::kVmAbiVersion;
-    if (!legacy_module && !identified_module) {
+    const bool record_module = format_version == dao::kRecordFormatVersion &&
+                               vm_abi_version == dao::kRecordVmAbiVersion;
+    if (!legacy_module && !identified_module && !record_module) {
         return fail(error, DAO_BAD_MODULE, "unsupported format or VM ABI version");
     }
     if (read_u32(bytes.data + 8) != 0) {
@@ -1294,6 +1535,23 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
     if (table_end > bytes.size)
         return fail(error, DAO_BAD_MODULE, "truncated section table");
 
+    const uint64_t required_features = record_module ? DAO_FEATURE_RECORDS : 0;
+    if ((required_features & ~vm->features) != 0)
+        return fail(error, DAO_UNSUPPORTED_FEATURE, "module requires Record capability");
+
+    const uint64_t requested_fingerprint = fingerprint64(bytes.data, bytes.size);
+    if (vm->max_cached_modules != 0) {
+        std::lock_guard<std::mutex> lock(vm->cache_mutex);
+        const auto bucket = vm->module_cache.find(requested_fingerprint);
+        if (bucket != vm->module_cache.end()) {
+            for (dao_module* cached : bucket->second) {
+                if (cached->source_bytes.size() == bytes.size && std::memcmp(cached->source_bytes.data(), bytes.data, bytes.size) == 0) {
+                    cached->references.fetch_add(1, std::memory_order_relaxed); ++vm->cache_hits; vm->features_locked = true; *out_module = cached; return DAO_OK;
+                }
+            }
+        }
+        ++vm->cache_misses;
+    }
     std::vector<SectionRecord> sections;
     sections.reserve(section_count);
     for (uint32_t index = 0; index < section_count; ++index) {
@@ -1301,7 +1559,7 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
             bytes.data + dao::kHeaderSize + static_cast<size_t>(index) * dao::kSectionEntrySize;
         SectionRecord section{read_u32(entry), read_u32(entry + 4), read_u32(entry + 8),
                               read_u32(entry + 12)};
-        const uint32_t maximum_section = static_cast<uint32_t>(
+        const uint32_t maximum_section = static_cast<uint32_t>(record_module ? dao::SectionType::RecordFields :
             identified_module ? dao::SectionType::ModuleImports : dao::SectionType::Data);
         if (section.type < static_cast<uint32_t>(dao::SectionType::Functions) ||
             section.type > maximum_section) {
@@ -1318,6 +1576,10 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
     }
 
     auto ranges = sections;
+    if (record_module)
+        ranges.erase(std::remove_if(ranges.begin(), ranges.end(), [](const SectionRecord& section) {
+            return section.size == 0;
+        }), ranges.end());
     std::sort(ranges.begin(), ranges.end(),
               [](const SectionRecord& left, const SectionRecord& right) {
                   return left.offset < right.offset;
@@ -1339,6 +1601,17 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
     const SectionRecord* metadata_section = find_section(sections, dao::SectionType::Metadata);
     const SectionRecord* module_imports_section =
         find_section(sections, dao::SectionType::ModuleImports);
+    const auto* types_section = find_section(sections, dao::SectionType::RecordTypes);
+    const auto* fields_section = find_section(sections, dao::SectionType::RecordFields);
+    if (record_module) {
+        identified_module = metadata_section != nullptr;
+        if ((metadata_section == nullptr) != (module_imports_section == nullptr) ||
+            section_count != (identified_module ? 9u : 7u) || !types_section || !fields_section ||
+            types_section->count == 0 || types_section->count > 1024 || fields_section->count > 65536 ||
+            types_section->size != static_cast<uint64_t>(types_section->count) * dao::kRecordTypeSize ||
+            fields_section->size != static_cast<uint64_t>(fields_section->count) * dao::kRecordFieldSize)
+            return fail(error, DAO_BAD_MODULE, "invalid record sections");
+    }
     if (functions_section == nullptr || code_section == nullptr || exports_section == nullptr ||
         imports_section == nullptr || data_section == nullptr ||
         (identified_module && (metadata_section == nullptr || module_imports_section == nullptr))) {
@@ -1364,6 +1637,7 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
     if (module == nullptr)
         return fail(error, DAO_OUT_OF_MEMORY, "module allocation failed");
     module->fingerprint = requested_fingerprint;
+    module->required_features = required_features;
 
     try {
         module->functions.reserve(functions_section->count);
@@ -1424,6 +1698,40 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
                 delete module; return fail(error, DAO_VERIFY_ERROR, "invalid string constant");
             }
             module->strings.emplace_back(reinterpret_cast<const char*>(bytes.data + data_section->offset + offset), length);
+        }
+
+        if (record_module) {
+            const auto valid_name = [&](uint32_t index) {
+                return index < module->strings.size() && !module->strings[index].empty() &&
+                       module->strings[index].size() <= 1024 && module->strings[index].find('\0') == std::string::npos;
+            };
+            std::unordered_set<std::string> type_names;
+            uint64_t next_field = 0;
+            for (uint32_t index = 0; index < types_section->count; ++index) {
+                const uint8_t* type = bytes.data + types_section->offset + index * dao::kRecordTypeSize;
+                const uint32_t name = read_u32(type), first = read_u32(type + 4), count = read_u32(type + 8);
+                if (!valid_name(name) || !type_names.insert(module->strings[name]).second ||
+                    first != next_field || count > 256 || next_field + count > fields_section->count || read_u32(type + 12) != 0) {
+                    delete module; return fail(error, DAO_BAD_MODULE, "invalid record type");
+                }
+                RecordType descriptor{name, {}};
+                std::unordered_set<std::string> field_names;
+                for (uint32_t slot = 0; slot < count; ++slot) {
+                    const uint8_t* field = bytes.data + fields_section->offset +
+                                           static_cast<size_t>(first + slot) * dao::kRecordFieldSize;
+                    const uint32_t field_name = read_u32(field), value_type = read_u32(field + 4);
+                    if (!valid_name(field_name) || !field_names.insert(module->strings[field_name]).second ||
+                        value_type < DAO_VALUE_I64 || value_type > DAO_VALUE_STRING || read_u32(field + 8) != 0) {
+                        delete module; return fail(error, DAO_BAD_MODULE, "invalid record field");
+                    }
+                    descriptor.fields.push_back({field_name, value_type});
+                }
+                next_field += count;
+                module->record_types.push_back(std::move(descriptor));
+            }
+            if (next_field != fields_section->count) {
+                delete module; return fail(error, DAO_BAD_MODULE, "record field ranges do not cover table");
+            }
         }
 
         if (identified_module) {
@@ -1495,6 +1803,7 @@ dao_status dao_vm_load_module(dao_vm* vm, dao_bytes bytes, dao_module** out_modu
         if (count < vm->max_cached_modules) { module->references.fetch_add(1, std::memory_order_relaxed); vm->module_cache[module->fingerprint].push_back(module); }
     }
     *out_module = module;
+    vm->features_locked = true;
     return DAO_OK;
 }
 
@@ -1529,6 +1838,8 @@ dao_status dao_vm_link_module(dao_vm* vm, dao_module* module, dao_error* error) 
     clear_error(error);
     if (vm == nullptr || module == nullptr)
         return fail(error, DAO_INVALID_ARGUMENT, "vm and module are required");
+    if ((module->required_features & ~vm->features) != 0)
+        return fail(error, DAO_UNSUPPORTED_FEATURE, "module requires Record capability");
     if (!module->has_identity)
         return fail(error, DAO_MODULE_IDENTITY_MISSING, "module has no stable identity");
     const auto existing = vm->linked_modules.find(module->identity);
@@ -1555,6 +1866,7 @@ dao_status dao_vm_link_module(dao_vm* vm, dao_module* module, dao_error* error) 
         vm->linked_modules.erase(module->identity);
         release_module(module);
     }
+    if (status == DAO_OK) vm->features_locked = true;
     return status;
 }
 
@@ -1600,21 +1912,30 @@ dao_status dao_vm_call(dao_vm* vm, const dao_module* module, dao_function functi
         (arg_count != 0 && args == nullptr)) {
         return fail(error, DAO_INVALID_ARGUMENT, "vm, module, arguments, and output must be valid");
     }
+    if ((module->required_features & ~vm->features) != 0)
+        return fail(error, DAO_UNSUPPORTED_FEATURE, "module requires Record capability");
     for (size_t index = 0; index < arg_count; ++index) {
         if (!is_valid_value(args[index])) {
             return fail(error, DAO_TYPE_ERROR, "argument contains an invalid value");
         }
         if (args[index].type == DAO_VALUE_LIST || args[index].type == DAO_VALUE_MAP ||
-            args[index].type == DAO_VALUE_FUNCTION || args[index].type == DAO_VALUE_CLOSURE) {
+            args[index].type == DAO_VALUE_FUNCTION || args[index].type == DAO_VALUE_CLOSURE || args[index].type == DAO_VALUE_RECORD) {
             return fail(error, DAO_INVALID_ARGUMENT,
                         "VM-owned and module-local values cannot be reused across top-level calls");
         }
     }
     vm->lists.clear(); vm->maps.clear(); vm->closures.clear();
+    clear_record_arena(vm);
+    vm->features_locked = true;
     if (++vm->container_generation == 0) ++vm->container_generation;
     uint64_t budget = vm->config.max_instructions_per_call;
     dao_value thrown = null_value();
-    const dao_status status = execute_function(vm, module, function, args, arg_count, 0, budget, out_value, &thrown, error);
+    dao_status status;
+    try {
+        status = execute_function(vm, module, function, args, arg_count, 0, budget, out_value, &thrown, error);
+    } catch (const std::bad_alloc&) {
+        return fail(error, DAO_OUT_OF_MEMORY, "execution allocation failed");
+    }
     if (status == DAO_RUNTIME_ERROR && thrown.type != DAO_VALUE_NULL) {
         if (thrown.type == DAO_VALUE_STRING) {
             const std::string message(reinterpret_cast<const char*>(view_data(thrown)), thrown.reserved);
@@ -1627,6 +1948,8 @@ dao_status dao_vm_call(dao_vm* vm, const dao_module* module, dao_function functi
 
 const char* dao_status_name(dao_status status) {
     switch (status) {
+    case DAO_UNSUPPORTED_FEATURE:
+        return "unsupported_feature";
     case DAO_OK:
         return "ok";
     case DAO_INVALID_ARGUMENT:

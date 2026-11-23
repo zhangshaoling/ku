@@ -4,6 +4,13 @@ This directory contains the new high-performance Ku runtime. Existing `dao_*` AB
 
 ## Layout
 
+An opt-in Record slice supports v3/ABI11 through the C++ builder, C ABI and both Ku
+source frontends and assembly/disassembly libraries. `dao-ku --check/--test` accepts
+`型` declarations; ModuleStore supports explicit `DAO_FEATURE_RECORDS` / CLI
+`--enable-records` opt-in. Python Runtime/CodeMemory and Rust sys bindings expose
+explicit capabilities and read-only Record queries; see [binding usage](../docs/KU_RECORD_BINDINGS.md).
+See [RECORDS.md](RECORDS.md).
+
 ```text
 include/dao/dao.h       Stable C embedding ABI
 include/dao/format.hpp  Binary Module v2/ABI10 and C++ builder API
@@ -58,6 +65,12 @@ The formatter writes to stdout.
 .\kernel\out\cmake\bin\dao-ku.exe --check input.ku
 .\kernel\out\cmake\bin\dao-ku.exe --fmt input.ku
 ```
+
+Compile errors include source locations and excerpts in the v1.2.0 development line.
+See [the diagnostics guide](../docs/KU_DIAGNOSTICS.md) for Unicode columns and import mapping.
+
+The v1.2.0 development SDK also includes `ku-config`, a native host for a configuration
+validator written in Ku. Run `ku-config <config-file>`; see [the example guide](../docs/KU_CONFIG_EXAMPLE.md).
 
 ### Native tests (v1.2.0 development)
 

@@ -81,6 +81,40 @@ the verified result and source provenance in one store record. `save_derived_sou
 adds a parent identity/version to the manifest, allowing code memories to form an
 explicit, auditable version chain without changing the binary ABI.
 
+### Store feature policy
+
+`ModuleStore(root, features = 0)` applies an explicit feature mask to every internal
+validation VM. The default rejects v3/ABI11 with `DAO_UNSUPPORTED_FEATURE`, even if
+its Record types are unused. `ModuleStore(root, DAO_FEATURE_RECORDS)` permits verified
+identified Record modules. Unknown mask bits throw `std::invalid_argument` during
+construction, before filesystem operations. The mask has no setter or global effect.
+
+The policy covers `save`, `load`, `verify`, `save_source` and `save_derived_source`,
+including validation of a derived record's parent. Enabling it does not skip verifier,
+identity, checksum, immutability or provenance checks. Failed reads still clear the
+output vector. Each load validates afresh; another Store instance's enabled reads and
+an execution VM's module cache cannot authorize a default Store. A rejected Record
+save creates no store; a rejected derivation publishes no child bytes or manifest.
+
+The mask is caller policy, not new persisted metadata: manifests remain schema 1.
+Loading a legacy child does not recursively read its recorded parents or runtime
+dependencies. Callers must separately load dependencies under their policy, then
+enable the target VM before loading/linking/execution. Scalars may cross module
+boundaries; Record values, including nested values, remain rejected there.
+
+```powershell
+dao-ku --enable-records --store ./store --identity ku:app/record 1.0.0 ./record.ku
+dao-module --enable-records verify ./store ku:app/record 1.0.0
+dao-module --enable-records run ./store ku:app/record 1.0.0 main
+```
+
+`dao-ku --enable-records` requires `--store`; it does not change ordinary compile,
+check or test usage. `dao-module` accepts the flag before its command and applies the
+same mask to Store verification and its execution VM. With the flag, `run`/`recall`
+reject Record/List/Map results instead of printing their opaque handles as integers;
+use the C ABI query APIs to inspect them. No value serialization or automatic dependency
+linking is added. High-level binding integration remains a separate task.
+
 ### Store manifest schema 1
 
 The UTF-8 JSON manifest is a flat object. Field order and JSON whitespace are insignificant,

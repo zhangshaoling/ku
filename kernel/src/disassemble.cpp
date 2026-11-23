@@ -65,7 +65,7 @@ const Section* find_section(const std::vector<Section>& sections, SectionType ty
 }
 
 dao_status parse_header(const uint8_t* data, size_t size, uint32_t& section_count,
-                        bool& identified_module, dao_error* error) {
+                        bool& identified_module, bool& record_module, dao_error* error) {
     if (size < 16 || std::memcmp(data, "DAO\0", 4) != 0) {
         return fail(error, DAO_BAD_MODULE, "invalid module magic");
     }
@@ -74,7 +74,8 @@ dao_status parse_header(const uint8_t* data, size_t size, uint32_t& section_coun
     const bool legacy_module = format_version == kLegacyFormatVersion &&
                                vm_abi_version == kLegacyVmAbiVersion;
     identified_module = format_version == kFormatVersion && vm_abi_version == kVmAbiVersion;
-    if (!legacy_module && !identified_module)
+    record_module = format_version == kRecordFormatVersion && vm_abi_version == kRecordVmAbiVersion;
+    if (!legacy_module && !identified_module && !record_module)
         return fail(error, DAO_BAD_MODULE, "unsupported format or VM ABI version");
     if (read_u32(data + 8) != 0) {
         return fail(error, DAO_BAD_MODULE, "unsupported module flags");
@@ -87,7 +88,7 @@ dao_status parse_header(const uint8_t* data, size_t size, uint32_t& section_coun
 }
 
 dao_status parse_sections(const uint8_t* data, size_t size, uint32_t section_count,
-                          bool identified_module, std::vector<Section>& sections,
+                          bool identified_module, bool record_module, std::vector<Section>& sections,
                           dao_error* error) {
     const uint64_t table_end = static_cast<uint64_t>(kHeaderSize) +
                                static_cast<uint64_t>(section_count) * kSectionEntrySize;
@@ -99,7 +100,7 @@ dao_status parse_sections(const uint8_t* data, size_t size, uint32_t section_cou
         Section section{static_cast<SectionType>(read_u32(entry)), read_u32(entry + 4),
                         read_u32(entry + 8), read_u32(entry + 12)};
         const SectionType maximum =
-            identified_module ? SectionType::ModuleImports : SectionType::Data;
+            record_module ? SectionType::RecordFields : identified_module ? SectionType::ModuleImports : SectionType::Data;
         if (section.type < SectionType::Functions || section.type > maximum) {
             return fail(error, DAO_BAD_MODULE, "unknown section type");
         }
@@ -119,6 +120,7 @@ dao_status disassemble(dao_bytes bytes, DisassembledModule* out_module, dao_erro
         return DAO_INVALID_ARGUMENT;
     }
     clear_error(error);
+    *out_module = {};
 
     if (bytes.data == nullptr || bytes.size < kHeaderSize) {
         return fail(error, DAO_BAD_MODULE, "module is too small or data is null");
@@ -126,15 +128,32 @@ dao_status disassemble(dao_bytes bytes, DisassembledModule* out_module, dao_erro
 
     uint32_t section_count = 0;
     bool identified_module = false;
+    bool record_module = false;
     dao_status status =
-        parse_header(bytes.data, bytes.size, section_count, identified_module, error);
+        parse_header(bytes.data, bytes.size, section_count, identified_module, record_module, error);
     if (status != DAO_OK) {
         return status;
     }
 
+    // ABI11 descriptors and operands use the same validation as execution. Loading
+    // here has no Host calls, linking or code execution.
+    if (record_module) {
+        const dao_vm_config config = dao_vm_config_default();
+        dao_vm* vm = dao_vm_create(&config);
+        if (!vm) return fail(error, DAO_OUT_OF_MEMORY, "cannot create Record verifier");
+        dao_module* module = nullptr;
+        status = dao_vm_set_features(vm, DAO_FEATURE_RECORDS);
+        if (status == DAO_OK) status = dao_vm_load_module(vm, bytes, &module, error);
+        if (module) dao_module_release(module);
+        dao_vm_destroy(vm);
+        if (status != DAO_OK) return status;
+    }
+    out_module->format_version = read_u16(bytes.data + 4);
+    out_module->vm_abi_version = read_u16(bytes.data + 6);
+
     std::vector<Section> sections;
     sections.reserve(section_count);
-    status = parse_sections(bytes.data, bytes.size, section_count, identified_module, sections,
+    status = parse_sections(bytes.data, bytes.size, section_count, identified_module, record_module, sections,
                             error);
     if (status != DAO_OK) {
         return status;
@@ -147,6 +166,7 @@ dao_status disassemble(dao_bytes bytes, DisassembledModule* out_module, dao_erro
     const Section* data_section = find_section(sections, SectionType::Data);
     const Section* metadata_section = find_section(sections, SectionType::Metadata);
     const Section* module_imports_section = find_section(sections, SectionType::ModuleImports);
+    if (record_module) identified_module = metadata_section != nullptr;
     if (!functions_section || !code_section || !exports_section || !imports_section ||
         !data_section ||
         (identified_module && (!metadata_section || !module_imports_section))) {
@@ -161,6 +181,21 @@ dao_status disassemble(dao_bytes bytes, DisassembledModule* out_module, dao_erro
         if (offset < records_size || static_cast<uint64_t>(offset) + length > data_section->size)
             return fail(error, DAO_BAD_MODULE, "invalid data record");
         out_module->strings.emplace_back(reinterpret_cast<const char*>(bytes.data + data_section->offset + offset), length);
+    }
+
+    if (record_module) {
+        const Section* types = find_section(sections, SectionType::RecordTypes);
+        const Section* fields = find_section(sections, SectionType::RecordFields);
+        for (uint32_t index = 0; index < types->count; ++index) {
+            const uint8_t* type = bytes.data + types->offset + static_cast<size_t>(index) * kRecordTypeSize;
+            RecordTypeDescriptor descriptor{read_u32(type), {}};
+            const uint32_t first = read_u32(type + 4), count = read_u32(type + 8);
+            for (uint32_t slot = 0; slot < count; ++slot) {
+                const uint8_t* field = bytes.data + fields->offset + static_cast<size_t>(first + slot) * kRecordFieldSize;
+                descriptor.fields.push_back({read_u32(field), read_u32(field + 4)});
+            }
+            out_module->record_types.push_back(std::move(descriptor));
+        }
     }
 
     if (identified_module) {
@@ -243,6 +278,9 @@ namespace {
 
 const char* opcode_name(Opcode opcode) {
     switch (opcode) {
+    case Opcode::MakeRecord: return "MAKE_RECORD";
+    case Opcode::RecordGet: return "RECORD_GET";
+    case Opcode::FieldGet: return "FIELD_GET";
     case Opcode::Nop:
         return "NOP";
     case Opcode::LoadI64:
@@ -350,6 +388,9 @@ void append_instruction_text(std::ostream& out,
     case Opcode::IndexSet:
         out << " r" << instruction.dst << ", r" << instruction.a << ", r" << instruction.b;
         break;
+    case Opcode::MakeRecord:
+    case Opcode::RecordGet:
+    case Opcode::FieldGet:
     case Opcode::MakeClosure:
         out << " r" << instruction.dst << ", r" << instruction.a << ", "
             << instruction.b << ", " << instruction.immediate;
@@ -411,6 +452,9 @@ void append_instruction_text(std::ostream& out,
 std::string to_text(const DisassembledModule& module) {
     std::ostringstream out;
 
+    if (module.format_version == kRecordFormatVersion)
+        out << "format: " << module.format_version << " abi=" << module.vm_abi_version << "\n";
+
     if (module.has_identity) {
         out << "module: " << module.identity_name << " " << module.identity_version.major << "."
             << module.identity_version.minor << "." << module.identity_version.patch << "\n";
@@ -441,6 +485,15 @@ std::string to_text(const DisassembledModule& module) {
         out << "\n";
     }
 
+    if (module.format_version == kRecordFormatVersion) {
+        out << "record_types: " << module.record_types.size() << "\n";
+        for (size_t index = 0; index < module.record_types.size(); ++index) {
+            const auto& type = module.record_types[index];
+            out << "  [record " << index << "] name=" << type.name_index << " fields=" << type.fields.size() << "\n";
+            for (const auto& field : type.fields)
+                out << "    field name=" << field.name_index << " type=" << field.value_type << "\n";
+        }
+    }
     out << "functions: " << module.functions.size() << "\n";
     for (const auto& function : module.functions) {
         out << "  [function " << function.index << "] registers=" << function.register_count

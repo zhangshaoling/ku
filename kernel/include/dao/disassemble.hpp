@@ -41,7 +41,19 @@ struct DisassembledModuleImport {
     uint16_t parameter_count;
 };
 
+struct RecordFieldDescriptor {
+    uint32_t name_index;
+    uint32_t value_type;
+};
+
+struct RecordTypeDescriptor {
+    uint32_t name_index;
+    std::vector<RecordFieldDescriptor> fields;
+};
+
 struct DisassembledModule {
+    uint16_t format_version = kLegacyFormatVersion;
+    uint16_t vm_abi_version = kLegacyVmAbiVersion;
     bool has_identity = false;
     std::string identity_name;
     SemanticVersion identity_version{};
@@ -50,6 +62,7 @@ struct DisassembledModule {
     std::vector<DisassembledImport> imports;
     std::vector<DisassembledExport> exports;
     std::vector<DisassembledModuleImport> module_imports;
+    std::vector<RecordTypeDescriptor> record_types;
 };
 
 dao_status disassemble(dao_bytes bytes, DisassembledModule* out_module, dao_error* error);

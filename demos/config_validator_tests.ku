@@ -1,0 +1,89 @@
+引 "config_validator" 别 v
+
+思 测试_有效配置与中文名称() {
+  结果 = v_校验("name=测试服务\nport=8080\nworkers=4\n")
+  返 结果.ok and len(结果.errors) == 0
+}
+
+思 测试_边界与可选字段() {
+  下界 = v_校验("name=a\nport=1")
+  上界 = v_校验("name=a\nport=65535\nworkers=256")
+  返 下界.ok and 上界.ok
+}
+
+思 测试_注释空行与CRLF() {
+  结果 = v_校验("# comment\r\n\r\n\tname = 中文名称\t\r\n port = 80 \r\n")
+  返 结果.ok
+}
+
+思 测试_收集错误与行号() {
+  结果 = v_校验("name=a\nport=0\nworkers=257\nextra=1\nport=80\nbroken")
+  错误 = 结果.errors
+  首项 = 错误[0]
+  末项 = 错误[4]
+  返 len(错误) == 5 and 首项.line == 2 and 末项.line == 6
+}
+
+思 测试_缺少必填项() {
+  结果 = v_校验("")
+  错误 = 结果.errors
+  首项 = 错误[0]
+  返 len(错误) == 2 and 首项.code == "required" and 首项.line == 0
+}
+
+思 测试_空名称() {
+  结果 = v_校验("name= \nport=80")
+  错误 = 结果.errors
+  首项 = 错误[0]
+  返 len(错误) == 1 and 首项.key == "name"
+}
+
+思 测试_严格十进制与溢出() {
+  遍 值 于 ["", "-1", "+1", "1.5", "80abc", "８０", "9223372036854775808"] {
+    若 v_数值有效(值, 65535) { 返 假 }
+  }
+  返 v_数值有效("00080", 65535)
+}
+
+思 测试_名称允许等号() {
+  结果 = v_校验("name=a=b\nport=80")
+  返 结果.ok
+}
+
+思 测试_重复键不覆盖错误() {
+  结果 = v_校验("name=a\nport=bad\nport=80")
+  错误 = 结果.errors
+  首项 = 错误[0]
+  次项 = 错误[1]
+  返 len(错误) == 2 and 首项.code == "range" and 次项.code == "duplicate"
+}
+
+思 测试_内部错误使用Record() {
+  错误 = []
+  v_记录错误(错误, 2, "port", "range", "invalid port")
+  首项 = 错误[0]
+  返 首项.行号 == 2 and 首项.字段 == "port" and 首项.代码 == "range" and 首项.消息 == "invalid port"
+}
+
+思 测试_显式导出保持独立() {
+  错误 = []
+  v_记录错误(错误, 2, "port", "range", "invalid port")
+  首项 = 错误[0]
+  导出 = v_导出错误(首项)
+  导出["line"] = 99
+  导出["message"] = "changed"
+  再次导出 = v_导出错误(首项)
+  返 首项.行号 == 2 and 首项.消息 == "invalid port" and 再次导出.line == 2 and 再次导出.message == "invalid port"
+}
+
+思 测试_公开结果仅包含原Map字段() {
+  结果 = v_校验("name=a\nport=0\nworkers=257")
+  错误 = 结果.errors
+  首项 = 错误[0]
+  次项 = 错误[1]
+  结果字段数 = 0
+  遍 键, 值 于 结果 { 结果字段数 = 结果字段数 + 1 }
+  错误字段数 = 0
+  遍 键, 值 于 首项 { 错误字段数 = 错误字段数 + 1 }
+  返 结果字段数 == 2 and 错误字段数 == 4 and 首项.line == 2 and 首项.key == "port" and 首项.code == "range" and 次项.line == 3
+}

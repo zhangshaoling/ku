@@ -103,7 +103,7 @@ std::vector<Token> lex(std::string_view source) {
 }
 
 struct Expr {
-    enum class Type { Number, String, Name, Unary, Binary, Call, List, Map, Index, Conditional } type = Type::Number;
+    enum class Type { Number, String, Name, Unary, Binary, Call, List, Map, Index, Field, Record, Conditional } type = Type::Number;
     std::string value;
     std::vector<Expr> children;
     size_t offset = 0;
@@ -116,17 +116,35 @@ struct Stmt {
     Expr assignment_target;
     std::vector<Stmt> body;
     std::vector<Stmt> alternate;
+    size_t offset = 0;
 };
-struct Function { std::string name; std::vector<std::string> params; std::vector<Stmt> body; };
-struct Import { std::string name; uint16_t arity; };
+struct Function {
+    std::string name;
+    std::vector<std::string> params;
+    std::vector<Stmt> body;
+    size_t source_index = 0;
+    size_t offset = 0;
+    std::vector<size_t> parameter_offsets;
+};
+struct Import {
+    std::string name;
+    uint16_t arity;
+    size_t source_index = 0;
+    size_t offset = 0;
+};
 struct ModuleImport {
     std::string path;
     std::string alias;
     bool runtime = false;
     std::string identity;
     SemanticVersion version{};
+    size_t offset = 0;
+    size_t source_index = 0;
 };
 struct Program {
+    struct RecordField { std::string name; uint32_t type; };
+    struct Record { std::string name; std::vector<RecordField> fields; size_t offset; size_t source_index = 0; };
+    std::vector<Record> records;
     std::vector<Import> imports;
     std::vector<ModuleImport> module_imports;
     std::vector<Function> functions;
@@ -134,7 +152,15 @@ struct Program {
 
 class Parser {
   public:
-    explicit Parser(std::vector<Token> tokens) : tokens_(std::move(tokens)) {}
+    explicit Parser(std::vector<Token> tokens) : tokens_(std::move(tokens)) {
+        size_t depth = 0;
+        for (size_t i = 0; i + 2 < tokens_.size(); ++i) {
+            if (depth == 0 && tokens_[i].text == "型" && tokens_[i + 1].kind == Kind::Name && tokens_[i + 2].kind == Kind::LBrace)
+                record_names_.insert(tokens_[i + 1].text);
+            if (tokens_[i].kind == Kind::LBrace) ++depth;
+            if (tokens_[i].kind == Kind::RBrace && depth > 0) --depth;
+        }
+    }
     Program parse() {
         Program program;
         skip_lines();
@@ -150,7 +176,8 @@ class Parser {
             program.imports.push_back({"memory_forget", 1});
         }
         while (peek().kind != Kind::End) {
-            if ((word("import") && peek(1).kind == Kind::String) || word("\xE5\xBC\x95"))
+            if (word("型")) program.records.push_back(record_decl());
+            else if ((word("import") && peek(1).kind == Kind::String) || word("\xE5\xBC\x95"))
                 program.module_imports.push_back(module_import_decl());
             else if (word("import"))
                 program.imports.push_back(import_decl());
@@ -161,7 +188,7 @@ class Parser {
         return program;
     }
   private:
-    const Token& peek(size_t n = 0) const { return tokens_[pos_ + n]; }
+    const Token& peek(size_t n = 0) const { return tokens_[pos_ + n < tokens_.size() ? pos_ + n : tokens_.size() - 1]; }
     Token take() { return tokens_[pos_++]; }
     bool word(std::string_view s) const { return peek().kind == Kind::Name && peek().text == s; }
     void expect(Kind kind, std::string_view what) { if (peek().kind != kind) error("expected " + std::string(what)); take(); }
@@ -169,19 +196,54 @@ class Parser {
     [[noreturn]] void error(const std::string& message) const {
         throw std::runtime_error(message + " at offset " + std::to_string(peek().offset));
     }
+    Program::Record record_decl() {
+        take();
+        if (peek().kind != Kind::Name) error("expected record name");
+        const Token name = take();
+        Program::Record record{name.text, {}, name.offset};
+        expect(Kind::LBrace, "{ after record name"); skip_lines();
+        std::unordered_set<std::string> fields;
+        while (peek().kind != Kind::RBrace) {
+            if (peek().kind != Kind::Name) error("expected record field");
+            const Token field = take();
+            if (!fields.insert(field.text).second) throw std::runtime_error("duplicate record field at offset " + std::to_string(field.offset));
+            expect(Kind::Colon, ": after record field");
+            uint32_t type = 0;
+            if (word("整数") || word("i64")) type = DAO_VALUE_I64;
+            else if (word("三值") || word("Trit")) type = DAO_VALUE_TRIT;
+            else if (word("字节") || word("Bytes")) type = DAO_VALUE_BYTES;
+            else if (word("文本") || word("String")) type = DAO_VALUE_STRING;
+            if (!type) error("expected scalar record field type");
+            take(); record.fields.push_back({field.text, type});
+            if (record.fields.size() > 256) error("too many record fields");
+            if (peek().kind == Kind::Comma) take();
+            else if (peek().kind != Kind::Newline && peek().kind != Kind::RBrace) error("expected record field separator");
+            skip_lines();
+        }
+        take(); return record;
+    }
+    Expr condition() {
+        const bool previous = allow_record_;
+        allow_record_ = false;
+        Expr result = expression();
+        allow_record_ = previous;
+        return result;
+    }
     Import import_decl() {
         take();
         if (peek().kind != Kind::Name) error("expected host import name");
         Import result{take().text, 0}; expect(Kind::LParen, "(");
+        result.offset = tokens_[pos_ - 2].offset;
         if (peek().kind != Kind::Number) error("expected host import parameter count");
         unsigned long arity = std::stoul(take().text);
         if (arity > std::numeric_limits<uint16_t>::max()) error("host import parameter count is too large");
         result.arity = static_cast<uint16_t>(arity); expect(Kind::RParen, ")"); return result;
     }
     ModuleImport module_import_decl() {
-        take();
+        const size_t offset = take().offset;
         if (peek().kind != Kind::String) error("expected module import path");
         ModuleImport result;
+        result.offset = offset;
         result.path = take().text;
         if (result.path.starts_with("ku:")) {
             const size_t at = result.path.rfind('@');
@@ -225,11 +287,12 @@ class Parser {
         if (!(word("thought") || word("func") || word("思"))) error("expected thought, func, or 思");
         take();
         if (peek().kind != Kind::Name) error("expected function name");
-        Function fn; fn.name = take().text;
+        Function fn; fn.offset = peek().offset; fn.name = take().text;
         expect(Kind::LParen, "(");
         if (peek().kind != Kind::RParen) {
             for (;;) {
                 if (peek().kind != Kind::Name) error("expected parameter name");
+                fn.parameter_offsets.push_back(peek().offset);
                 fn.params.push_back(take().text);
                 if (peek().kind != Kind::Comma) break;
                 take();
@@ -249,6 +312,7 @@ class Parser {
     }
     Stmt statement() {
         Stmt stmt;
+        stmt.offset = peek().offset;
         if (word("break") || word("断")) { take(); stmt.type = Stmt::Type::Break; return stmt; }
         if (word("continue") || word("续")) { take(); stmt.type = Stmt::Type::Continue; return stmt; }
         if (word("throw") || word("抛")) { take(); stmt.type = Stmt::Type::Throw; stmt.expr = expression(); return stmt; }
@@ -264,7 +328,7 @@ class Parser {
         }
         if (word("if") || word("若")) {
             take(); stmt.type = Stmt::Type::If;
-            stmt.expr = expression();
+            stmt.expr = condition();
             skip_lines(); stmt.body = block();
             const bool bare_alternate = peek().kind == Kind::LBrace;
             skip_lines();
@@ -279,7 +343,7 @@ class Parser {
             return stmt;
         }
         if (word("while") || word("当")) {
-            take(); stmt.type = Stmt::Type::While; stmt.expr = expression(); skip_lines(); stmt.body = block(); return stmt;
+            take(); stmt.type = Stmt::Type::While; stmt.expr = condition(); skip_lines(); stmt.body = block(); return stmt;
         }
         if (word("for") || word("遍")) {
             take(); stmt.type = Stmt::Type::For;
@@ -292,7 +356,7 @@ class Parser {
             }
             if (!(word("in") || word("于"))) error("expected in");
             take();
-            stmt.expr = expression(); skip_lines(); stmt.body = block(); return stmt;
+            stmt.expr = condition(); skip_lines(); stmt.body = block(); return stmt;
         }
         if (word("return") || word("返")) { take(); stmt.type = Stmt::Type::Return; stmt.expr = expression(); return stmt; }
         if (peek().kind == Kind::Name && peek(1).kind == Kind::Op && peek(1).text == "=") {
@@ -300,7 +364,7 @@ class Parser {
         }
         stmt.expr = expression();
         if (peek().kind == Kind::Op && peek().text == "=") {
-            if (stmt.expr.type != Expr::Type::Index) error("invalid assignment target");
+            if (stmt.expr.type != Expr::Type::Index && stmt.expr.type != Expr::Type::Field) error("invalid assignment target");
             take(); stmt.type = Stmt::Type::IndexAssign; stmt.assignment_target = std::move(stmt.expr); stmt.expr = expression();
         }
         return stmt;
@@ -415,25 +479,49 @@ class Parser {
             expect(Kind::RBrace, "}"); result = {Expr::Type::Map, {}, std::move(pairs), token.offset};
         }
         else if (token.kind == Kind::Name) {
-            if (peek().kind != Kind::LParen) result = {Expr::Type::Name, token.text, {}, token.offset};
+            size_t field_start = 1;
+            while (peek(field_start).kind == Kind::Newline) ++field_start;
+            const bool named_initializer = peek(field_start).kind == Kind::Name && peek(field_start + 1).kind == Kind::Colon;
+            const bool empty_field_read = peek(field_start).kind == Kind::RBrace && peek(field_start + 1).kind == Kind::Dot;
+            if (peek().kind == Kind::LBrace && (allow_record_ || record_names_.contains(token.text) || named_initializer || empty_field_read)) {
+                take(); skip_lines(); std::vector<Expr> fields;
+                while (peek().kind != Kind::RBrace) {
+                    if (peek().kind != Kind::Name) error("expected constructor field");
+                    const Token field = take();
+                    expect(Kind::Colon, ": after constructor field");
+                    fields.push_back({Expr::Type::String, field.text, {}, field.offset});
+                    fields.push_back(expression());
+                    if (peek().kind == Kind::Comma) take();
+                    else if (peek().kind != Kind::Newline && peek().kind != Kind::RBrace) error("expected constructor field separator");
+                    skip_lines();
+                }
+                take(); result = {Expr::Type::Record, token.text, std::move(fields), token.offset};
+            }
+            else if (peek().kind != Kind::LParen) result = {Expr::Type::Name, token.text, {}, token.offset};
             else {
                 take(); skip_lines(); std::vector<Expr> args;
                 if (peek().kind != Kind::RParen) { for (;;) { args.push_back(expression()); skip_lines(); if (peek().kind != Kind::Comma) break; take(); skip_lines(); } }
                 expect(Kind::RParen, ")"); result = {Expr::Type::Call, token.text, std::move(args), token.offset};
             }
         }
-        else if (token.kind == Kind::LParen) { result = expression(); expect(Kind::RParen, ")"); }
+        else if (token.kind == Kind::LParen) {
+            const bool previous = allow_record_; allow_record_ = true;
+            result = expression(); allow_record_ = previous; expect(Kind::RParen, ")");
+        }
         else error("expected expression");
-        while (peek().kind == Kind::LBracket) { take(); Expr index = expression(); expect(Kind::RBracket, "]"); result = {Expr::Type::Index, {}, {std::move(result), std::move(index)}, token.offset}; }
-        while (peek().kind == Kind::Dot) {
+        while (peek().kind == Kind::LBracket || peek().kind == Kind::Dot) {
+            if (peek().kind == Kind::LBracket) { take(); Expr index = expression(); expect(Kind::RBracket, "]"); result = {Expr::Type::Index, {}, {std::move(result), std::move(index)}, token.offset}; continue; }
             take();
             if (peek().kind != Kind::Name) error("expected field name after .");
-            Expr field = {Expr::Type::String, take().text, {}, token.offset};
-            result = {Expr::Type::Index, {}, {std::move(result), std::move(field)}, token.offset};
+            const Token field_token = take();
+            Expr field = {Expr::Type::String, field_token.text, {}, field_token.offset};
+            result = {Expr::Type::Field, {}, {std::move(result), std::move(field)}, field_token.offset};
         }
         return result;
     }
     std::unordered_set<std::string> memory_hosts_;
+    std::unordered_set<std::string> record_names_;
+    bool allow_record_ = true;
     std::vector<Token> tokens_; size_t pos_ = 0;
 };
 
@@ -443,7 +531,7 @@ void rewrite_expr(Expr& expr, const std::string& prefix,
                   const std::unordered_set<std::string>& bound_names) {
     for (Expr& child : expr.children)
         rewrite_expr(child, prefix, local_functions, module_imports, bound_names);
-    if ((expr.type != Expr::Type::Call && expr.type != Expr::Type::Name) ||
+    if ((expr.type != Expr::Type::Call && expr.type != Expr::Type::Name && expr.type != Expr::Type::Record) ||
         bound_names.contains(expr.value))
         return;
     if (local_functions.contains(expr.value)) {
@@ -465,6 +553,8 @@ void collect_bound_names(const std::vector<Stmt>& statements,
         if (statement.type == Stmt::Type::Assign || statement.type == Stmt::Type::For ||
             statement.type == Stmt::Type::Try)
             bound_names.insert(statement.target);
+        if (statement.type == Stmt::Type::For && !statement.value_target.empty())
+            bound_names.insert(statement.value_target);
         collect_bound_names(statement.body, bound_names);
         collect_bound_names(statement.alternate, bound_names);
     }
@@ -485,19 +575,32 @@ void rewrite_statements(std::vector<Stmt>& statements, const std::string& prefix
 }
 
 void collect_program(std::string_view source, const std::string& prefix, const Options& options,
-                      std::unordered_set<std::string>& active_imports, Program& merged) {
-    dao_value source_view{};
-    const dao_bytes source_bytes{reinterpret_cast<const uint8_t*>(source.data()), source.size()};
-    if (dao_value_make_string_view(source_bytes, &source_view) != DAO_OK)
-        throw std::runtime_error("source is not valid UTF-8");
-    Program program = Parser(lex(source)).parse();
+                      std::unordered_set<std::string>& active_imports, Program& merged,
+                      std::vector<CompilerDiagnostic>& sources, std::string source_name) {
+    const size_t source_index = sources.size();
+    sources.push_back({std::move(source_name), std::string(source), std::string::npos});
+    Program program;
+    try {
+        dao_value source_view{};
+        const dao_bytes source_bytes{reinterpret_cast<const uint8_t*>(source.data()), source.size()};
+        if (dao_value_make_string_view(source_bytes, &source_view) != DAO_OK)
+            throw std::runtime_error("source is not valid UTF-8");
+        program = Parser(lex(source)).parse();
+    } catch (const std::exception& exception) {
+        capture_diagnostic(options.diagnostic, sources[source_index].source_name, source,
+                           diagnostic_offset(exception.what()));
+        throw;
+    }
     for (const ModuleImport& module_import : program.module_imports) {
         if (module_import.runtime) {
             ModuleImport runtime_import = module_import;
+            runtime_import.source_index = source_index;
             runtime_import.alias = prefix + runtime_import.alias;
             merged.module_imports.push_back(std::move(runtime_import));
             continue;
         }
+        capture_diagnostic(options.diagnostic, sources[source_index].source_name, source,
+                           module_import.offset);
         if (options.import_resolver == nullptr)
             throw std::runtime_error("module import '" + module_import.path + "' requires an import resolver");
         if (!active_imports.insert(module_import.path).second)
@@ -510,23 +613,37 @@ void collect_program(std::string_view source, const std::string& prefix, const O
                                      "': " + resolver_error);
         }
         collect_program(imported_source, prefix + module_import.alias + "_", options,
-                        active_imports, merged);
+                        active_imports, merged, sources, module_import.path);
         active_imports.erase(module_import.path);
     }
 
     std::unordered_set<std::string> local_functions;
+    for (const auto& record : program.records) local_functions.insert(record.name);
     for (const Function& function : program.functions)
         local_functions.insert(function.name);
     for (Function& function : program.functions) {
+        function.source_index = source_index;
         std::unordered_set<std::string> bound_names(function.params.begin(), function.params.end());
         collect_bound_names(function.body, bound_names);
+        for (const auto& record : program.records)
+            if (bound_names.contains(record.name)) {
+                capture_diagnostic(options.diagnostic, sources[source_index].source_name, source, function.offset);
+                throw std::runtime_error("local name shadows record type at offset " + std::to_string(function.offset));
+            }
         rewrite_statements(function.body, prefix, local_functions, program.module_imports,
                            bound_names);
         function.name = prefix + function.name;
         merged.functions.push_back(std::move(function));
     }
-    for (Import& import : program.imports)
+    for (auto& record : program.records) {
+        record.source_index = source_index;
+        record.name = prefix + record.name;
+        merged.records.push_back(std::move(record));
+    }
+    for (Import& import : program.imports) {
+        import.source_index = source_index;
         merged.imports.push_back(std::move(import));
+    }
 }
 
 Instruction instruction(Opcode op, uint16_t dst = 0, uint16_t a = 0, uint16_t b = 0, int64_t imm = 0) {
@@ -538,12 +655,55 @@ class Emitter {
     struct FunctionTarget { uint32_t index; uint16_t arity; };
     struct HostImport { uint32_t index; uint16_t arity; };
     struct RuntimeImport { std::string identity; SemanticVersion version; };
+    struct RecordInfo { uint32_t index; const Program::Record* definition; };
     Emitter(const std::unordered_map<std::string, FunctionTarget>& indices,
             const std::unordered_map<std::string, HostImport>& imports,
             const std::unordered_map<std::string, RuntimeImport>& runtime_imports,
+            const std::unordered_map<std::string, RecordInfo>& records,
             ModuleBuilder& builder, const Function& fn)
-        : indices_(indices), imports_(imports), runtime_imports_(runtime_imports), builder_(builder) {
+        : indices_(indices), imports_(imports), runtime_imports_(runtime_imports), records_(records), builder_(builder) {
         for (const auto& param : fn.params) variable(param, true);
+        if (!records.empty()) {
+            collect_record_assignments(fn.body);
+            for (const auto& param : fn.params) record_variables_.erase(param);
+        }
+    }
+    void collect_record_assignments(const std::vector<Stmt>& statements) {
+        for (const auto& statement : statements) {
+            if (statement.type == Stmt::Type::Assign || statement.type == Stmt::Type::For || statement.type == Stmt::Type::Try) {
+                const size_t count = ++assignment_counts_[statement.target];
+                if (count == 1 && statement.type == Stmt::Type::Assign && statement.expr.type == Expr::Type::Record)
+                    record_variables_[statement.target] = statement.expr.value;
+                else record_variables_.erase(statement.target);
+            }
+            if (statement.type == Stmt::Type::For && !statement.value_target.empty()) {
+                ++assignment_counts_[statement.value_target];
+                record_variables_.erase(statement.value_target);
+            }
+            collect_record_assignments(statement.body);
+            collect_record_assignments(statement.alternate);
+        }
+    }
+    const RecordInfo* record_info(const Expr& expression) const {
+        std::string name;
+        if (expression.type == Expr::Type::Record) name = expression.value;
+        if (expression.type == Expr::Type::Name && variables_.contains(expression.value)) {
+            const auto local = record_variables_.find(expression.value);
+            if (local != record_variables_.end()) name = local->second;
+        }
+        const auto found = records_.find(name);
+        return found == records_.end() ? nullptr : &found->second;
+    }
+    static int literal_type(const Expr& value) {
+        if (value.type == Expr::Type::Number) return DAO_VALUE_I64;
+        if (value.type == Expr::Type::String) return DAO_VALUE_STRING;
+        if (value.type == Expr::Type::Record) return DAO_VALUE_RECORD;
+        if (value.type == Expr::Type::Unary && value.value == "-" && value.children[0].type == Expr::Type::Number) return DAO_VALUE_I64;
+        if (value.type == Expr::Type::Name) {
+            if (value.value == "true" || value.value == "false" || value.value == "真" || value.value == "假") return DAO_VALUE_TRIT;
+            if (value.value == "null" || value.value == "空") return DAO_VALUE_NULL;
+        }
+        return -1;
     }
     FunctionSpec emit(const Function& fn) {
         emit_block(fn.body, true);
@@ -626,14 +786,16 @@ class Emitter {
                 const uint16_t value = expr(stmt.expr); code_.push_back(instruction(Opcode::Throw, 0, value)); continue;
             }
             if (stmt.type == Stmt::Type::Break) {
-                if (loops_.empty()) throw std::runtime_error("break used outside a loop");
+                if (loops_.empty()) throw std::runtime_error("break used outside a loop at offset " + std::to_string(stmt.offset));
                 loops_.back().breaks.push_back(code_.size()); code_.push_back(instruction(Opcode::Jump)); continue;
             }
             if (stmt.type == Stmt::Type::Continue) {
-                if (loops_.empty()) throw std::runtime_error("continue used outside a loop");
+                if (loops_.empty()) throw std::runtime_error("continue used outside a loop at offset " + std::to_string(stmt.offset));
                 loops_.back().continues.push_back(code_.size()); code_.push_back(instruction(Opcode::Jump)); continue;
             }
             if (stmt.type == Stmt::Type::IndexAssign) {
+                if (record_info(stmt.assignment_target.children[0]))
+                    throw std::runtime_error("record fields are read-only at offset " + std::to_string(stmt.assignment_target.offset));
                 const uint16_t object = expr(stmt.assignment_target.children[0]);
                 const uint16_t key = expr(stmt.assignment_target.children[1]);
                 const uint16_t value = expr(stmt.expr);
@@ -658,6 +820,50 @@ class Emitter {
         const uint16_t reg = temporary(); variables_.emplace(name, reg); return reg;
     }
     uint16_t expr(const Expr& e) {
+        if (e.type == Expr::Type::Record) {
+            const auto found = records_.find(e.value);
+            if (found == records_.end()) throw std::runtime_error("unknown record type at offset " + std::to_string(e.offset));
+            const auto& info = found->second;
+            const auto& fields = info.definition->fields;
+            std::vector<uint16_t> values(fields.size());
+            std::vector<bool> seen(fields.size(), false);
+            for (size_t index = 0; index < e.children.size(); index += 2) {
+                const auto& key = e.children[index]; const auto& value = e.children[index + 1];
+                size_t slot = 0;
+                while (slot < fields.size() && fields[slot].name != key.value) ++slot;
+                if (slot == fields.size()) throw std::runtime_error("unknown constructor field at offset " + std::to_string(key.offset));
+                if (seen[slot]) throw std::runtime_error("duplicate constructor field at offset " + std::to_string(key.offset));
+                const int known_type = literal_type(value);
+                if (known_type >= 0 && static_cast<uint32_t>(known_type) != fields[slot].type)
+                    throw std::runtime_error("record field type mismatch at offset " + std::to_string(value.offset));
+                seen[slot] = true; values[slot] = expr(value);
+            }
+            for (bool present : seen)
+                if (!present) throw std::runtime_error("missing constructor field at offset " + std::to_string(e.offset));
+            const uint16_t base = values.empty() ? 0 : static_cast<uint16_t>(next_);
+            for (uint16_t value : values) code_.push_back(instruction(Opcode::Move, temporary(), value));
+            const uint16_t result = temporary();
+            code_.push_back(instruction(Opcode::MakeRecord, result, base, static_cast<uint16_t>(values.size()), info.index));
+            return result;
+        }
+        if (e.type == Expr::Type::Field && !records_.empty()) {
+            const uint16_t object = expr(e.children[0]);
+            const auto* record = record_info(e.children[0]);
+            const auto& field = e.children[1];
+            if (record) {
+                const auto& fields = record->definition->fields;
+                size_t slot = 0;
+                while (slot < fields.size() && fields[slot].name != field.value) ++slot;
+                if (slot == fields.size()) throw std::runtime_error("record field does not exist at offset " + std::to_string(field.offset));
+                const uint16_t result = temporary();
+                code_.push_back(instruction(Opcode::RecordGet, result, object, static_cast<uint16_t>(slot), record->index));
+                return result;
+            }
+            const auto name = builder_.add_string(field.value);
+            const uint16_t result = temporary();
+            code_.push_back(instruction(Opcode::FieldGet, result, object, 0, name));
+            return result;
+        }
         if (e.type == Expr::Type::Conditional) {
             const uint16_t condition = expr(e.children[0]);
             const auto branches = branch_false(condition);
@@ -689,7 +895,8 @@ class Emitter {
             for (const uint16_t value : values) { const uint16_t slot = temporary(); code_.push_back(instruction(Opcode::Move, slot, value)); }
             const uint16_t dst = temporary(); code_.push_back(instruction(Opcode::MakeMap, dst, base, static_cast<uint16_t>(values.size() / 2))); return dst;
         }
-        if (e.type == Expr::Type::Index) {
+        if (e.type == Expr::Type::Index || e.type == Expr::Type::Field) {
+            if (record_info(e.children[0])) throw std::runtime_error("record indexing is not supported at offset " + std::to_string(e.offset));
             const uint16_t list = expr(e.children[0]); const uint16_t index = expr(e.children[1]); const uint16_t dst = temporary();
             code_.push_back(instruction(Opcode::IndexGet, dst, list, index)); return dst;
         }
@@ -843,6 +1050,9 @@ class Emitter {
     const std::unordered_map<std::string, FunctionTarget>& indices_;
     const std::unordered_map<std::string, HostImport>& imports_;
     const std::unordered_map<std::string, RuntimeImport>& runtime_imports_;
+    const std::unordered_map<std::string, RecordInfo>& records_;
+    std::unordered_map<std::string, size_t> assignment_counts_;
+    std::unordered_map<std::string, std::string> record_variables_;
     ModuleBuilder& builder_;
     std::unordered_map<std::string, uint16_t> variables_;
     std::vector<LoopContext> loops_;
@@ -872,25 +1082,55 @@ bool declared_function_names(std::string_view source, std::vector<std::string>& 
 
 bool compile(std::string_view source, ModuleBuilder& builder, dao_error* error, Options options) {
     clear(error);
+    if (options.diagnostic) *options.diagnostic = {};
+    std::vector<CompilerDiagnostic> sources;
+    size_t current_source = std::string::npos;
+    size_t current_offset = 0;
     try {
         Program program;
         std::unordered_set<std::string> active_imports;
-        collect_program(source, {}, options, active_imports, program);
+        collect_program(source, {}, options, active_imports, program, sources, options.source_name);
+        if (options.diagnostic) *options.diagnostic = {};
         if (program.functions.empty())
             throw std::runtime_error("expected at least one thought/function definition");
+        std::unordered_map<std::string, Emitter::RecordInfo> records;
+        for (const auto& record : program.records) {
+            current_source = record.source_index; current_offset = record.offset;
+            if (records.contains(record.name)) throw std::runtime_error("duplicate record type at offset " + std::to_string(current_offset));
+            const auto index = builder.add_record_type(record.name);
+            records.emplace(record.name, Emitter::RecordInfo{index, &record});
+            for (const auto& field : record.fields) builder.add_record_field(index, field.name, field.type);
+        }
         std::unordered_map<std::string, Emitter::FunctionTarget> indices;
         for (uint32_t i = 0; i < program.functions.size(); ++i) {
+            current_source = program.functions[i].source_index;
+            current_offset = program.functions[i].offset;
+            if (records.contains(program.functions[i].name)) throw std::runtime_error("function conflicts with record type at offset " + std::to_string(current_offset));
+            if (!records.empty()) {
+                std::unordered_set<std::string> bound_names;
+                collect_bound_names(program.functions[i].body, bound_names);
+                for (const auto& name : bound_names)
+                    if (records.contains(name)) throw std::runtime_error("binding shadows record type at offset " + std::to_string(current_offset));
+            }
             if (program.functions[i].params.size() > std::numeric_limits<uint16_t>::max()) throw std::runtime_error("too many parameters in function '" + program.functions[i].name + "'");
             std::unordered_set<std::string> parameters;
-            for (const std::string& parameter : program.functions[i].params) {
+            for (size_t parameter_index = 0; parameter_index < program.functions[i].params.size(); ++parameter_index) {
+                const std::string& parameter = program.functions[i].params[parameter_index];
+                current_offset = program.functions[i].parameter_offsets[parameter_index];
+                if (records.contains(parameter)) throw std::runtime_error("parameter shadows record type at offset " + std::to_string(current_offset));
                 if (!parameters.insert(parameter).second)
                     throw std::runtime_error("duplicate parameter '" + parameter +
                                              "' in function '" + program.functions[i].name + "'");
             }
+            current_offset = program.functions[i].offset;
             if (!indices.emplace(program.functions[i].name, Emitter::FunctionTarget{i, static_cast<uint16_t>(program.functions[i].params.size())}).second) throw std::runtime_error("duplicate function '" + program.functions[i].name + "'");
         }
         std::unordered_map<std::string, Emitter::HostImport> imports;
+        current_source = std::string::npos;
         for (const Import& import : program.imports) {
+            current_source = import.source_index;
+            current_offset = import.offset;
+            if (records.contains(import.name)) throw std::runtime_error("Host import conflicts with record type at offset " + std::to_string(current_offset));
             if (indices.contains(import.name)) throw std::runtime_error("host import conflicts with function '" + import.name + "'");
             const auto existing = imports.find(import.name);
             if (existing != imports.end()) {
@@ -903,6 +1143,8 @@ bool compile(std::string_view source, ModuleBuilder& builder, dao_error* error, 
         }
         std::unordered_map<std::string, Emitter::RuntimeImport> runtime_imports;
         for (const ModuleImport& import : program.module_imports) {
+            current_source = import.source_index;
+            current_offset = import.offset;
             const auto [existing, inserted] = runtime_imports.emplace(
                 import.alias, Emitter::RuntimeImport{import.identity, import.version});
             if (!inserted &&
@@ -915,12 +1157,20 @@ bool compile(std::string_view source, ModuleBuilder& builder, dao_error* error, 
             }
         }
         for (const Function& fn : program.functions) {
+            current_source = fn.source_index;
+            current_offset = fn.offset;
             const uint32_t index = builder.add_function(
-                Emitter(indices, imports, runtime_imports, builder, fn).emit(fn));
+                Emitter(indices, imports, runtime_imports, records, builder, fn).emit(fn));
             builder.add_export(symbol_id(fn.name), index);
         }
         return true;
     } catch (const std::exception& ex) {
+        if (current_source != std::string::npos) {
+            const size_t offset = diagnostic_offset(ex.what());
+            capture_diagnostic(options.diagnostic, sources[current_source].source_name,
+                               sources[current_source].source,
+                               offset == std::string::npos ? current_offset : offset);
+        }
         return fail(error, ex.what());
     }
 }

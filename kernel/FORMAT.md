@@ -1,4 +1,4 @@
-# Dao Binary Module v1/v2 and Register Bytecode ABI v9/v10
+# Dao Binary Module v1/v2/v3 and Register Bytecode ABI v9/v10/v11
 
 All multibyte values use little-endian encoding. Offsets are relative to the start of the module.
 
@@ -9,13 +9,59 @@ Size: 16 bytes.
 | Offset | Size | Field | accepted value |
 | ---: | ---: | --- | --- |
 | 0 | 4 | magic | `44 41 4f 00` (`DAO\0`) |
-| 4 | 2 | format version | `1` or `2` |
-| 6 | 2 | VM ABI version | `9` or `10` |
+| 4 | 2 | format version | `1`, `2`, or opt-in `3` |
+| 6 | 2 | VM ABI version | `9`, `10`, or opt-in `11` |
 | 8 | 4 | flags | `0` |
-| 12 | 4 | section count | `5` or `7` |
+| 12 | 4 | section count | `5`, `7`, or `9` |
 
-Accepted pairs are exactly v1/ABI9 and v2/ABI10. Cross-paired or unknown versions and
+Accepted pairs are v1/ABI9, v2/ABI10 and opt-in v3/ABI11. Cross-paired or unknown versions and
 nonzero flags are rejected.
+
+v3/ABI11 is supported by the C++ builder, runtime C ABI, both Ku source frontends and
+assembly/disassembly libraries. Its Record
+sections/instructions, capability mask and limits are defined in
+[the R0 protocol](../docs/KU_RECORD_R0_ABI.md); implementation scope is in [RECORDS.md](RECORDS.md).
+Default VMs reject v3 with `DAO_UNSUPPORTED_FEATURE` until explicitly enabled.
+
+### ABI11 assembly text
+
+Canonical v3 text starts with `format: 3 abi=11`, followed by the existing optional
+`module:` / `module_imports:` identity lines, then imports, exports and hex strings.
+The `record_types:` section precedes `functions:`. Names reference DATA indices;
+field types are numeric tags I64=1, Trit=2, Bytes=3 and String=4.
+
+```text
+format: 3 abi=11
+imports: 0
+exports: 1
+  symbol=1 -> function 0
+strings: 2
+  hex=506f696e74
+  hex=78
+record_types: 1
+  [record 0] name=0 fields=1
+    field name=1 type=1
+functions: 1
+  [function 0] registers=3 parameters=0 instructions=4
+    0 LOAD_I64 r0, 42
+    1 MAKE_RECORD r1, r0, 1, 0
+    2 RECORD_GET r2, r1, 0, 0
+    3 RETURN r2
+```
+
+`MAKE_RECORD dst, base, count, type_index`, `RECORD_GET dst, object, slot, type_index`
+and `FIELD_GET dst, object, 0, name_index` use register notation only for dst and
+object/base; the final operands are unsigned integers. Declaration order determines
+type indices and field slots. Empty types use `fields=0`. Counts, names, scalar tags
+and instruction operands must satisfy the same ABI11 verifier as executable modules.
+
+Both parsed/disassembled C++ models retain format/ABI versions and Record tables.
+Canonical ModuleBuilder output round-trips byte for byte, including an optional module
+identity and imports, shared DATA names and unused strings. Arbitrary alternative
+binary layouts are normalized by the builder. v1/v2 text and lowering remain unchanged.
+Disassembly and text assembly verify v3 using a temporary VM with Records enabled;
+this does not link dependencies, run code or enable any application VM. Numeric AOT
+rejects every v3 module, including one with no Record instructions, before opening output.
 
 ## Section Table
 
@@ -39,11 +85,15 @@ Initial section types:
 | 5 | `DATA` | variable |
 | 6 | `METADATA` | 24 |
 | 7 | `MODULE_IMPORT` | 24 |
+| 8 | `RECORD_TYPE` (ABI11) | 16 |
+| 9 | `RECORD_FIELD` (ABI11) | 12 |
 
 Sections must lie after the section table, remain inside the module, and not overlap.
 Duplicate or unknown section types are rejected. VM ABI v9 requires the first five sections;
 VM ABI v10 additionally requires one `METADATA` record and a `MODULE_IMPORT` section.
 `IMPORT`, `MODULE_IMPORT`, and `DATA` may contain zero dependency/data records as applicable.
+ABI11 requires the five core sections plus RECORD_TYPE/FIELD; identified ABI11 modules
+also contain METADATA/MODULE_IMPORT. These new sections are rejected in older formats.
 
 ## Module Metadata Record (v2)
 
@@ -164,6 +214,9 @@ Branch targets are function-local instruction indexes.
 | 40 | `MAKE_CLOSURE` | bind registers `a..a+b-1` to same-module function `immediate` in `dst` |
 | 41 | `CALL_MODULE` | call an identified linked module export |
 | 42 | `MAP_KEYS` | return a List of string keys for a Map |
+| 43 | `MAKE_RECORD` (ABI11) | construct type `immediate` from `b` scalar registers starting at `a` into `dst` |
+| 44 | `RECORD_GET` (ABI11) | read slot `b` from Record `a`, checking local type `immediate`, into `dst` |
+| 45 | `FIELD_GET` (ABI11) | read named field (DATA `immediate`) from Map/Record `a` into `dst`; b is zero |
 | 41 | `CALL_MODULE` | call module import `immediate`, args start at `a`, count `b`, result to `dst` |
 
 Arithmetic requires `i64`. Trit operations and branches require payload `-1`, `0`, or `+1`.
@@ -196,5 +249,9 @@ The host config controls:
 Instruction budget is shared by nested calls. These limits are part of host policy, not module semantics.
 
 ## Versioning
+
+VM ABI11 adds opt-in scalar Record descriptors, MAKE_RECORD/RECORD_GET/FIELD_GET and
+read-only C inspection. It uses format v3, allows optional identity metadata, and keeps
+the 16-byte value layout. Existing module formats and default VM feature masks are preserved.
 
 Changing an opcode's meaning, record layout, register convention, or value ABI requires a VM ABI version change. VM ABI v2 added `IMPORT` and `CALL_HOST`. VM ABI v3 added borrowed views. VM ABI v4 added Trit constants, remainder, and comparisons. VM ABI v5 added module DATA constants, initial containers, indexing, and structured exceptions. VM ABI v6 replaces container pointers with generation handles and adds `INDEX_SET`. VM ABI v7 adds `LIST_APPEND`. VM ABI v8 adds local function references and `CALL_VALUE`. VM ABI v9 adds same-call captured bindings. VM ABI v10 adds identified module metadata, exact-version module imports, and `CALL_MODULE`. The loader retains v1/ABI9 compatibility; other older or cross-paired modules are rejected rather than guessed.

@@ -12,6 +12,7 @@ This document defines the ownership and lifetime of every `dao_value` category. 
 | `NULL`, `I64`, `TRIT` | value itself | copied by value | yes |
 | `BYTES`, `STRING` | caller, Host, or immutable module | borrowed storage must outlive every consumer | yes |
 | `LIST`, `MAP` | one VM call-generation arena | until the next accepted top-level call on that VM | no |
+| `RECORD` (opt-in ABI11) | one VM call-generation arena; retains descriptor owner | until the next accepted top-level call on that VM | no |
 | `FUNCTION` | the executing module | only meaningful inside that module execution | no |
 | `CLOSURE` | one VM call-generation arena | until the next accepted top-level call on that VM | no |
 
@@ -94,6 +95,11 @@ reference. Module calls share the same generation arena, but Function and Closur
 module-local and cannot cross that boundary, including inside Lists or Maps.
 
 ## Non-goals
+
+The opt-in Record kernel implementation adds read-only inspection, not Host
+construction or mutation. Arena ownership pins descriptor modules, but does not
+extend borrowed Host/caller buffers. Recursive Host/module boundary checks reject
+Records, including exception payloads. See [RECORDS.md](RECORDS.md).
 
 This contract does not introduce a process-wide garbage collector, reference-counted
 containers, cross-call closures, or portable-C AOT containers. Those require separate ABI

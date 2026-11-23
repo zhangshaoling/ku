@@ -22,3 +22,8 @@ thought canonical_edges(value) {
   value = value
   if value > 0 { -1 + 43 } else { 0 }
 }
+
+thought ordered_map_keys() {
+  names = keys({"z": 1, "a": 2})
+  return names[0]
+}

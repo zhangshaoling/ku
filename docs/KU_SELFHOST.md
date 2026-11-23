@@ -124,6 +124,11 @@ limit, remain unpositioned.
 
 ## SH1: Canonical Frontend Identity (implemented)
 
+The v1.2.0 development CLI retains source locations across module composition and injected
+memory imports. `source_append` copies byte ranges with source provenance; `source_context`
+identifies the current parser input and import declaration. These Host capabilities do not
+parse or lower source. See [KU_DIAGNOSTICS.md](KU_DIAGNOSTICS.md) for the diagnostic contract.
+
 The `.ku` frontend now follows the recovery compiler's canonical lowering rules for exact
 register counts, function tails, contiguous List/Map/call operands, unary negatives, loop
 temporaries, self-assignment elimination, and terminal `if` implicit returns. Source-module
@@ -142,7 +147,9 @@ loads that rebuilt compiler, and uses it to compile and execute a fresh module w
 result must be `42`. This proves the generated compiler is loadable and functionally
 capable of compiling downstream `.ku` source. The test uses an elevated instruction
 budget because the current token lookup and code generation paths are intentionally
-simple and not yet optimized.
+simple and not yet optimized. The Record frontend increases this test-only limit
+from 100M to 200M instructions after exhausting the former budget; production
+compilation keeps its existing limit.
 
 The rebuilt compiler also compiles `compiler.ku` again. The first and second rebuilt
 modules must have identical sizes and byte-for-byte contents, proving that self-rebuild

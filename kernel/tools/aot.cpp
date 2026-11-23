@@ -30,6 +30,10 @@ int main(int argc, char** argv) {
     if (dao::disassemble({bytes.data(), bytes.size()}, &module, &error) != DAO_OK) {
         std::cerr << "invalid module: " << error.message << '\n'; return EXIT_FAILURE;
     }
+    if (module.format_version == dao::kRecordFormatVersion) {
+        std::cerr << "ABI11 modules are unsupported by numeric AOT\n";
+        return EXIT_FAILURE;
+    }
     for (const auto& function : module.functions) for (const auto& instruction : function.instructions)
         if (!supported(instruction.opcode)) { std::cerr << "function " << function.index << " uses unsupported AOT opcode\n"; return EXIT_FAILURE; }
     std::ofstream out(argv[2], std::ios::trunc); if (!out) return EXIT_FAILURE;

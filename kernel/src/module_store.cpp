@@ -183,7 +183,7 @@ bool identity_matches(const dao_module* module, std::string_view name, SemanticV
 }
 
 dao_status validate(const std::vector<uint8_t>& bytes, std::string_view name,
-                    SemanticVersion version, dao_error* error) {
+                    SemanticVersion version, uint64_t features, dao_error* error) {
     if (bytes.empty()) {
         set_error(error, DAO_BAD_MODULE, "stored module is empty");
         return DAO_BAD_MODULE;
@@ -195,7 +195,8 @@ dao_status validate(const std::vector<uint8_t>& bytes, std::string_view name,
         return DAO_OUT_OF_MEMORY;
     }
     dao_module* module = nullptr;
-    dao_status status = dao_vm_load_module(vm, {bytes.data(), bytes.size()}, &module, error);
+    dao_status status = dao_vm_set_features(vm, features);
+    if (status == DAO_OK) status = dao_vm_load_module(vm, {bytes.data(), bytes.size()}, &module, error);
     if (status == DAO_OK && !identity_matches(module, name, version)) {
         set_error(error, DAO_MODULE_CONFLICT, "stored module identity does not match its key");
         status = DAO_MODULE_CONFLICT;
@@ -397,7 +398,11 @@ dao_status compile_source(std::string_view compiler_source, std::string_view sou
 
 } // namespace
 
-ModuleStore::ModuleStore(std::filesystem::path root) : root_(std::move(root)) {}
+ModuleStore::ModuleStore(std::filesystem::path root, uint64_t features)
+    : root_(std::move(root)), features_(features) {
+    if ((features & ~uint64_t{DAO_FEATURE_RECORDS}) != 0)
+        throw std::invalid_argument("unknown module store feature");
+}
 
 dao_status ModuleStore::save(const std::vector<uint8_t>& bytes, std::string_view source,
                              dao_error* error) const {
@@ -415,7 +420,8 @@ dao_status ModuleStore::save_record(const std::vector<uint8_t>& bytes, std::stri
     dao_vm* vm = dao_vm_create(&config);
     if (vm == nullptr) { set_error(error, DAO_OUT_OF_MEMORY, "cannot create module store VM"); return DAO_OUT_OF_MEMORY; }
     dao_module* module = nullptr;
-    dao_status status = dao_vm_load_module(vm, {bytes.data(), bytes.size()}, &module, error);
+    dao_status status = dao_vm_set_features(vm, features_);
+    if (status == DAO_OK) status = dao_vm_load_module(vm, {bytes.data(), bytes.size()}, &module, error);
     if (status != DAO_OK) { dao_vm_destroy(vm); return status; }
     dao_module_identity identity{}; identity.struct_size = sizeof(identity);
     status = dao_module_get_identity(module, &identity);
@@ -560,7 +566,7 @@ dao_status ModuleStore::load(std::string_view identity_name, SemanticVersion ver
             set_error(error, status, "module cannot be read or is not stored");
             return status;
         }
-        const dao_status status = validate(loaded, identity_name, version, error);
+        const dao_status status = validate(loaded, identity_name, version, features_, error);
         if (status != DAO_OK) return status;
         Manifest metadata;
         if (!read_manifest(manifest_path(root_, identity_name, version), identity_name, version,

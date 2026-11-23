@@ -1,6 +1,7 @@
 #include "dao/selfhost.hpp"
 #include "dao/ku_migration.hpp"
 #include "dao/module_store.hpp"
+#include "dao/source_host.hpp"
 
 #include <charconv>
 #include <cstdlib>
@@ -20,6 +21,70 @@ namespace {
 struct FileResolver {
     std::filesystem::path root;
 };
+
+// Columns count Unicode scalars; the excerpt expands tabs and common wide characters.
+void print_compile_error(const char* prefix, const dao_error& error,
+                         const dao::CompilerDiagnostic& diagnostic,
+                         const FileResolver& resolver, std::string_view input_name) {
+    if (diagnostic.offset == std::string::npos) {
+        std::cerr << prefix << error.message << '\n';
+        return;
+    }
+    std::filesystem::path name = diagnostic.source_name;
+    if (diagnostic.source_name != input_name) {
+        if (!name.has_extension()) name += ".ku";
+        name = std::filesystem::weakly_canonical(resolver.root / name);
+    }
+    const std::string_view source = diagnostic.source;
+    size_t line = 1;
+    size_t start = 0;
+    for (size_t index = 0; index < diagnostic.offset; ++index) {
+        if (source[index] == '\n') { ++line; start = index + 1; }
+    }
+    size_t end = source.find('\n', start);
+    if (end == std::string_view::npos) end = source.size();
+    if (end > start && source[end - 1] == '\r') --end;
+    size_t column = 1;
+    size_t width = 0;
+    size_t caret = 0;
+    std::string excerpt;
+    for (size_t index = start; index < end;) {
+        const size_t begin = index;
+        const auto first = static_cast<unsigned char>(source[index++]);
+        uint32_t codepoint = first;
+        if (first >= 0xc0) {
+            const size_t length = first < 0xe0 ? 2 : first < 0xf0 ? 3 : 4;
+            codepoint = first & (0x7f >> length);
+            for (size_t byte = 1; byte < length && index < end; ++byte)
+                codepoint = (codepoint << 6) | (static_cast<unsigned char>(source[index++]) & 0x3f);
+        }
+        if (begin < diagnostic.offset) ++column;
+        size_t cells = 1;
+        if (first == '\t') {
+            cells = 4 - width % 4;
+            excerpt.append(cells, ' ');
+        } else {
+            excerpt.append(source.substr(begin, index - begin));
+            if ((codepoint >= 0x1100 && codepoint <= 0x115f) ||
+                (codepoint >= 0x2e80 && codepoint <= 0xa4cf) ||
+                (codepoint >= 0xac00 && codepoint <= 0xd7a3) ||
+                (codepoint >= 0xf900 && codepoint <= 0xfaff) ||
+                (codepoint >= 0xfe10 && codepoint <= 0xfe6f) ||
+                (codepoint >= 0xff01 && codepoint <= 0xff60) ||
+                (codepoint >= 0x1f300 && codepoint <= 0x1faff) ||
+                (codepoint >= 0x20000 && codepoint <= 0x3ffff)) cells = 2;
+            if ((codepoint >= 0x0300 && codepoint <= 0x036f) ||
+                (codepoint >= 0xfe00 && codepoint <= 0xfe0f) || codepoint == 0x200d) cells = 0;
+        }
+        width += cells;
+        if (begin < diagnostic.offset) caret = width;
+    }
+    const std::string label = std::to_string(line);
+    std::cerr << name.string() << ':' << line << ':' << column << ": error: "
+              << prefix << error.message << '\n'
+              << label << " | " << excerpt << '\n'
+              << std::string(label.size(), ' ') << " | " << std::string(caret, ' ') << "^\n";
+}
 
 bool parse_version(std::string_view text, dao::SemanticVersion* version) {
     const size_t first = text.find('.');
@@ -155,7 +220,7 @@ std::string format_source(std::string_view source) {
                 ? std::string_view{}
                 : std::string_view(line).substr(first_text);
             const bool block = previous == ')' || code_line.starts_with("thought ") || code_line.starts_with("思 ") ||
-                               code_line.starts_with("func ") || code_line.starts_with("if ") || code_line.starts_with("若 ") ||
+                               code_line.starts_with("型 ") || code_line.starts_with("func ") || code_line.starts_with("if ") || code_line.starts_with("若 ") ||
                                code_line.starts_with("while ") || code_line.starts_with("当 ") || code_line.starts_with("for ") ||
                                code_line.starts_with("遍 ") || code_line.starts_with("try ") || code_line.starts_with("试 ") ||
                                code_line.starts_with("catch ") || code_line.starts_with("捕 ") || code_line.starts_with("else ") ||
@@ -231,8 +296,11 @@ int run_tests(std::string_view source, const std::vector<uint8_t>& bytes) {
         }
         dao_module* raw_module = nullptr;
         error = {};
-        dao_status status = dao_vm_load_module(
-            vm.get(), {bytes.data(), bytes.size()}, &raw_module, &error);
+        dao_status status = dao::source_host::register_functions(vm.get());
+        if (status == DAO_OK && bytes.size() >= 8 && bytes[4] == 3 && bytes[5] == 0 && bytes[6] == 11 && bytes[7] == 0)
+            status = dao_vm_set_features(vm.get(), DAO_FEATURE_RECORDS);
+        if (status == DAO_OK)
+            status = dao_vm_load_module(vm.get(), {bytes.data(), bytes.size()}, &raw_module, &error);
         std::unique_ptr<dao_module, decltype(&dao_module_release)> module(raw_module, dao_module_release);
         dao_function function = 0;
         if (status == DAO_OK) status = dao_module_find_export(module.get(), symbol, &function);
@@ -274,6 +342,7 @@ int main(int argc, char** argv) {
     bool fmt_mode = false;
     bool test_mode = false;
     bool store_mode = false;
+    bool enable_records = false;
     std::filesystem::path store_root;
     bool has_parent = false;
     std::string parent_identity;
@@ -297,6 +366,10 @@ int main(int argc, char** argv) {
         }
         if (option == "--recovery" && !recovery) {
             recovery = true;
+            continue;
+        }
+        if (option == "--enable-records" && !enable_records) {
+            enable_records = true;
             continue;
         }
         if (option == "--store" && !store_mode && input_index < argc) {
@@ -326,6 +399,10 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
     const int error_exit = test_mode ? 2 : EXIT_FAILURE;
+    if (enable_records && !store_mode) {
+        std::cerr << "--enable-records requires --store\n";
+        return error_exit;
+    }
     std::string_view source_mode = "--check";
     if (fmt_mode) source_mode = "--fmt";
     if (test_mode) source_mode = "--test";
@@ -338,7 +415,7 @@ int main(int argc, char** argv) {
         }
     } else if (store_mode) {
         if (!identified || input_index + 1 != argc) {
-            std::cerr << "usage: dao-ku --store DIR --identity NAME MAJOR.MINOR.PATCH <input.ku>\n";
+            std::cerr << "usage: dao-ku [--enable-records] --store DIR --identity NAME MAJOR.MINOR.PATCH <input.ku>\n";
             return EXIT_FAILURE;
         }
     } else if (input_index + 2 != argc) {
@@ -365,6 +442,7 @@ int main(int argc, char** argv) {
     if (module_root.filename() == "std")
         module_root = module_root.parent_path();
     FileResolver resolver{std::filesystem::weakly_canonical(module_root)};
+    dao::CompilerDiagnostic diagnostic;
     std::vector<uint8_t> bytes;
     std::string compiler_source;
     if (recovery) {
@@ -374,8 +452,11 @@ int main(int argc, char** argv) {
         dao::km::Options options{};
         options.import_resolver = resolve_import;
         options.import_user_data = &resolver;
+        options.source_name = argv[input_index];
+        options.diagnostic = &diagnostic;
         if (!dao::km::compile(source, builder, &error, options)) {
-            std::cerr << "recovery compile failed: " << error.message << '\n';
+            print_compile_error("recovery compile failed: ", error, diagnostic, resolver,
+                                argv[input_index]);
             return error_exit;
         }
         try {
@@ -395,8 +476,10 @@ int main(int argc, char** argv) {
         options.has_identity = identified;
         options.identity_name = identity_name;
         options.identity_version = identity_version;
+        options.source_name = argv[input_index];
+        options.diagnostic = &diagnostic;
         if (!dao::selfhost::compile(compiler_source, source, &bytes, &error, options)) {
-            std::cerr << "compile failed: " << error.message << '\n';
+            print_compile_error("compile failed: ", error, diagnostic, resolver, argv[input_index]);
             return error_exit;
         }
     }
@@ -407,6 +490,8 @@ int main(int argc, char** argv) {
         return error_exit;
     }
     dao_module* module = nullptr;
+    if (bytes.size() >= 8 && bytes[4] == 3 && bytes[5] == 0 && bytes[6] == 11 && bytes[7] == 0)
+        dao_vm_set_features(vm, DAO_FEATURE_RECORDS);
     const dao_status status = dao_vm_load_module(vm, {bytes.data(), bytes.size()}, &module, &error);
     if (status != DAO_OK) {
         std::cerr << "verification failed: " << error.message << '\n';
@@ -425,7 +510,7 @@ int main(int argc, char** argv) {
         return EXIT_SUCCESS;
     }
     if (store_mode) {
-        dao::store::ModuleStore store(store_root);
+        dao::store::ModuleStore store(store_root, enable_records ? DAO_FEATURE_RECORDS : 0);
         if (has_parent && recovery) {
             std::cerr << "--parent requires the self-hosted compiler path\n";
             return EXIT_FAILURE;
