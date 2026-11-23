@@ -6,7 +6,9 @@ import subprocess
 import sys
 import tempfile
 
-rustc, library, compiler = (str(Path(arg).resolve()) for arg in sys.argv[1:4])
+# rustc may be a rustup multicall symlink; preserve its executable name.
+rustc = str(Path(sys.argv[1]).absolute())
+library, compiler = (str(Path(arg).resolve()) for arg in sys.argv[2:4])
 crate = Path(__file__).parent / "dao-kernel-sys"
 
 
@@ -50,7 +52,8 @@ with tempfile.TemporaryDirectory(prefix="ku-rust-record-") as temporary:
         suffix = ".dll"
     else:
         suffix = ".dylib" if sys.platform == "darwin" else ".so"
-        options = ["-L", f"native={Path(library).parent}"]
+        options = ["-L", f"native={Path(library).parent}",
+                   "-l", "dylib=System" if sys.platform == "darwin" else "dylib=c"]
     probe = work / ("record_probe" + suffix)
     run([rustc, "--edition=2021", "--crate-type=cdylib", "-C", "panic=abort", "-C", "opt-level=2",
          crate / "record_probe.rs", "--extern", f"dao_kernel_sys={rlib}",
